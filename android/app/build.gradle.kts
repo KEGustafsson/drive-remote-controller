@@ -202,7 +202,12 @@ android {
   // this module still used it. Same JVM target as before, and as :core.
   kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
 
-  buildFeatures { compose = true }
+  // buildConfig for BuildConfig.VERSION_NAME, shown in the telemetry summary
+  // bar. AGP 8 defaults it off, and nothing else here needed it.
+  buildFeatures {
+    compose = true
+    buildConfig = true
+  }
 
   // Robolectric renders the real Compose layout against real resources; without
   // this it gets a stub resource table and every measurement is meaningless.

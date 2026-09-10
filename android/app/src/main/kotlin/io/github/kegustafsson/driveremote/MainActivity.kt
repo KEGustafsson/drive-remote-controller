@@ -165,6 +165,10 @@ private fun StationApp(viewModel: StationViewModel = viewModel()) {
             onPortChange = viewModel::setPort,
             onStbdChange = viewModel::setStbd,
             onChangeServer = viewModel::changeServer,
+            // Read here rather than inside the composable: ControlScreen
+            // takes plain values so the layout can be rendered -- and
+            // measured -- without a server, a token or a boat.
+            appVersion = "v" + BuildConfig.VERSION_NAME,
           )
         }
       }

@@ -65,6 +65,13 @@ fun StatusPanel(
   view: StationView,
   authError: String?,
   onChangeServer: () -> Unit,
+  /**
+   * Shown small in the summary bar, so the running build is identifiable from a
+   * photo of the helm screen without digging through Android's app info.
+   * Defaults to blank: the layout suite and the previews render without one,
+   * and a blank version then costs no height at all.
+   */
+  appVersion: String = "",
   modifier: Modifier = Modifier,
 ) {
   val live = view.connected
@@ -150,12 +157,27 @@ fun StatusPanel(
         modifier = Modifier.weight(1f),
       )
 
-      Text(
-        if (expanded) "▴" else "▾",
-        fontSize = helm.text(16.sp),
-        color = DriveColors.inkMuted,
+      // Chevron and version share one column so the version costs no WIDTH --
+      // the two lamps beside it are weight(1f) and would give up space for it.
+      // Height is the cheaper axis here: this row is inside the telemetry
+      // region, which scrolls and commands nothing.
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.padding(horizontal = helm.size(8.dp)),
-      )
+      ) {
+        Text(
+          if (expanded) "▴" else "▾",
+          fontSize = helm.text(16.sp),
+          color = DriveColors.inkMuted,
+        )
+        if (appVersion.isNotBlank()) {
+          Text(
+            appVersion,
+            fontSize = helm.text(9.sp),
+            color = DriveColors.inkMuted,
+          )
+        }
+      }
     }
 
     // Not while the first socket is still opening. A unit cannot be judged

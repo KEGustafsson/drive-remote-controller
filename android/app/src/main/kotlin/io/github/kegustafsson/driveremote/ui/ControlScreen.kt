@@ -95,6 +95,7 @@ fun ControlScreen(
   onPortChange: (DrivePosition) -> Unit,
   onStbdChange: (DrivePosition) -> Unit,
   onChangeServer: () -> Unit,
+  appVersion: String = "",
   modifier: Modifier = Modifier,
 ) {
   BoxWithConstraints(modifier.fillMaxSize()) {
@@ -125,14 +126,14 @@ fun ControlScreen(
           TallControlScreen(
             view, thrusterMode, trimDeg, authError, onArm, onDisarm,
             onThrusterModeChange, onThrusterDirectionChange, onTrim,
-            onPortChange, onStbdChange, onChangeServer,
+            onPortChange, onStbdChange, onChangeServer, appVersion,
           )
 
         maxHeight >= SidebarLayoutMinHeight ->
           SidebarControlScreen(
             view, thrusterMode, trimDeg, authError, onArm, onDisarm,
             onThrusterModeChange, onThrusterDirectionChange, onTrim,
-            onPortChange, onStbdChange, onChangeServer,
+            onPortChange, onStbdChange, onChangeServer, appVersion,
             windowWidth = maxWidth,
           )
 
@@ -140,7 +141,7 @@ fun ControlScreen(
           EdgeControlScreen(
             view, thrusterMode, trimDeg, authError, onArm, onDisarm,
             onThrusterModeChange, onThrusterDirectionChange, onTrim,
-            onPortChange, onStbdChange, onChangeServer,
+            onPortChange, onStbdChange, onChangeServer, appVersion,
           )
       }
     }
@@ -167,6 +168,7 @@ private fun TallControlScreen(
   onPortChange: (DrivePosition) -> Unit,
   onStbdChange: (DrivePosition) -> Unit,
   onChangeServer: () -> Unit,
+  appVersion: String,
 ) {
   val helm = LocalHelmScale.current
   val gutter = helm.size(10.dp)
@@ -222,7 +224,7 @@ private fun TallControlScreen(
         )
       }
     },
-    telemetry = { TelemetryPanel(view, authError, onChangeServer) },
+    telemetry = { TelemetryPanel(view, authError, onChangeServer, appVersion) },
   )
 }
 
@@ -264,6 +266,7 @@ private fun SidebarControlScreen(
   onPortChange: (DrivePosition) -> Unit,
   onStbdChange: (DrivePosition) -> Unit,
   onChangeServer: () -> Unit,
+  appVersion: String,
   windowWidth: Dp,
 ) {
   val helm = LocalHelmScale.current
@@ -311,10 +314,11 @@ private fun SidebarControlScreen(
     }
 
     TelemetryPanel(
-      view,
-      authError,
-      onChangeServer,
-      Modifier.width(sidebar).fillMaxHeight().padding(start = gutter),
+      view = view,
+      authError = authError,
+      onChangeServer = onChangeServer,
+      appVersion = appVersion,
+      modifier = Modifier.width(sidebar).fillMaxHeight().padding(start = gutter),
     )
   }
 }
@@ -352,6 +356,7 @@ private fun EdgeControlScreen(
   onPortChange: (DrivePosition) -> Unit,
   onStbdChange: (DrivePosition) -> Unit,
   onChangeServer: () -> Unit,
+  appVersion: String,
 ) {
   val helm = LocalHelmScale.current
   val gutter = helm.size(10.dp)
@@ -381,10 +386,11 @@ private fun EdgeControlScreen(
           modifier = overflow.probe("thruster"),
         )
         TelemetryPanel(
-          view,
-          authError,
-          onChangeServer,
-          Modifier.padding(top = gutter).weight(1f),
+          view = view,
+          authError = authError,
+          onChangeServer = onChangeServer,
+          appVersion = appVersion,
+          modifier = Modifier.padding(top = gutter).weight(1f),
         )
       }
 
@@ -554,6 +560,7 @@ private fun TelemetryPanel(
   view: StationView,
   authError: String?,
   onChangeServer: () -> Unit,
+  appVersion: String = "",
   modifier: Modifier = Modifier,
 ) {
   Column(
@@ -562,6 +569,11 @@ private fun TelemetryPanel(
       .verticalScroll(rememberScrollState())
       .testTag(TelemetryScrollTag)
   ) {
-    StatusPanel(view = view, authError = authError, onChangeServer = onChangeServer)
+    StatusPanel(
+      view = view,
+      authError = authError,
+      onChangeServer = onChangeServer,
+      appVersion = appVersion,
+    )
   }
 }
