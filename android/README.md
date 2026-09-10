@@ -889,6 +889,22 @@ commands anything in earnest.
   `.height(88.dp).padding(...)` takes the gap out of the button rather than
   around it.
 
+  **Partly answered on glass, 2026-09-10.** Contacts are sized with
+  `requiredHeightIn`, which cannot be negotiated below its floor -- a contact can
+  only be pushed off screen, and when that happens the app renders
+  `ClippedWarning`, whose `contentDescription` is visible to `uiautomator`. On
+  both a real S25 (Android 16, root 1080x2340, font scale 1.15) and a Nokia 7.2
+  (Android 11, root 1080x2132 -- 208px less room, so the tighter case) that
+  warning is **absent**, and no live control sits under a scrolling ancestor.
+  Since shrinking is impossible and clipping is reported, that means every
+  contact got at least its floor on the real devices, with their real system
+  bars, cutout and font scale.
+
+  Exact on-device dp figures would need `testTagsAsResourceId = true`, since
+  Compose test tags do not otherwise reach `uiautomator`. Not done: it is
+  production code added only for measurement, and the property is already
+  guaranteed structurally.
+
   What it does **not** prove is that the S25 agrees. Robolectric's density and
   insets are a model of that phone, not the phone: system bars, display cutout,
   gesture insets and font scale all move real pixels. Nor does it inject
