@@ -414,11 +414,10 @@ that pipeline, the CI secrets and the fingerprint gate are in
 
 | | Unshrunk | With R8 |
 |---|---|---|
-| `app-release.apk` | 8,239,654 B | **1,947,599 B** — 76% smaller |
-| Classes removed (`usage.txt`) | — | 48,358 lines |
-| Kept (`seeds.txt`) | — | 21,560 entries |
-| …of those, Tink | — | **20,682 — 96%** |
-| `mapping.txt` | — | 30 MB |
+| `app-release.apk` | 8,239,654 B | **2,470,571 B** — 70% smaller |
+| Classes removed (`usage.txt`) | — | ~48,000 lines |
+| Kept (`seeds.txt`) | — | **863 entries** |
+| `mapping.txt` | — | ~30 MB |
 
 **What changed the decision.** The objection to R8 here was never the tooling, it
 was that shrinking an *unverified* codebase adds a failure mode that appears only
@@ -455,6 +454,15 @@ screens above the actual error.
 Most of it is already handled, and it is worth knowing which parts so you only
 debug the ones that are not:
 
+**There are no hand-written keep rules any more.** `app/proguard-rules.pro` is
+effectively empty, and that is the end state rather than an omission: every
+dependency below ships its own consumer rules. The one exception used to be Tink,
+reached only through `androidx.security-crypto`, whose only caller was the
+one-time token-store migration — file, dependency and rules were deleted
+together once every station had migrated. Removing them took the APK from
+4,109,155 to 2,470,571 bytes and dropped R8's retained set from 21,562 entries to
+863, because 20,682 of those were Tink held by a single blunt keep.
+
 Checked by unzipping the artifacts in the Gradle cache, not assumed:
 
 | Dependency | Ships its own R8 rules? | What you may still need |
@@ -462,66 +470,34 @@ Checked by unzipping the artifacts in the Gradle cache, not assumed:
 | Compose, AGP, AndroidX | Yes, as consumer rules in the AARs | Nothing normally |
 | OkHttp 4.12 | Yes — `META-INF/proguard/okhttp3.pro` | The Conscrypt / BouncyCastle / OpenJSSE `-dontwarn` lines, if the build warns |
 | kotlinx.serialization 1.7.3 | Yes — in `kotlinx-serialization-core`, including an R8-specific `kotlinx-serialization-r8.pro` | Nothing for compiler-generated serializers, which is all of `:core`'s |
-| **`androidx.security:security-crypto` 1.1.0-alpha06 → Tink** | **No.** The AAR carries no `proguard.txt`, and `tink-android-1.8.0` ships only protobuf rules, not its own | **Expect to write rules here.** Tink registers key managers reflectively |
 | `NsdManager`, `DataStore` | n/a — framework, no reflection | Nothing |
+| `KeystoreEncryptedPreferences` | n/a — platform AES-GCM, reflects on nothing | Nothing |
 
-**The security-crypto row still matters, but less than it did.** The token store
-itself no longer uses that library: `SettingsStore` now goes through
-`KeystoreEncryptedPreferences`, which uses the platform's own AES-256-GCM under
-an Android Keystore key and pulls in no Tink at all. Tink survives only because
-`LegacySecureStoreMigration` still reads the old store once — so these keeps
-protect a migration, not the live path, and **both should be deleted together**
-once every station has run a migrating build. That would also return the ~96%
-of shrinking they currently cost. The blunt rule while they are needed:
+**There is nothing left to keep by hand.** `app/proguard-rules.pro` carries no
+rules at all, only the note explaining why.
 
-```proguard
--keep class com.google.crypto.tink.** { *; }
--keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite { <fields>; }
-# Covers all three families below. Do not narrow this to one package.
--dontwarn com.google.crypto.tink.**
-```
+Tink used to be the exception, and an expensive one. It reached this build solely
+through `androidx.security-crypto`, whose only caller was
+`LegacySecureStoreMigration` — the one-time move of the token store off that
+library. Protecting it took a blunt `-keep class com.google.crypto.tink.** { *; }`,
+because narrowing it risked stripping a key manager and breaking the stored token
+in the release build only, where nothing here would have caught it.
 
-**Why that last line is broad on purpose.** Tink carries references R8 cannot
-resolve, and each unresolved reference is a hard `ERROR`, not a warning. There
-are three families and **R8 reports one family per build**, so fixing them by
-name is several rounds of rebuild-and-see:
+Once every station had migrated, the file, the dependency and the rules were
+deleted together. Measured, same tree, only that change:
 
-| Missing | Referenced from |
-|---|---|
-| `com.google.errorprone.annotations.*` | Tink generally — compile-only annotations |
-| `com.google.api.client.http.*` | `KeysDownloader` — google-api-client |
-| `org.joda.time.Instant` | `KeysDownloader` — joda-time |
-
-`-dontwarn` suppresses unresolved references **originating in** the named
-classes, and all three originate in Tink, so the one line covers the lot. AGP
-also writes the narrower per-package list to
-`app/build/outputs/mapping/release/missing_rules.txt` as it discovers each
-family.
-
-`KeysDownloader` fetches keysets over HTTP and **this app never uses it** — the
-token store is local. It only survives because the blunt `-keep` above keeps all
-of Tink; narrowing that keep would drop it and this whole problem with it.
-
-**Measured, not guessed.** That change and that rules file were applied to this
-tree on 2026-09-10 (AGP 8.7.3), built, and reverted:
-
-| | Unshrunk | With R8 |
+| | With the migration | Without |
 |---|---|---|
-| `app-release-unsigned.apk` | 8,239,654 B | **1,947,599 B** — 76% smaller |
-| Classes removed (`usage.txt`) | — | 48,358 lines |
-| Kept (`seeds.txt`) | — | 21,560 entries |
-| …of those, Tink | — | **20,682 — 96%** |
-| `mapping.txt` | — | 30 MB |
+| `app-release.apk` | 4,109,155 B | **2,470,571 B** |
+| R8 retained (`seeds.txt`) | 21,562 entries | **863** |
+| Deprecation warnings | 9 | **0** |
 
-**96% of everything kept is Tink**, held by that blunt rule — so nearly all the
-remaining shrinking lives in narrowing it, and narrowing it wrong is exactly what
-breaks the token store in release only. If you narrow it, narrow against
-`usage.txt` and **re-run the hardware test above each time**: a fresh install and
-a new access request, not just a launch.
+20,682 of those 21,562 entries were Tink — 96% of everything the shrinker had
+been forbidden to touch. That is what a single defensive keep rule costs when the
+library behind it reflects on its own registry.
 
-Everywhere else, add rules in response to an observed failure: a keep rule
-written on a guess silently defeats the shrinking you turned on, and nothing
-reports that.
+Add rules here only in response to an observed failure: a keep rule written on a
+guess silently defeats the shrinking you turned on, and nothing reports that.
 
 #### The part that is easy to miss
 
@@ -600,7 +576,6 @@ thing that will catch the three drifting apart.
 | `discovery/MdnsDiscovery.kt` | `NsdManager` browse for `_signalk-http._tcp` |
 | `settings/SettingsStore.kt` | server in DataStore, token in `KeystoreEncryptedPreferences` |
 | `settings/KeystoreEncryptedPreferences.kt` | AES-256-GCM under an Android Keystore key; a `SharedPreferences` so the call sites did not change |
-| `settings/LegacySecureStoreMigration.kt` | one-time move off `androidx.security-crypto`. **Delete once every station has upgraded** |
 | `StationViewModel.kt` | command state, the 250 ms heartbeat, the staleness ticker |
 | `ui/Momentary.kt` | the per-pointer momentary button — the multi-touch primitive |
 | `ui/HelmScale.kt` | the proportional scale, and the floors and ceilings it moves |
@@ -915,7 +890,7 @@ commands anything in earnest.
   current layout.
 
 - **The token store's migration is proven; its failure paths are not.** The
-  Keystore-backed store and the one-time move off `androidx.security-crypto`
+  Keystore-backed store and the (since deleted) one-time move off `androidx.security-crypto`
   were verified on hardware on 2026-09-10: the signed, R8-shrunk 0.208 installed
   over 0.1 on a Galaxy S25 (Android 16), logged `moved 4 value(s) out of the
   legacy secure store`, and came up on the control screen with `LINK connected`

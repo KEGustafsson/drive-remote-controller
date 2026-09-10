@@ -32,12 +32,14 @@ class SettingsStore(context: Context) {
   // same SharedPreferences interface so nothing below this line changed --
   // including the commit()/apply() distinction nextSessionGeneration depends on.
   //
-  // The migration runs before the first read and is committed synchronously,
-  // because clientId and the session generation are read immediately.
+  // There was a one-time migration here, off androidx.security-crypto's
+  // EncryptedSharedPreferences. It has been deleted: every station ran it, and
+  // keeping it meant keeping that library, Tink, and R8 keep rules for both.
+  //
+  // A station that somehow never ran a migrating build loses its stored token
+  // and asks for a new one -- the same recovery as any unreadable token.
   private val secure: SharedPreferences by lazy {
-    KeystoreEncryptedPreferences(appContext, SECURE_FILE, SECURE_KEY_ALIAS).also {
-      LegacySecureStoreMigration.migrateIfNeeded(appContext, it)
-    }
+    KeystoreEncryptedPreferences(appContext, SECURE_FILE, SECURE_KEY_ALIAS)
   }
 
   /** The configured server, or null until one has been chosen. */

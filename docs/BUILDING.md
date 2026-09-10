@@ -475,59 +475,33 @@ unzipping the artifacts in the Gradle cache rather than assumed:
 | Compose, AGP, AndroidX | Yes, as consumer rules inside the AARs | Nothing normally |
 | OkHttp 4.12 | Yes — `META-INF/proguard/okhttp3.pro` | The Conscrypt / BouncyCastle / OpenJSSE `-dontwarn` lines, if the build warns |
 | kotlinx.serialization 1.7.3 | Yes — in `kotlinx-serialization-core`, including an R8-specific `kotlinx-serialization-r8.pro` | Nothing for compiler-generated serializers, which is all of `:core`'s |
-| **`androidx.security:security-crypto` 1.1.0-alpha06 → Tink** | **No.** The AAR carries no `proguard.txt` at all, and `tink-android-1.8.0` ships only protobuf rules rather than its own | **Expect to write rules here** — Tink registers its key managers reflectively |
+| `KeystoreEncryptedPreferences` | n/a — platform AES-GCM, reflects on nothing | Nothing |
 
-**That last row still matters, but less than it did.** The token store no longer uses
-that library: `SettingsStore` goes through `KeystoreEncryptedPreferences`, which uses the
-platform's own AES-256-GCM under an Android Keystore key and pulls in no Tink. Tink
-survives only because `LegacySecureStoreMigration` reads the old store once on upgrade —
-so these rules protect a migration rather than the live path, and **they should be deleted
-in the same commit as that file**, once every station has run a migrating build. Doing so
-also returns the ~96% of shrinking they cost. The blunt rule while they are needed:
+**There is nothing left to keep by hand.** `android/app/proguard-rules.pro` carries no
+rules, only a note explaining why that is the end state and not an omission.
 
-```proguard
--keep class com.google.crypto.tink.** { *; }
--keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite { <fields>; }
-# Covers all three families below. Do not narrow this to a single package.
--dontwarn com.google.crypto.tink.**
-```
+Tink was the one exception, and an expensive one. It reached this build solely through
+`androidx.security-crypto`, whose only caller was `LegacySecureStoreMigration` — the
+one-time move of the token store off that library. Protecting it needed a blunt
+`-keep class com.google.crypto.tink.** { *; }`, because narrowing it risked stripping a key
+manager and breaking the stored token in the release build only, where no suite here would
+have caught it. It also needed `-dontwarn com.google.crypto.tink.**`, since Tink carries
+three families of unresolved reference — Error Prone annotations, google-api-client and
+joda-time, the last two via a `KeysDownloader` this app never calls — and R8 reports each
+family on a separate build, making per-package fixes a rebuild-and-see loop.
 
-**That last line is broad on purpose.** Tink carries references R8 cannot resolve, and
-each unresolved reference is a hard `ERROR` rather than a warning. There are three
-families, and **R8 reports one family per build** — so fixing them by name is several
-rounds of rebuild-and-see:
+Once every station had migrated, the file, the dependency and the rules went together.
+Measured on the same tree, only that change:
 
-| Missing | Referenced from |
-|---|---|
-| `com.google.errorprone.annotations.*` | Tink generally — compile-only annotations |
-| `com.google.api.client.http.*` | `KeysDownloader` — google-api-client |
-| `org.joda.time.Instant` | `KeysDownloader` — joda-time |
-
-`-dontwarn` suppresses unresolved references **originating in** the named classes, and all
-three originate in Tink, so one line covers the lot. AGP writes the narrower per-package
-list to `app/build/outputs/mapping/release/missing_rules.txt` as it discovers each family,
-which is worth reading but is not the shortest route to a green build.
-
-`KeysDownloader` fetches keysets over HTTP and **this app never uses it** — the token store
-is local. It survives only because the blunt `-keep` above keeps all of Tink; narrowing
-that keep would drop it, and this whole problem with it.
-
-**Measured, not guessed.** The change above and that rules file were applied to this tree
-on 2026-09-10 (AGP 8.7.3), built, and reverted:
-
-| | Unshrunk | With R8 |
+| | With the migration | Without |
 |---|---|---|
-| `app-release-unsigned.apk` | 8,239,654 B | **1,947,599 B** — 76% smaller |
-| Classes removed (`usage.txt`) | — | 48,358 lines |
-| Kept (`seeds.txt`) | — | 21,560 entries |
-| …of those, Tink | — | **20,682 — 96%** |
-| `mapping.txt` | — | 30 MB |
+| `app-release.apk` | 4,109,155 B | **2,470,571 B** |
+| R8 retained (`seeds.txt`) | 21,562 entries | **863** |
+| Deprecation warnings | 9 | **0** |
 
-**96% of everything R8 kept is Tink**, held by that one blunt rule. Nearly all the
-remaining shrinking therefore lives in narrowing it — and narrowing it wrong is exactly
-what breaks the token store in the release build only, where no suite here would catch it.
-If you narrow it, narrow against `usage.txt` and **repeat the hardware test**: a fresh
-install and a new access request, not merely a launch.
+20,682 of those 21,562 retained entries were Tink: 96% of everything the shrinker had been
+forbidden to touch, held by one defensive rule. Worth remembering the next time a keep rule
+looks like a cheap way out of a problem.
 
 Everywhere else, add rules in response to an actual observed failure rather than
 pre-emptively: a keep rule written on a guess quietly defeats the shrinking it was turned
