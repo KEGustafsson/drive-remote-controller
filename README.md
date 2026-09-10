@@ -154,15 +154,11 @@ hard-coded in source files.
 > time, so `platformio.ini` names no credential and nothing committed here does.
 >
 > Nothing has been published: this repository's whole history has been searched
-> and holds none of these values. They do sit in the **private** predecessor
-> repository's history, which is a place they would rather not be — rotate first
-> if that repository is ever made public or shared.
->
-> The better reason to rotate is reuse: the OTA password is also the WiFi
-> password, and also a sibling project's OTA password. [BUILDING.md
-> §8](docs/BUILDING.md#8-credentials-and-what-must-be-rotated) is the procedure —
-> change it in `secrets.h` and on all three boards together, over serial, since
-> the boards still expect the old one for OTA.
+> and holds none of these values. The remaining copies are in two private
+> repositories that stay private, so rotation is closed rather than pending
+> (owner decision). [BUILDING.md
+> §8](docs/BUILDING.md#8-credentials-and-what-must-be-rotated) is the procedure
+> if either is ever made public or shared.
 
 ---
 

@@ -184,8 +184,8 @@ fill in your own values. It holds everything specific to one boat:
 | `SECRET_SK_SERVER_ADDRESS` / `_PORT` | `config.h`'s `kSkServerAddress` / `kSkServerPort`, compiled in as the default server |
 
 Nothing committed to this repository holds a credential or names the boat's network. Read
-[§8](#8-credentials-and-what-must-be-rotated) for what is still owed on the values that
-were committed before.
+[§8](#8-credentials-and-what-must-be-rotated) for where the older copies live and why
+rotation is closed rather than pending.
 
 ---
 
@@ -730,9 +730,13 @@ history has been searched to confirm it — `git log -S` across all 19 commits, 
 password and address, finds nothing. They exist in the *predecessor* repository's history,
 which is **private**.
 
-So this is housekeeping, not an incident. Rotate when convenient. The order that would
-change is: **if that repository is ever made public, archived publicly, or shared, rotate
-first** — its history goes with it.
+**Owner decision, 2026-09-10: this is closed, not deferred.** The predecessor repository
+and the sibling `SensESP_engines` project both stay private, so the reuse that would
+otherwise argue for rotation has no route to disclosure. Nothing here is waiting on
+anything, and this section is a procedure for if it is ever needed — not an open task.
+
+The one thing that would reopen it: **making either repository public, archiving it
+publicly, or sharing it.** Rotate first in that case, because their histories go with them.
 
 | Where | What | In this repository? |
 |---|---|---|
@@ -772,12 +776,12 @@ from `secrets.example.h` instead, and a guard checks each published image for th
 [§10.3](#103-the-one-thing-that-makes-firmware-releasable-at-all). Any binary you build
 locally and hand to somebody has had no such check.
 
-**What is owed, in order:**
+**The procedure, if it is ever needed** — nothing below is outstanding:
 
 1. Rotate the OTA password in your `secrets.h`, then reflash all three boards **over
    serial**, since the boards still expect the old password for OTA. One place to change
-   now — and the reason to bother is reuse: the same string is also the WiFi password, and
-   the sibling `SensESP_engines` project's OTA password.
+   now. Note the same string is also the WiFi password and the sibling `SensESP_engines`
+   project's OTA password, so all three move together.
 2. Rotate the boat's WiFi passwords. They are not in this repository, but they are in the
    predecessor repository's history.
 3. Remember that this repository is not where they are. Rewriting *its* history would

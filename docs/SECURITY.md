@@ -72,15 +72,15 @@ and `scripts/ota_auth.py` injects the OTA password from it at upload time so
 `platformio.ini` needs no second copy. This repository's entire history has been searched
 for every value and holds none of them.
 
-They do exist in the *predecessor* repository's history, which is **private**. That is a
-real place they would rather not be, and it becomes an exposure the day that repository is
-made public, archived publicly or shared — but nothing has been disclosed, and calling
-these values "burned" would overstate it.
+They do exist in the *predecessor* repository's history, and the same OTA password is
+reused by the sibling `SensESP_engines` project — so one disclosure would reach the boat's
+WiFi, all three units and that project together. **Both of those repositories are private
+and stay that way (owner decision, 2026-09-10)**, which closes the route: nothing has been
+disclosed and nothing is pending.
 
-The sharper weakness is reuse: the OTA password is also the WiFi password, and also the
-sibling `SensESP_engines` project's OTA password, so one disclosure anywhere reaches all
-three. [BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated) is the
-procedure.
+What would reopen it is making either repository public, archiving it publicly or sharing
+it. [BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated) is the procedure
+if that day comes.
 
 **The OTA password is the whole barrier to reflashing a board that drives a clutch and a
 thruster contactor.** It is one static shared secret, the same on all three units, with
@@ -218,12 +218,12 @@ Not a roadmap, and not a commitment — the honest list of what the gaps above w
 this ever went to a second boat. Three items that used to be on it are done, and are
 struck through rather than deleted so the record of what changed stays readable.
 
-1. Rotate the reused OTA and WiFi password
-   ([BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated)). Still open, and
-   worth doing for the reuse rather than for any repository: one value covers the boat's
-   WiFi, all three units' OTA, and a sibling project. ~~Stop committing them~~ — done:
-   `secrets.h` is untracked, `platformio.ini`'s duplicate is gone, and this repository's
-   history has never held either.
+1. ~~Rotate every credential that has ever been committed~~ — **closed by owner decision,
+   2026-09-10.** `secrets.h` is untracked, `platformio.ini`'s duplicate is gone, and this
+   repository's history has never held either. The remaining copies are in two private
+   repositories that stay private, so the reuse has no route to disclosure. Making either
+   public would reopen this before anything else
+   ([BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated)).
 2. Per-unit OTA passwords at minimum; signed firmware images and secure boot properly.
    Still open, and it is the largest remaining gap.
 3. Pin the SensESP dependency to a commit rather than a branch. Still open. ~~Produce an
