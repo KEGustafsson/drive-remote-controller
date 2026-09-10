@@ -898,6 +898,17 @@ commands anything in earnest.
   screenshot above is kept as evidence of the defect, not a picture of the
   current layout.
 
+- **The token store's migration is proven; its failure paths are not.** The
+  Keystore-backed store and the one-time move off `androidx.security-crypto`
+  were verified on hardware on 2026-09-10: the signed, R8-shrunk 0.208 installed
+  over 0.1 on a Galaxy S25 (Android 16), logged `moved 4 value(s) out of the
+  legacy secure store`, and came up on the control screen with `LINK connected`
+  — so the migrated token authenticated against the live server. What is still
+  untested is what happens when the Keystore *invalidates* a key: app data
+  restored to another device, or the secure lock screen removed. That path is
+  written to read as "no token" and ask for a new one, and 12 JVM tests cover
+  the logic, but no device has been put into that state.
+
 - **The layout floors have never been measured on a shrunk build.**
   `:app:testDebugUnitTest` runs against the **debug** variant, and R8 has been on
   for release since 2026-09-10. So the suite that guarantees no live contact

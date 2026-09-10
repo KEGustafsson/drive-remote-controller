@@ -50,7 +50,19 @@ fun git(vararg args: String): String =
 // This replaced a hard-coded versionCode = 1. Any release built from this file
 // therefore carries a far higher code than the old value, so an install over an
 // earlier hand-numbered build is an upgrade rather than a refused downgrade.
-val commitCount = git("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
+//
+// OFFSET, because this repository is a spinoff and its commit count restarted.
+// The predecessor reached 156 and phones are carrying versionCode 153 from it.
+// versionCode may never go backwards -- Android refuses the install outright --
+// so the count is lifted past the highest number ever published from the old
+// repository, with headroom. Verified against a real device: a Nokia 7.2 on
+// this network holds 0.153.
+//
+// Do not remove this once the counts pass 200. Lowering it would re-break every
+// phone that installed a build made while it was here.
+val versionCodeOffset = 200
+
+val commitCount = (git("rev-list", "--count", "HEAD").toIntOrNull() ?: 1) + versionCodeOffset
 val appVersion = "0.$commitCount"
 
 // Release signing. The keystore is named by DRIVEREMOTE_KEYSTORE (the release

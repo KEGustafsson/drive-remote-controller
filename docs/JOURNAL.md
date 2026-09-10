@@ -1,5 +1,38 @@
 # Work Journal
 
+## 2026-09-10 — The version number the spinoff broke, found on a real phone
+
+Installing the rewritten token store on hardware turned up a defect that no
+build, suite or workflow here could have caught.
+
+**`versionCode` went backwards.** It is the commit count. The predecessor
+repository reached 156 and phones carry versionCode 153 from it; this repository
+is at 8. Android refuses a lower versionCode outright, so every existing station
+would have been unable to update — and the only way through would have been an
+uninstall, which clears the Signal K token. The release pipeline had no defence:
+`release.yml` and `app/build.gradle.kts` both derive the version from the commit
+count, so they agreed with each other and were both wrong. The consistency check
+between them proves they match, not that they are sane.
+
+Fixed with an offset of 200 in both places, documented as not removable —
+lowering it later would re-break any phone that installed a build made while it
+was there. Version is now 0.208.
+
+**Then the migration was proven.** The signed, R8-shrunk 0.208 was installed over
+0.1 on a Galaxy S25 (Android 16, SDK 36) as an in-place upgrade — same release
+key, so app data survived. It logged `SecureStoreMigration: moved 4 value(s) out
+of the legacy secure store` and came up on the control screen with `LINK
+connected`: the token moved from Tink's EncryptedSharedPreferences into the
+Keystore-backed store and still authenticated against the live server. No crash,
+no decrypt failure, no dropped writes. That is the part 12 JVM tests could not
+reach, because Robolectric has no AndroidKeyStore.
+
+Worth recording how the phone was found at all: it was advertising over mDNS but
+not connected, and `adb devices` lists only connected devices. `adb mdns
+services` showed it, and `adb connect` brought it up. Two other devices were
+already attached and neither was the S25 — a Nokia 7.2 sitting exactly on the new
+minSdk 30 floor, and a Galaxy S20 FE.
+
 ## 2026-09-10 — Spinoff: every reference re-pointed, and a credential the move made public
 
 Session: reference audit of the new standalone repository

@@ -109,7 +109,11 @@ jobs:
         run: |
           set -euo pipefail
           COUNT=$(git rev-list --count HEAD)
-          VERSION="0.$COUNT"
+          # Offset to match app/build.gradle.kts: this repository is a spinoff
+          # and its commit count restarted, while phones carry versionCode 153
+          # from the predecessor. The android job asserts the two agree, so this
+          # constant and versionCodeOffset there must move together.
+          VERSION="0.$((COUNT + 200))"
           echo "$VERSION" | grep -Eq '^0\.[0-9]+$' \
             || { echo "::error::computed version '$VERSION' is not a version"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
