@@ -1,25 +1,31 @@
 [versions]
-kotlin = "2.0.21"
-junit = "5.11.4"
-kotlinxSerialization = "1.7.3"
+kotlin = "2.4.20"
+junit = "5.14.4"
+kotlinxSerialization = "1.11.0"
 
 # Android. Only resolved when :app is configured (i.e. an SDK is present) --
 # see settings.gradle.kts -- so a :core-only build never fetches any of this.
-agp = "8.7.3"
+agp = "8.13.2"
 composeBom = "2024.12.01"
 okhttp = "4.12.0"
-androidxCore = "1.15.0"
+androidxCore = "1.16.0"
 androidxActivity = "1.9.3"
 androidxLifecycle = "2.8.7"
 androidxDatastore = "1.1.1"
-androidxSecurity = "1.1.0-alpha06"
-# 4.14 is the first release with an API 35 sandbox, which is what :app compiles
-# against. Do not drop below it without also dropping the @Config(sdk = [35]).
-robolectric = "4.14.1"
+# 1.1.0 leaves alpha, and deprecates MasterKey and EncryptedSharedPreferences --
+# which is where SettingsStore keeps the Signal K token. Still functional, and
+# still what proguard-rules.pro's Tink keeps protect; the replacement is a
+# separate piece of work. Warnings, not errors, at compile time.
+androidxSecurity = "1.1.0"
+# Robolectric's sandbox level is tied to compileSdk: 4.14 was the first release
+# with an API 35 sandbox, which is what :app compiles against and what the three
+# @Config(sdk = [35]) suites ask for. Do not drop below 4.14, and when compileSdk
+# moves, move this and those @Config values together.
+robolectric = "4.16.1"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
-junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.4" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.14.4" }
 # Robolectric and Compose's test rule are both JUnit4-only, and this build runs
 # on the JUnit Platform (useJUnitPlatform, for :core's Jupiter suites). The
 # vintage engine runs the JUnit4 tests there rather than forcing the whole
