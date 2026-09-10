@@ -119,6 +119,16 @@ data class StationView(
   /** The heading HH reports it is holding, or null if it has not said. */
   val heldDeg: Double?,
 
+  /**
+   * The boat's CURRENT heading, from HH's own fused estimate, or null.
+   *
+   * Separate from [heldDeg] on purpose. HH publishes its setpoint as the held
+   * target only while it is actually holding, and as a mirror of this value
+   * otherwise -- so on a station that is not the one holding, the setpoint is
+   * somebody else's target and says nothing about where the boat is pointing.
+   */
+  val currentHeadingDeg: Double?,
+
   /** HH is waiting out the thruster control box's reversal interlock. */
   val reversalPending: Boolean,
 
@@ -216,6 +226,12 @@ fun deriveStationView(
     stbdOverriddenBy = overrideNote(driveCommandable, stbdSource),
     thrusterOverriddenBy = overrideNote(thrusterCommandable, thrusterSource),
     heldDeg = plausibleHeadingOrNull(store[SkContract.HH_SETPOINT]),
+    currentHeadingDeg =
+      (store[SkContract.HH_FUSED_HEADING_RAD] as? Number)?.toDouble()?.let { rad ->
+        // Published in radians; every other angle here is degrees. Normalised to
+        // 0..360 because the fused value is free to run negative.
+        plausibleHeadingOrNull(((Math.toDegrees(rad) % 360.0) + 360.0) % 360.0)
+      },
     reversalPending = store.boolOrNull(SkContract.HH_REVERSAL_PENDING) == true,
     rxLinkUp = store.boolOrNull(SkContract.RX_LINK_UP),
     rxLinkOk = store.boolOrNull(SkContract.RX_LINK_OK),

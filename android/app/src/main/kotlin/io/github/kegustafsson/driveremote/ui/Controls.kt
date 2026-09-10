@@ -444,16 +444,23 @@ fun ThrusterControl(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
-          formatHeading(view.heldDeg),
+          // Two different quantities, and which one is meaningful depends on
+          // whether THIS station is the one holding.
+          //
+          // Armed: heldDeg is our setpoint -- the heading being held.
+          //
+          // Not armed: heldDeg is HH's setpoint, which mirrors the fused heading
+          // ONLY while nothing is holding. If another station is holding, it is
+          // that station's target, and labelling it "CURRENT HEADING" put a
+          // number under a caption that did not describe it. So an idle station
+          // reads the fused heading directly, which is the current heading
+          // whoever is holding and whether anyone is.
+          formatHeading(if (enabled) view.heldDeg else view.currentHeadingDeg),
           fontSize = helm.text(30.sp),
           fontWeight = FontWeight.Bold,
           color = if (enabled) DriveColors.ink else DriveColors.inkMuted,
         )
         Text(
-          // Disarmed, HH mirrors this path to the fused heading: the number is
-          // the boat's CURRENT heading, not one being held. With the chooser
-          // reachable while disarmed this panel is easy to open with nothing
-          // engaged, and "HOLDING" there would be a lie.
           if (enabled) "°  HOLDING · TRIM ${formatTrim(trimDeg)}°" else "°  CURRENT HEADING",
           fontSize = helm.text(13.sp),
           color = DriveColors.inkMuted,

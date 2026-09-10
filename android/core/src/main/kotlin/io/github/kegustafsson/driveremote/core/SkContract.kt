@@ -70,6 +70,18 @@ object SkContract {
   const val HH_ARMED = "control.remoteController.hh.armed"
   const val HH_REVERSAL_PENDING = "control.remoteController.hh.reversalPending"
 
+  /**
+   * HH's own fused heading, in RADIANS -- the boat's current heading as HH
+   * believes it.
+   *
+   * Not part of the `control.remoteController.*` command contract: it is
+   * telemetry HH publishes about itself. It is here because HH_SETPOINT is only
+   * the held target while HH is actually holding, and mirrors this value the
+   * rest of the time -- so a station that is not the one holding cannot use
+   * HH_SETPOINT to show a current heading.
+   */
+  const val HH_FUSED_HEADING_RAD = "sensors.headingHold.fusedHeading"
+
   /** Every path this station subscribes to, for the single subscribe message. */
   val SUBSCRIBE_PATHS: List<String> =
     listOf(
@@ -90,6 +102,7 @@ object SkContract {
       HH_SETPOINT,
       HH_ARMED,
       HH_REVERSAL_PENDING,
+      HH_FUSED_HEADING_RAD,
     )
 
   // ---- Endpoints --------------------------------------------------------

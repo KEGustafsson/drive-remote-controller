@@ -10,6 +10,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -76,6 +77,38 @@ class ThrusterModeSelectionTest {
     compose.onNodeWithText("MANUAL").performClick()
 
     assertEquals(ThrusterMode.MANUAL, chosen)
+  }
+
+  /**
+   * Reported from the boat: one station holds and trims a heading, and a second,
+   * idle station in HOLD mode shows that number under "CURRENT HEADING".
+   *
+   * HH publishes `hh.setpointDeg` as the held target only while it is actually
+   * holding, and as a mirror of its fused heading otherwise (control_step.cpp).
+   * A station that is not the one holding therefore cannot read a current
+   * heading out of it -- it is somebody else's target. The firmware is right;
+   * the app was reading the wrong field.
+   *
+   * The fixture sets heldDeg = 96 and currentHeadingDeg = 172 deliberately, so
+   * these two tests can tell the quantities apart.
+   */
+  @Test
+  fun `an idle station shows the current heading, not another station's setpoint`() {
+    compose.showControlScreen(mode = ThrusterMode.HOLD)
+
+    compose.onNodeWithText("172", substring = true).assertExists()
+    compose.onAllNodesWithText("96", substring = true).fetchSemanticsNodes().let {
+      assertEquals("the held setpoint of another station must not be shown here", 0, it.size)
+    }
+    compose.onNodeWithText("CURRENT HEADING", substring = true).assertExists()
+  }
+
+  @Test
+  fun `the station that is holding shows the heading it holds`() {
+    compose.showControlScreen(mode = ThrusterMode.HOLD, view = holding)
+
+    compose.onNodeWithText("96", substring = true).assertExists()
+    compose.onNodeWithText("HOLDING", substring = true).assertExists()
   }
 
   /**
@@ -238,12 +271,20 @@ private val disarmed =
     stbdOverriddenBy = null,
     thrusterOverriddenBy = null,
     heldDeg = 96.0,
+    currentHeadingDeg = 172.0,
     reversalPending = false,
     rxLinkUp = true,
     rxLinkOk = true,
     rxMasterEnable = true,
     hhArmed = false,
     thrusterState = "off",
+  )
+
+/** The same station, but armed and commanding the thruster. */
+private val holding =
+  disarmed.copy(
+    controlState = ControlState.YOU,
+    thrusterCommandable = true,
   )
 
 /** Holding the token, but the thruster unit has stopped answering. */

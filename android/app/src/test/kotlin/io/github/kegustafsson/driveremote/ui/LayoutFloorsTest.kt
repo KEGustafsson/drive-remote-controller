@@ -723,6 +723,7 @@ private val armedAndLive =
     stbdOverriddenBy = null,
     thrusterOverriddenBy = null,
     heldDeg = 96.0,
+    currentHeadingDeg = 172.0,
     reversalPending = false,
     rxLinkUp = true,
     rxLinkOk = true,
