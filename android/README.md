@@ -903,11 +903,19 @@ commands anything in earnest.
   were verified on hardware on 2026-09-10: the signed, R8-shrunk 0.208 installed
   over 0.1 on a Galaxy S25 (Android 16), logged `moved 4 value(s) out of the
   legacy secure store`, and came up on the control screen with `LINK connected`
-  — so the migrated token authenticated against the live server. What is still
-  untested is what happens when the Keystore *invalidates* a key: app data
-  restored to another device, or the secure lock screen removed. That path is
-  written to read as "no token" and ask for a new one, and 12 JVM tests cover
-  the logic, but no device has been put into that state.
+  — so the migrated token authenticated against the live server.
+
+  Removing the token was then tried on a device: it dropped to the connect
+  screen and asked to be authorised again, with no crash and no hang. That is
+  the recovery this design leans on, seen on hardware rather than argued for.
+
+  What is still untested is the OTHER way of losing a token: the Keystore
+  *invalidating* a key, so the ciphertext is still there but will not decrypt —
+  app data restored to another device, or the secure lock screen removed. The
+  intended outcome is the same connect screen, and
+  `readingAnUndecryptableValueLooksLikeAbsence` covers the logic on the JVM, but
+  no device has been put into that state. It is a different trigger reaching the
+  same path, not the same test.
 
 - **The layout floors have never been measured on a shrunk build.**
   `:app:testDebugUnitTest` runs against the **debug** variant, and R8 has been on
