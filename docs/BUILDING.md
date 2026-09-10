@@ -750,9 +750,15 @@ describes. Everything else is SAFETY.md's job.
 
 ## 8. Credentials, and what must be rotated
 
-**This repository is public.** The rotation below was written as the thing to do *before*
-that happened, and it has not been done — so read this section as overdue work, not as a
-precaution.
+**Nothing here has been published.** Worth being precise, because an earlier version of
+this section was not: the credentials have never been in this repository, and its whole
+history has been searched to confirm it — `git log -S` across all 19 commits, for every
+password and address, finds nothing. They exist in the *predecessor* repository's history,
+which is **private**.
+
+So this is housekeeping, not an incident. Rotate when convenient. The order that would
+change is: **if that repository is ever made public, archived publicly, or shared, rotate
+first** — its history goes with it.
 
 | Where | What | In this repository? |
 |---|---|---|
@@ -775,8 +781,13 @@ configuration rather than a tunable, so it moved to `SECRET_SK_SERVER_ADDRESS` i
 `secrets.h` too, along with the port; `config.h` includes the same
 `secrets.h`/`secrets.example.h` pair the mains do and reads both macros.
 
-**Nothing committed to this repository now names the boat's network or holds a
-credential.** The values themselves are still burned; see the rotation above.
+**Nothing committed to this repository names the boat's network or holds a credential** —
+not in the working tree and not anywhere in its history.
+
+The better reason to rotate is not git at all. `docs/JOURNAL.md` records that the OTA
+password is the same string as the WiFi password, and the same OTA password as the sibling
+`SensESP_engines` project. Reuse across a boat's networks and a second firmware project is
+a weakness on its own terms, whatever any repository holds.
 
 The OTA password is the only thing standing between a device on the boat's LAN and
 reflashing a board that drives a clutch and a thruster contactor.
@@ -790,13 +801,13 @@ locally and hand to somebody has had no such check.
 **What is owed, in order:**
 
 1. Rotate the OTA password in your `secrets.h`, then reflash all three boards **over
-   serial**, since the boards still expect the old password for OTA. There is only one
-   place to change now, but the old value is burned: it was committed before, and the
-   same string was also the WiFi password.
+   serial**, since the boards still expect the old password for OTA. One place to change
+   now — and the reason to bother is reuse: the same string is also the WiFi password, and
+   the sibling `SensESP_engines` project's OTA password.
 2. Rotate the boat's WiFi passwords. They are not in this repository, but they are in the
    predecessor repository's history.
-3. Understand that removing a file forward does not scrub git history. Either rewrite
-   history, or treat every credential that has ever been committed as burned.
+3. Remember that this repository is not where they are. Rewriting *its* history would
+   achieve nothing; the copies are in the predecessor repository, which is private.
 
 [SECURITY.md](SECURITY.md) covers the rest of the picture: the threat model, what the
 system does about each threat, and where it stands against the EU Cyber Resilience Act's

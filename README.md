@@ -153,13 +153,16 @@ hard-coded in source files.
 > OTA password lives: `esp32/scripts/ota_auth.py` reads it from there at upload
 > time, so `platformio.ini` names no credential and nothing committed here does.
 >
-> **That does not make the existing password safe.** It was committed to this
-> project's predecessor repository and is in its history, and removing a file
-> forward never scrubs history. Treat every credential that has ever been
-> committed as burned, and rotate it — [BUILDING.md
-> §8](docs/BUILDING.md#8-credentials-and-what-must-be-rotated) is the procedure.
-> It has to change in `secrets.h` and on all three boards together, over serial,
-> since the boards still expect the old one for OTA.
+> Nothing has been published: this repository's whole history has been searched
+> and holds none of these values. They do sit in the **private** predecessor
+> repository's history, which is a place they would rather not be — rotate first
+> if that repository is ever made public or shared.
+>
+> The better reason to rotate is reuse: the OTA password is also the WiFi
+> password, and also a sibling project's OTA password. [BUILDING.md
+> §8](docs/BUILDING.md#8-credentials-and-what-must-be-rotated) is the procedure —
+> change it in `secrets.h` and on all three boards together, over serial, since
+> the boards still expect the old one for OTA.
 
 ---
 

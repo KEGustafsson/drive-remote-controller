@@ -84,11 +84,11 @@ work around them:
 **Already known, and documented rather than reported**
 
 The [threat model](docs/SECURITY.md#3-the-known-weaknesses)
-covers these in full; in short: the OTA password is a single shared static secret and the
-value in use was committed to the predecessor repository, along with the WiFi passwords;
-the firmware is unsigned and the boards have no secure boot; one dependency is tracked by
-a moving branch ref; the Gradle build has no dependency verification; and traffic on the
-boat's LAN is cleartext. A report that these are true is not a new finding.
+covers these in full; in short: the OTA password is a single shared static secret, reused
+as the boat's WiFi password and by a sibling project; the firmware is unsigned and the
+boards have no secure boot; one dependency is tracked by a moving branch ref; the Gradle
+build has no dependency verification; and traffic on the boat's LAN is cleartext. No
+credential is in this repository or its history. A report that these are true is not a new finding.
 A report that one of them is exploitable in a way the document does not describe is.
 
 A finding in a **published release asset** always is worth reporting, whether or not the

@@ -66,16 +66,21 @@ someone standing at the helm.
 
 Stated plainly, because a security document that only lists mitigations is marketing.
 
-**No credential is committed any more, and every one of them is still burned.**
+**No credential is committed, and none ever was here.**
 `esp32/include/secrets.h` — the boat's WiFi passwords and the OTA password — is gitignored,
 and `scripts/ota_auth.py` injects the OTA password from it at upload time so
-`platformio.ini` no longer needs a second copy. That fixes the leak going forward and
-fixes nothing behind: every one of these values was committed to this project's
-predecessor repository and is in its history, and removing a file forward does not scrub
-history. Treat each of them as already disclosed.
-[BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated) is the rotation
-procedure. It is open work, and it is the weakness on this page with the shortest path to
-a moving machine.
+`platformio.ini` needs no second copy. This repository's entire history has been searched
+for every value and holds none of them.
+
+They do exist in the *predecessor* repository's history, which is **private**. That is a
+real place they would rather not be, and it becomes an exposure the day that repository is
+made public, archived publicly or shared — but nothing has been disclosed, and calling
+these values "burned" would overstate it.
+
+The sharper weakness is reuse: the OTA password is also the WiFi password, and also the
+sibling `SensESP_engines` project's OTA password, so one disclosure anywhere reaches all
+three. [BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated) is the
+procedure.
 
 **The OTA password is the whole barrier to reflashing a board that drives a clutch and a
 thruster contactor.** It is one static shared secret, the same on all three units, with
@@ -183,7 +188,7 @@ commands machinery, so this is where the system stands against each. Rows are ma
 | (2)(a) No known exploitable vulnerabilities at release | **Partial.** Dependabot proposes grouped weekly updates for Gradle, npm and the Actions, and is live. CodeQL is configured for five languages — including the firmware's pure control core, through its native build — and verified to analyse, but **is switched off**: code scanning has not been enabled on the repository, so its jobs are gated behind a repository variable and a status job reports that on every run. It is free to enable now that the repository is public. Two further gaps are structural: no scanning follows the firmware's branch-tracked SensESP dependency, and there is no Gradle dependency verification. |
 | (2)(b) Secure by default configuration | **Yes.** The plugin installs **disabled**; no station comes armed; arming is edge-triggered and requires a live unit; the drive unit refuses control unless both levers are proven neutral; the app opens in MANUAL with trim 0. Every default is the inert one. |
 | (2)(c) Security updates | **Partial.** There is now a release channel: a manually triggered pipeline builds every artifact, signs the APK, and publishes it with a checksum, an SBOM and a provenance attestation. The firmware half is still weak — OTA is manual, the image is unsigned, the boards have no secure boot, and one shared static password authorises a flash. There is no automatic update anywhere, by design: nothing here calls out to a server. |
-| (2)(d) Protection from unauthorised access | **Partial.** Commanding requires authentication through `signalk-server`, and the intent route is registered at `readwrite` so it admits token stations rather than only admin sessions. It rests entirely on server security being enabled (§4), and on an OTA password that is shared, static and already burned. |
+| (2)(d) Protection from unauthorised access | **Partial.** Commanding requires authentication through `signalk-server`, and the intent route is registered at `readwrite` so it admits token stations rather than only admin sessions. It rests entirely on server security being enabled (§4), and on an OTA password that is a single static secret shared by all three units, the boat's WiFi and a sibling project. |
 | (2)(e) Confidentiality of data | **Partial.** Tokens at rest are encrypted with AES-256-GCM under an Android Keystore key, with cloud backup disabled, and the Android station refuses cleartext off private networks. Encryption failing drops the write rather than storing plaintext, and that is counted rather than silent. On the boat's own LAN everything is plain HTTP by construction. |
 | (2)(f) Integrity of data, commands and configuration | **Yes, at the application layer.** Per-client monotonic `seq`, monotonic-clamped arm/disarm edge baselines, strict validation at every boundary with unrecognised values degrading to the safe one, and a single server-side authority as the sole intended writer of the command paths. No transport-layer integrity: the LAN is cleartext, so this is replay and ordering resistance, not authentication of the wire. |
 | (2)(g) Data minimisation | **Yes.** The system carries switch positions, commands, headings and liveness. Nothing is recorded, nothing is stored beyond each station's own settings and token, and nothing leaves the boat. |
@@ -213,10 +218,12 @@ Not a roadmap, and not a commitment — the honest list of what the gaps above w
 this ever went to a second boat. Three items that used to be on it are done, and are
 struck through rather than deleted so the record of what changed stays readable.
 
-1. Rotate every credential that has ever been committed
-   ([BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated)). Still open.
-   ~~Stop committing them~~ — done: `secrets.h` is untracked and `platformio.ini`'s
-   duplicate OTA password is gone, which stops the bleeding but scrubs nothing.
+1. Rotate the reused OTA and WiFi password
+   ([BUILDING.md §8](BUILDING.md#8-credentials-and-what-must-be-rotated)). Still open, and
+   worth doing for the reuse rather than for any repository: one value covers the boat's
+   WiFi, all three units' OTA, and a sibling project. ~~Stop committing them~~ — done:
+   `secrets.h` is untracked, `platformio.ini`'s duplicate is gone, and this repository's
+   history has never held either.
 2. Per-unit OTA passwords at minimum; signed firmware images and secure boot properly.
    Still open, and it is the largest remaining gap.
 3. Pin the SensESP dependency to a commit rather than a branch. Still open. ~~Produce an

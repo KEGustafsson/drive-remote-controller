@@ -133,7 +133,8 @@ backstop, not the first place to find out.
   OTA password used to be duplicated in `platformio.ini` as
   `upload_flags = --auth=…`, and `scripts/ota_auth.py` now injects it from
   `secrets.h` at upload time instead. Never write a credential into
-  `platformio.ini`. Rotation of the burned values is still open (BUILDING.md §8).
+  `platformio.ini`. Rotating the reused OTA/WiFi password is still open, for the
+  reuse rather than for any repository -- nothing is committed here (BUILDING.md §8).
 - If unsure of an API, read the working source in `esp32/src/` first, then the
   fetched SensESP source under `esp32/.pio/libdeps/<env>/SensESP/` (present after
   any `pio run`). Do not invent function names.
