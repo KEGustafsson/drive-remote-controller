@@ -1,5 +1,43 @@
 # Work Journal
 
+## 2026-09-10 — An idle station reading somebody else's setpoint as a heading
+
+Reported from the boat, and the first defect this project has had found by using
+it rather than by a suite: one station holds and trims a heading, and a second,
+idle station with HOLD selected shows that number under "CURRENT HEADING".
+
+**The firmware was right.** `control_step.cpp` publishes `hh.setpointDeg` as the
+held target only while HH is actually HOLDING in HOLD mode, and as a mirror of
+the fused heading everywhere else. Its own comment says why that beats stamping
+a placeholder: "a fabricated 0 would be indistinguishable from a perfect hold,
+which is the one reading a consumer is least likely to question."
+
+The app read that field unconditionally. Armed it is our setpoint and "HOLDING"
+is true; not armed it is whatever HH's setpoint happens to be, which equals the
+current heading only while NOBODY is holding. The owner put it precisely: the
+armed case was already right, the not-armed case was the issue.
+
+An idle station now reads `sensors.headingHold.fusedHeading` instead -- HH's own
+fused estimate, which is the current heading whoever is holding and whether
+anyone is.
+
+**A proxy considered and rejected, which would have been worse than the bug.**
+Before the owner narrowed it down, the plan was to fix the *caption* using
+`hhArmed && mode == HOLD` as "HH is holding". `safety_fsm.cpp` sets `armed` for
+BOTH `kArmedIdle` and `kHolding`, and on lost heading lock a hold drops to
+`kArmedIdle` while staying armed (SAFETY.md rule 6, graceful lost-lock). That
+condition would therefore have displayed "HOLDING" with nothing held -- the exact
+false confidence rule 6 exists to prevent. Reading the FSM before trusting the
+flag is what caught it.
+
+Two regression tests, with the fixtures deliberately carrying different numbers
+(`heldDeg = 96`, `currentHeadingDeg = 172`) so the quantities cannot be confused.
+The idle-station test was checked against the pre-fix code and goes red there,
+which is the only thing that makes it a regression test rather than a
+description.
+
+Shipped as 0.217 to all three stations and confirmed working on the boat.
+
 ## 2026-09-10 — The version number the spinoff broke, found on a real phone
 
 Installing the rewritten token store on hardware turned up a defect that no
