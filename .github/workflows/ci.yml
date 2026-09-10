@@ -315,7 +315,12 @@ jobs:
           pathlib.Path("dirty.bin").write_bytes(b"\x00" * 64 + b"guard-self-test-value")
           PY
           python scripts/check_no_secrets.py --secrets-file fixture-secrets.h clean.bin
-          if python scripts/check_no_secrets.py --secrets-file fixture-secrets.h dirty.bin; then
+          # The dirty run is EXPECTED to fail, and the guard announces its refusal
+          # with a `::error::` line. Let that reach the log and GitHub annotates a
+          # passing job with an error, which reads exactly like a broken build.
+          # Capture it, and print it only if the guard did the wrong thing.
+          if guard_output=$(python scripts/check_no_secrets.py                               --secrets-file fixture-secrets.h dirty.bin 2>&1); then
+            echo "$guard_output"
             echo "::error::the credential guard passed a binary that contains a committed credential"
             exit 1
           fi
