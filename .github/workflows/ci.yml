@@ -1,0 +1,333 @@
+name: CI
+
+# Everything in this repository that can be checked without hardware.
+#
+# Nothing here proves the firmware WORKS -- that needs SAFETY.md's commissioning
+# checklists on real boards. What it does prove is that the pure control core's
+# decisions still hold, that all three firmwares still compile against their
+# configured dependencies, that the plugin's arming authority and UI still
+# behave, and that the Android station's live controls still meet their touch
+# floors. Those are exactly the things that broke silently before: the reversal
+# dwell shipped mismatched with every document for a whole commit, and the
+# Android drive buttons shrank to 4.7 dp while still commanding a machine. In
+# both cases the only suites that could have caught it were never run
+# automatically.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push supersedes an in-flight run on the same ref. Never cancel main:
+# its runs are the record of what was actually verified on the trunk.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The pure control core (esp32/lib/control_core) on the host: arbitration, the
+  # control law, filters, parsers, state machines, and the wired heading-hold
+  # pipeline. Runs in seconds and covers all three firmwares' logic at once --
+  # this is the job that should stay green above all others.
+  # ---------------------------------------------------------------------------
+  native-tests:
+    name: Pure core (pio test -e native)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: esp32
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # No `cache: pip` here: it keys the cache off a requirements.txt or
+      # pyproject.toml, and this repo has neither -- PlatformIO is installed
+      # ad-hoc below. Setting it fails the job outright ("No file ... matched").
+      # Nothing is lost: platformio is a small pure-Python wheel, and the cache
+      # that actually matters is ~/.platformio (toolchains, frameworks), below.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      # env:native pulls only the Unity test framework -- no toolchain, no
+      # SensESP -- so this cache stays small and warms in one run.
+      - name: Cache PlatformIO
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.platformio
+          key: pio-native-${{ runner.os }}-${{ hashFiles('esp32/platformio.ini') }}
+          restore-keys: pio-native-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Run host tests
+        run: pio test -e native
+
+  # ---------------------------------------------------------------------------
+  # All three firmwares must compile. Split into a matrix so a break is
+  # attributable to one unit at a glance rather than to "the firmware".
+  # fail-fast is off for the same reason: if TX and HH both break, see both.
+  # ---------------------------------------------------------------------------
+  firmware-build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [tx_shesp32, rx_shesp32, hh_shesp32]
+    defaults:
+      run:
+        working-directory: esp32
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # No `cache: pip` here: it keys the cache off a requirements.txt or
+      # pyproject.toml, and this repo has neither -- PlatformIO is installed
+      # ad-hoc below. Setting it fails the job outright ("No file ... matched").
+      # Nothing is lost: platformio is a small pure-Python wheel, and the cache
+      # that actually matters is ~/.platformio (toolchains, frameworks), below.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      # Keyed on platformio.ini, which identifies the platform and library
+      # sources. Configuration changes correctly miss the cache. Per-env keys
+      # keep the three jobs from racing to write one entry.
+      - name: Cache PlatformIO
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.env }}-${{ runner.os }}-${{ hashFiles('esp32/platformio.ini') }}
+          restore-keys: pio-${{ matrix.env }}-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # secrets.h is untracked, so there is nothing to inject here: the mains
+      # fall back to secrets.example.h when the file is absent, which is what a
+      # clean checkout always is.
+      - name: Build
+        run: pio run -e ${{ matrix.env }}
+
+      # Separate from the build so a compile failure always reports AS a compile
+      # failure. Everything is already built by now, so this only runs the size
+      # target. Worth having: min_spiffs.csv is what leaves room for OTA, and a
+      # firmware quietly growing toward its partition limit should show up in a
+      # build log rather than at an upload failure on the boat.
+      - name: Report flash/RAM usage
+        run: pio run -e ${{ matrix.env }} -t size
+
+  # ---------------------------------------------------------------------------
+  # The Signal K plugin: the server-side arming authority (arbiter.cjs), the
+  # pure UI logic, the React components, and the end-to-end operator session
+  # against a real WebSocket server. Also typechecks and builds, because the
+  # UI ships as built output and `npm test` alone would not catch a type error
+  # or a broken bundle.
+  # ---------------------------------------------------------------------------
+  plugin:
+    name: Signal K plugin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sk-plugin
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: sk-plugin/package-lock.json
+
+      # ci, not install: install the exact locked tree, and fail if
+      # package.json and package-lock.json have drifted apart.
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run build` would also typecheck, but running tsc separately means a
+      # type error reports as a type error instead of as a build failure.
+      - name: Typecheck
+        run: npx tsc -b
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # The Android station's pure core: the same safety decisions as the firmware
+  # and the plugin, in a third language. Deliberately run WITHOUT an Android
+  # SDK -- :core is plain Kotlin/JVM, which is exactly why the decisions live
+  # there. :app is covered separately by the job below, which does need one.
+  #
+  # This job exists because fromSwitch, the trim clamp and the liveness rule now
+  # exist in C++, TypeScript AND Kotlin. The vector tests are the only thing
+  # that will catch the three drifting apart, so they have to run automatically
+  # -- the same reasoning that put the plugin's suite here.
+  # ---------------------------------------------------------------------------
+  android-core:
+    name: Android pure core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          # Any JDK >= 17 works: core targets 17 bytecode without pinning a
+          # toolchain, so it builds on whatever the runner provides.
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+
+      # ANDROID_HOME is unset for this step on purpose. GitHub's ubuntu runners
+      # ship an Android SDK, which would make settings.gradle.kts configure
+      # :app and quietly destroy what this job is FOR: if :core ever stops
+      # building without an SDK, something Android-specific has leaked into the
+      # pure layer, and this job failing is the intended alarm.
+      - name: Test the pure core
+        run: ./gradlew :core:test --no-daemon
+        env:
+          ANDROID_HOME: ''
+          ANDROID_SDK_ROOT: ''
+
+  # ---------------------------------------------------------------------------
+  # The Android station's layout floors, measured. Unlike the job above, this
+  # one WANTS the SDK: Robolectric lays the real Compose tree out on the JVM so
+  # the geometry can be checked without a phone.
+  #
+  # It exists because geometry is a safety property on this screen and nothing
+  # was checking it. Expanding the telemetry panel used to squeeze both live
+  # drive contacts to 4.7 dp -- a tenth of Android's minimum touch target --
+  # and it took a human reading a uiautomator dump off a phone to find. The
+  # suite reconstructs that layout and goes red on it.
+  #
+  # This is the only job that compiles :app at all, so it is also what stops an
+  # app/ change reaching the boat as the first compiler that has ever seen it.
+  # ---------------------------------------------------------------------------
+  android-app:
+    name: Android layout floors
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+
+      # compileSdk = 35. The runner image ships several platforms but not
+      # necessarily this one, and AGP will not substitute a different level.
+      #
+      # sdkmanager is resolved by path, NOT assumed to be on PATH: the runner
+      # image sets ANDROID_HOME but does not export its cmdline-tools bin
+      # directory, so a bare `sdkmanager` exits 127. The directory under
+      # cmdline-tools is a version number on some images and `latest` on
+      # others, hence the search rather than a hard-coded path.
+      - name: Install the SDK packages :app compiles against
+        run: |
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          manager="$(find "$sdk/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n1)"
+          if [ -z "$manager" ]; then
+            echo "No sdkmanager under $sdk/cmdline-tools -- runner image changed?" >&2
+            exit 1
+          fi
+          echo "Using $manager"
+          # `yes` takes SIGPIPE the moment sdkmanager stops reading, which under
+          # the default `bash -eo pipefail` would fail this step even though the
+          # licences were accepted. Accepting them is best-effort by design.
+          yes 2>/dev/null | "$manager" --licenses > /dev/null || true
+          "$manager" "platforms;android-35" "build-tools;35.0.0"
+
+      # Robolectric fetches its android-all sandbox jar on first run and caches
+      # it here; without the cache every run re-downloads ~100 MB.
+      - name: Cache the Robolectric sandbox
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('android/gradle/libs.versions.toml') }}
+          restore-keys: robolectric-${{ runner.os }}-
+
+      - name: Measure the layout floors
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      # Separate from the tests so a compile failure reports as one. The APK is
+      # not published anywhere -- building it is the check.
+      - name: Build the debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+  # ---------------------------------------------------------------------------
+  # The release scripts. They are not on any safety path at build time, but
+  # check_no_secrets.py is what stops a published firmware carrying the boat's
+  # credentials, and a syntax error in it would first show up as a failed
+  # release rather than as a failed check -- which is the wrong way round for
+  # that particular script.
+  # ---------------------------------------------------------------------------
+  scripts:
+    name: Release scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Byte-compile the release scripts
+        run: python -m compileall -q esp32/scripts
+
+      # The guard has a testable contract: a binary holding a committed
+      # credential must fail, a binary holding only placeholders must pass.
+      # Both directions are checked here against fixtures built on the fly, so
+      # the check that protects releases is itself checked on every push.
+      #
+      # The reference is platformio.ini because it is the file most likely to
+      # regain a credential: it held the OTA password until scripts/ota_auth.py
+      # started injecting it from the untracked secrets.h instead. With nothing
+      # committed the guard has nothing to find, so the fixture below is
+      # synthetic -- the contract is still exercised in both directions on every
+      # push, which is what stops it rotting before a release needs it.
+      - name: Self-test the credential guard
+        working-directory: esp32
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          # A stand-in for a committed credential file, so the guard's contract is
+          # exercised whether or not the real tree currently holds one.
+          pathlib.Path("fixture-secrets.h").write_text(
+              '#define SECRET_OTA_PASSWORD "guard-self-test-value"\n', encoding="utf-8")
+          pathlib.Path("clean.bin").write_bytes(b"\x00" * 64 + b"set-a-strong-ota-password")
+          pathlib.Path("dirty.bin").write_bytes(b"\x00" * 64 + b"guard-self-test-value")
+          PY
+          python scripts/check_no_secrets.py --secrets-file fixture-secrets.h clean.bin
+          if python scripts/check_no_secrets.py --secrets-file fixture-secrets.h dirty.bin; then
+            echo "::error::the credential guard passed a binary that contains a committed credential"
+            exit 1
+          fi
+          echo "guard correctly rejected the dirty fixture"
+
+          # And assert the committed tree really does hold nothing to find. If a
+          # credential is ever written back into platformio.ini, this goes red.
+          if python scripts/check_no_secrets.py --secrets-file platformio.ini clean.bin \
+               | grep -q "hold no real values"; then
+            echo "platformio.ini holds no credential, as intended"
+          else
+            echo "::error::platformio.ini appears to hold a credential again; see scripts/ota_auth.py"
+            exit 1
+          fi
+          rm -f clean.bin dirty.bin fixture-secrets.h

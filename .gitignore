@@ -1,0 +1,26 @@
+ref/
+.pio/
+.vscode/
+# Real credentials. The trailing * is deliberate and is not tidiness: a plain
+# `secrets.h` pattern does not match a RENAMED copy, so secrets.h.bak or
+# secrets.h.orig -- exactly what a careful person makes before editing, and what
+# a test harness makes to simulate a clean checkout -- would be committable to a
+# public repository. secrets.example.h does not match this and stays tracked.
+secrets.h*
+
+# Signing material, at any depth. android/.gitignore repeats these; this is the
+# backstop for a key that lands somewhere unexpected.
+*.keystore
+*.jks
+keystore.properties
+
+# Machine-specific SDK paths, and any renamed copy of one.
+local.properties*
+CLAUDE.local.md
+system-profile.md
+repos.*.sh
+.DS_Store
+*.swp
+*~
+.claude/settings.local.json
+__pycache__/

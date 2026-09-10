@@ -1,0 +1,58 @@
+# Keeps current the three dependency sets this repository can actually track:
+# the Android station's Gradle dependencies, the Signal K plugin's npm tree, and
+# the GitHub Actions pinned in the workflows. One grouped pull request per
+# ecosystem per week at most; review each like any other change.
+#
+# WHAT DEPENDABOT CANNOT SEE HERE, and it is the most important dependency in
+# the project: the firmware's. `esp32/platformio.ini` resolves SensESP from a
+# git BRANCH ref (`KEGustafsson/SensESP#fix_analog_input`), ESP32Servo from a
+# commit, and the platform from a release zip. Dependabot has no PlatformIO
+# ecosystem and would not follow a branch ref if it had one, so that dependency
+# moves under every build with nothing watching it. The release workflow records
+# the resolved versions in each firmware's SBOM, which is the only place a given
+# binary's actual dependencies are written down. See docs/BUILDING.md 3.1.
+#
+# Gradle and npm majors are taken by hand, with the migration work they need, so
+# Dependabot proposes minor and patch updates for those two. GitHub Actions are
+# deliberately NOT limited that way: a major bump of an action is usually how a
+# security fix arrives, and the workflows pin actions by commit SHA, so an
+# unreviewed one cannot slip in regardless.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      all-gradle:
+        patterns: ["*"]
+    ignore:
+      # AGP, Kotlin, Compose and Robolectric majors all carry migration work,
+      # and Robolectric's sandbox level is tied to compileSdk (see
+      # gradle/libs.versions.toml).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /sk-plugin
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      all-npm:
+        patterns: ["*"]
+    ignore:
+      # React, Vite and Vitest majors change test and build behaviour that the
+      # plugin's suites depend on.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      all-actions:
+        patterns: ["*"]

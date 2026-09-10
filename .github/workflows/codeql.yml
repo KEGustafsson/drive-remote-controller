@@ -1,0 +1,212 @@
+name: CodeQL
+
+# PREREQUISITE: code scanning must be enabled on the repository. Without it the
+# analysis runs to completion and then fails at the upload with "Code scanning is
+# not enabled for this repository" -- a repository setting, not a workflow fault.
+#
+# This repository is PUBLIC, so code scanning is free here: the paid GitHub Code
+# Security add-on a private repository would have needed no longer applies. It
+# still has to be switched on in Settings > Advanced Security before the variable
+# below does anything.
+#
+# So the analysis is gated on the repository variable ENABLE_CODE_SCANNING, and
+# the `status` job below ALWAYS runs and always writes to the run summary saying
+# which state it is in. That was the whole objection to gating: a scanning
+# workflow that quietly does nothing is worse than one that says out loud it
+# cannot run. This one says it out loud and does not paint every pull request
+# red for a setting nobody can change from a workflow file.
+#
+# To turn it on, once code scanning is enabled in the repository settings:
+#
+#     gh variable set ENABLE_CODE_SCANNING --body true
+#
+# The analysis half is known to work: the run on 2026-09-09 scanned 28 of 38 C++
+# files and 21 of 31 C files and interpreted every language's queries, failing
+# only at the upload.
+#
+# Static analysis on every push and pull request to main, and weekly so new
+# query packs run against unchanged code. One matrix job per language, each
+# under its own category, so the five sets of findings stay apart under
+# Security > Code scanning.
+#
+# The interesting one is c-cpp. It does NOT build a firmware: it builds
+# `pio test -e native`, which compiles esp32/lib/control_core/ -- the pure
+# safety core, where every arbitration rule, control law and state machine
+# lives -- with the host compiler. That is both the code most worth analysing
+# and the only C++ here that an ordinary toolchain can build, since the
+# firmware proper needs the xtensa cross-compiler. `--without-testing` builds
+# the suites without running them; CI already runs them in ci.yml.
+#
+# Findings appear under Security > Code scanning. `security-and-quality` is a
+# wider query suite than the default `security-extended`, and the noise is
+# worth it on a codebase that commands machinery.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Always runs, always reports. This is what keeps the gate from being a silent
+  # no-op: whichever state the repository is in, the run summary says so.
+  status:
+    name: Code scanning status
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          ENABLED: ${{ vars.ENABLE_CODE_SCANNING }}
+        run: |
+          set -euo pipefail
+          if [ "$ENABLED" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### CodeQL is running"
+              echo
+              echo "Repository variable \`ENABLE_CODE_SCANNING\` is \`true\`."
+              echo "Findings appear under **Security › Code scanning**."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### CodeQL is configured but NOT running"
+              echo
+              echo "The five analysis jobs are skipped because the repository variable"
+              echo "\`ENABLE_CODE_SCANNING\` is not \`true\`."
+              echo
+              echo "**This repository is public, so code scanning is free here** — the paid"
+              echo "GitHub Code Security add-on a private repository would need does not apply."
+              echo "It still has to be switched on: until it is, the analysis runs to completion"
+              echo "and then fails at the upload with *Code scanning is not enabled for this"
+              echo "repository* — a repository setting, not a workflow fault."
+              echo
+              echo "To turn it on, after enabling code scanning under **Settings › Advanced Security**:"
+              echo
+              echo '```sh'
+              echo "gh variable set ENABLE_CODE_SCANNING --body true"
+              echo '```'
+              echo
+              echo "See \`docs/BUILDING.md\` §11.1."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::CodeQL analysis skipped: ENABLE_CODE_SCANNING is not set. See the run summary."
+          fi
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: status
+    if: needs.status.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      # Required because this repository is PRIVATE. Without it the analysis
+      # runs to completion and then fails at the upload with "Resource not
+      # accessible by integration" against the workflow-runs API, which reads
+      # as a broken analysis rather than as a missing permission. Costs nothing
+      # on a public repository, so it stays either way.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Android station: :core (the pure safety logic) and :app.
+          - language: java-kotlin
+            build-mode: manual
+          # The Signal K plugin's server half, its arbiter and its UI -- the
+          # code most exposed to input from the network.
+          - language: javascript-typescript
+            build-mode: none
+          # The firmware's pure control core, via the native test build.
+          - language: c-cpp
+            build-mode: manual
+          # The release scripts under esp32/scripts/.
+          - language: python
+            build-mode: none
+          # The workflows themselves.
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+
+      - if: matrix.language == 'c-cpp'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - if: matrix.language == 'c-cpp'
+        name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - uses: github/codeql-action/init@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-and-quality
+
+      # compileSdk = 35. The runner image ships several platforms but not
+      # necessarily this one, and AGP will not substitute a different level, so
+      # ci.yml installs it explicitly and so must this. Without it the build
+      # fails and CodeQL reports an empty java-kotlin database rather than a
+      # broken build, which is the worse of the two outcomes.
+      #
+      # sdkmanager is resolved by path, NOT assumed to be on PATH: the runner
+      # image sets ANDROID_HOME but does not export its cmdline-tools bin
+      # directory, so a bare `sdkmanager` exits 127.
+      - if: matrix.language == 'java-kotlin'
+        name: Install the SDK packages :app compiles against
+        run: |
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          manager="$(find "$sdk/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n1)"
+          if [ -z "$manager" ]; then
+            echo "::error::No sdkmanager under $sdk/cmdline-tools -- runner image changed?" >&2
+            exit 1
+          fi
+          echo "Using $manager"
+          # `yes` takes SIGPIPE the moment sdkmanager stops reading, which under
+          # the default `bash -eo pipefail` would fail this step even though the
+          # licences were accepted. Accepting them is best-effort by design.
+          yes 2>/dev/null | "$manager" --licenses > /dev/null || true
+          "$manager" "platforms;android-35" "build-tools;35.0.0"
+
+      # :app is what pulls :core in, so one command covers both modules. The
+      # runner ships an Android SDK, which is what makes :app configurable at
+      # all (see android/settings.gradle.kts).
+      - if: matrix.language == 'java-kotlin'
+        name: Build the Android station
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+
+      - if: matrix.language == 'c-cpp'
+        name: Build the pure control core
+        working-directory: esp32
+        run: pio test -e native --without-testing
+
+      - uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          category: /language:${{ matrix.language }}

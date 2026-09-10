@@ -1,0 +1,25 @@
+
+This directory is intended for PlatformIO Unit Testing and project tests.
+
+For this project, lib/control_core/ is pure C++17 with no Arduino.h
+dependency and is host-testable under env:native (see platformio.ini).
+Unity tests for each pure module go here as test_<module>/ directories, per
+CLAUDE.md's phased build order. One `pio test -e native` run covers all
+three firmwares' pure logic:
+
+  drive/ (TX + RX)   test_link_watchdog, test_drive_command,
+                     test_arbitration, test_link_indicator,
+                     test_servo_output_map
+  heading/ (HH)      test_rvc_parse, test_yaw_rate, test_heading_filter,
+                     test_switcher, test_safety_fsm, test_control_step,
+                     test_thruster_output_map
+  common/            test_debounce (shared by all three)
+
+Note the two output_map suites are named for what they map --
+test_servo_output_map covers drive/output_map.h (DrivePosition -> servo
+pulse width), test_thruster_output_map covers heading/output_map.h (armed +
+Cmd -> ENABLE/PORT/STBD levels). PlatformIO test directory names must be
+unique across the project.
+
+More information about PlatformIO Unit Testing:
+- https://docs.platformio.org/page/plus/unit-testing.html

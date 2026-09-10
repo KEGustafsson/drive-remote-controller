@@ -1,0 +1,26 @@
+# Build output -- same convention as the firmware's .pio/ and the plugin's
+# public/: rebuilt from source, never committed.
+build/
+.gradle/
+# Class output from IDE tooling (VS Code / Eclipse), which uses bin/ rather
+# than Gradle's build/ for the same thing.
+bin/
+# The Kotlin plugin's per-project session/cache directory, written on every
+# Gradle run. Build output like the two above.
+.kotlin/
+
+# Machine-specific SDK location. Never committed: it names a path that exists
+# only on one developer's machine, and settings.gradle.kts reads it to decide
+# whether :app can be configured at all.
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.cxx/
+
+# Signing material. An APK signing key must never enter the repository.
+*.jks
+*.keystore
+keystore.properties

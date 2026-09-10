@@ -1,0 +1,95 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="rx-arbitration-flow" name="RX arbitration flow">
+    <mxGraphModel dx="1200" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" background="#fcfcfb" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="RX — Arbitration Decision Flow" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=19;fontStyle=1;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="180" y="16" width="600" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Runs every 20 ms tick, independently for port and for starboard — the two drives never affect each other" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12.5;fontColor=#8a877f;" vertex="1" parent="1">
+          <mxGeometry x="140" y="42" width="680" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="armnote" value="&lt;b&gt;RX is ARMED iff:&lt;/b&gt;&lt;br&gt;master enable ON, &lt;b&gt;both&lt;/b&gt; levers&lt;br&gt;proven NEUTRAL, and no local&lt;br&gt;switch off neutral.&lt;br&gt;&lt;br&gt;Latched: neutral is permission&lt;br&gt;to ARM, not to stay armed (§5.1)" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fillColor=#fcfcfb;strokeColor=#898781;strokeWidth=1.5;dashed=1;dashPattern=5 4;fontFamily=Segoe UI;fontSize=11;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="20" y="196" width="182" height="118" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="qualnote" value="&lt;b&gt;A source &quot;qualifies&quot; iff:&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;live&lt;/b&gt; — an update was&lt;br&gt;accepted &amp;lt; 1000 ms ago&lt;br&gt;&lt;br&gt;&lt;b&gt;enabled&lt;/b&gt; — the source's own&lt;br&gt;reported switch / UI state" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fillColor=#fcfcfb;strokeColor=#898781;strokeWidth=1.5;dashed=1;dashPattern=5 4;fontFamily=Segoe UI;fontSize=11;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="20" y="360" width="182" height="118" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d1" value="Local switch&lt;br&gt;off NEUTRAL?" style="rhombus;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1c1917;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="240" y="80" width="280" height="110" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="local" value="&lt;b&gt;LOCAL wins&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11px&quot;&gt;unconditional (invariant 3)&lt;/font&gt;" style="rounded=1;arcSize=50;html=1;whiteSpace=wrap;fillColor=#ecf6ee;strokeColor=#1a7f37;strokeWidth=3;fontFamily=Segoe UI;fontSize=13.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="640" y="105" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d2" value="RX &lt;b&gt;ARMED&lt;/b&gt;?" style="rhombus;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1c1917;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="230" y="225" width="300" height="110" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="neutral" value="&lt;b style=&quot;font-size:14.5px&quot;&gt;NEUTRAL&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11px&quot;&gt;fail-safe default —&lt;br&gt;never hold a stale&lt;br&gt;remote command&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;(invariant 5)&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#f1f0ee;strokeColor=#6e7781;strokeWidth=3;fontFamily=Segoe UI;fontSize=14.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="640" y="255" width="220" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d3" value="Any remote source&lt;br&gt;live + enabled?" style="rhombus;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1c1917;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="210" y="370" width="340" height="124" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d4" value="Both TX and Plugin&lt;br&gt;qualify?" style="rhombus;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1c1917;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="210" y="529" width="340" height="124" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="single" value="&lt;b&gt;Use the one that qualifies&lt;/b&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;verticalAlign=top;spacingTop=8;fillColor=#ffffff;strokeColor=#1c1917;strokeWidth=2;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="640" y="540" width="240" height="102" as="geometry"/>
+        </mxCell>
+        <mxCell id="chiptx" value="TX" style="rounded=1;arcSize=50;html=1;fillColor=#eaf2fb;strokeColor=#2a78d6;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12;fontStyle=1;fontColor=#2a78d6;" vertex="1" parent="1">
+          <mxGeometry x="662" y="582" width="92" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="chippl" value="Plugin" style="rounded=1;arcSize=50;html=1;fillColor=#f3eefc;strokeColor=#8250df;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12;fontStyle=1;fontColor=#8250df;" vertex="1" parent="1">
+          <mxGeometry x="766" y="582" width="92" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="txwins" value="&lt;b&gt;TX wins — fixed precedence&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11px&quot;&gt;never recency: deterministic, cannot oscillate&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;(the plugin commands only in TX's absence)&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#eaf2fb;strokeColor=#2a78d6;strokeWidth=3;fontFamily=Segoe UI;fontSize=13.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="230" y="688" width="300" height="74" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" value="YES" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeColor=#1a7f37;strokeWidth=2.2;fontFamily=Segoe UI;fontSize=11.5;fontStyle=1;fontColor=#1a7f37;verticalAlign=bottom;" edge="1" parent="1" source="d1" target="local">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="NO" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#52514e;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontColor=#57534e;align=left;spacingLeft=6;" edge="1" parent="1" source="d1" target="d2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="NO" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=1;exitY=0.5;entryX=0;entryY=0.25;strokeColor=#898781;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontStyle=1;fontColor=#6e7781;verticalAlign=bottom;" edge="1" parent="1" source="d2" target="neutral">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="YES" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#52514e;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontColor=#57534e;align=left;spacingLeft=6;" edge="1" parent="1" source="d2" target="d3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="NO" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=1;exitY=0.5;entryX=0;entryY=0.75;strokeColor=#898781;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontStyle=1;fontColor=#6e7781;verticalAlign=bottom;" edge="1" parent="1" source="d3" target="neutral">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="YES" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#52514e;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontColor=#57534e;align=left;spacingLeft=6;" edge="1" parent="1" source="d3" target="d4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="NO" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeColor=#52514e;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontStyle=1;fontColor=#57534e;verticalAlign=bottom;" edge="1" parent="1" source="d4" target="single">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="YES" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#52514e;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontColor=#57534e;align=left;spacingLeft=6;" edge="1" parent="1" source="d4" target="txwins">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="rule" value="" style="line;strokeWidth=1.5;strokeColor=#e1e0d9;html=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="784" width="720" height="10" as="geometry"/>
+        </mxCell>
+        <mxCell id="caption" value="Whichever outcome wins, ServoPulseUs() (output_map.h) converts its DrivePosition to a pulse width&lt;br&gt;using this drive's live-tunable calibration — no dwell, no imposed timing (invariant 2)." style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12.5;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="120" y="800" width="720" height="40" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

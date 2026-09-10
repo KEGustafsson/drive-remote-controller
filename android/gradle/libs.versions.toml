@@ -1,0 +1,57 @@
+[versions]
+kotlin = "2.0.21"
+junit = "5.11.4"
+kotlinxSerialization = "1.7.3"
+
+# Android. Only resolved when :app is configured (i.e. an SDK is present) --
+# see settings.gradle.kts -- so a :core-only build never fetches any of this.
+agp = "8.7.3"
+composeBom = "2024.12.01"
+okhttp = "4.12.0"
+androidxCore = "1.15.0"
+androidxActivity = "1.9.3"
+androidxLifecycle = "2.8.7"
+androidxDatastore = "1.1.1"
+androidxSecurity = "1.1.0-alpha06"
+# 4.14 is the first release with an API 35 sandbox, which is what :app compiles
+# against. Do not drop below it without also dropping the @Config(sdk = [35]).
+robolectric = "4.14.1"
+
+[libraries]
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.4" }
+# Robolectric and Compose's test rule are both JUnit4-only, and this build runs
+# on the JUnit Platform (useJUnitPlatform, for :core's Jupiter suites). The
+# vintage engine runs the JUnit4 tests there rather than forcing the whole
+# project onto one framework or splitting the runners between modules.
+junit4 = { module = "junit:junit", version = "4.13.2" }
+junit-vintage-engine = { module = "org.junit.vintage:junit-vintage-engine", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
+
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
+androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "androidxLifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidxLifecycle" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "androidxDatastore" }
+androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidxSecurity" }
+
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-foundation = { module = "androidx.compose.foundation:foundation" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "agp" }

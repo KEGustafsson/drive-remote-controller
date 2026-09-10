@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <!-- maximum-scale=1/user-scalable=no: this is a touch control panel, not
+         a document -- accidental pinch-zoom while reaching for a button is a
+         usability/safety problem here, not a document-reading one. -->
+    <meta name="theme-color" content="#0b0b0b" />
+    <!-- The same mark as the Android station's launcher icon. Relative hrefs,
+         to match vite's base: './' -- signalk-server mounts this app under
+         /<package name>/, not at the server root. -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./icons/icon-192x192.png" />
+    <title>Drive Remote Control</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

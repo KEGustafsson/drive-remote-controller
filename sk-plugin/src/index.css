@@ -1,0 +1,737 @@
+/* Drive Remote Control -- a dedicated control-panel app, not a
+   content page: deliberately a single, high-contrast dark theme (typical
+   for marine helm displays used in bright sun and at night) rather than
+   splitting effort across light/dark variants the way a document would.
+   Status colors below are the same validated set used in the project's
+   README architecture diagrams (good/warn/bad), kept consistent across
+   the whole system's visual language. */
+
+:root {
+  /* ---- The proportional scale ----------------------------------------
+     Reference device: Samsung Galaxy S25 -- 360 x 780 CSS px, DPR 3
+     (1080 x 2340 physical, 19.5:9). The layout was measured and tuned at that
+     size, and every vertical dimension below is expressed as a fraction of it
+     so the panel keeps the same proportions on a shorter or taller screen and
+     fills the height rather than scrolling or leaving a gap.
+
+     --u is "one reference pixel": 1px exactly on an S25 with no browser
+     toolbar, less on a shorter viewport, more on a taller one. A size written
+     calc(88 * var(--u)) therefore means "88px at the S25 reference", scaled.
+
+     dvh, not vh: on a phone the browser toolbar shows and hides, and vh is
+     frozen at the largest viewport, which would size the panel for space it
+     does not currently have.
+
+     The clamp bounds keep it sane at the extremes -- a 3px-tall unit on a
+     4K monitor would be absurd, and an unbounded lower bound would shrink the
+     controls below what a thumb can hit. Between those, it is pure ratio. */
+  --u: clamp(0.72px, calc(100dvh / 780), 1.45px);
+
+  color-scheme: dark;
+  --surface: #0b0b0b;
+  --surface-raised: #1a1a19;
+  --ink: #ffffff;
+  --ink-muted: #a9a89f;
+  --border: rgba(255, 255, 255, 0.14);
+
+  --forward: #2a78d6;
+  --reverse: #eb6834;
+  --neutral: #6b6a63;
+
+  --armed: #d03b3b;
+  --disarmed: #383835;
+
+  --good: #0ca30c;
+  --warn: #fab219;
+  --bad: #d03b3b;
+
+  /* The momentary contact buttons' floors, named here rather than left as
+     numbers at their call sites so the relationship between them is stated
+     once and cannot drift on a later edit.
+
+     FWD/REV must never end up the smaller pair: they are the ones held
+     through a manoeuvre, and a thumb has to find them without looking.
+
+     --drive-button-min-h is a FLOOR, not a target. The drives row is the
+     layout's `1fr` and the buttons carry `flex: 1`, so their real height is
+     whatever is left over -- measured at 114px on a Galaxy S25. The floor only
+     bites when the viewport is too short for everything to fit, and a floor
+     set near the comfortable size is therefore not "bigger buttons", it is
+     "the page scrolls". 112px here is what made it scroll; 88px is a touch
+     floor that keeps them usable when squeezed and never governs otherwise. */
+  --thruster-button-min-h: calc(76 * var(--u));
+  --drive-button-min-h: calc(88 * var(--u));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* Text rides the same scale. Almost every font-size in this file is in rem, so
+   setting the root here scales the type with the boxes and keeps the panel
+   proportional rather than letting fixed text overflow shrinking controls. The
+   floor is a legibility limit: below about 13px this stops being readable at
+   arm's length in sunlight, which is the condition it is designed for. */
+html {
+  font-size: clamp(13px, calc(16 * var(--u)), 19px);
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  /* This is a touch control panel: no accidental text selection, no
+     double-tap-to-zoom, no blue tap-highlight flash on every press. */
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  overscroll-behavior: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.app {
+  display: grid;
+  min-height: 100dvh;
+  gap: calc(12 * var(--u));
+  padding: calc(12 * var(--u));
+  padding-top: calc(12 * var(--u) + env(safe-area-inset-top));
+  padding-bottom: calc(12 * var(--u) + env(safe-area-inset-bottom));
+  padding-left: calc(12 * var(--u) + env(safe-area-inset-left));
+  padding-right: calc(12 * var(--u) + env(safe-area-inset-right));
+  grid-template-areas:
+    'header'
+    'kill'
+    'thruster'
+    'drives'
+    'status';
+  /* The drives row keeps the 1fr so the shift buttons stay large for touch;
+     the thruster block above them sits at its natural height. */
+  grid-template-rows: auto auto auto 1fr auto;
+}
+
+@media (min-width: 860px) {
+  .app {
+    grid-template-areas:
+      'header   status'
+      'kill     status'
+      'thruster status'
+      'drives   status';
+    grid-template-columns: 1fr 300px;
+    grid-template-rows: auto auto auto 1fr;
+  }
+
+}
+
+
+/* While the telemetry detail is open, the drives' touch floor relaxes so all
+   seven lamps fit on screen without the page scrolling.
+
+   This is a state where the operator has deliberately stopped to READ -- they
+   are not mid-manoeuvre with a thumb on a shift button -- so trading a little
+   drive-button height for being able to see the whole panel is the right way
+   round. It reverses the instant the detail is closed. The max() keeps the
+   buttons at or above 48px, the platform minimum touch target, so they stay
+   pressable throughout; on a very short screen that floor wins and the page
+   scrolls a little instead, which is the safe direction to fail.
+
+   :has() is doing the work because the open state lives on the status panel
+   and the buttons are in a different subtree. Where it is unsupported this
+   rule is simply skipped and the layout behaves as it did before -- a slightly
+   taller page, not a broken one. */
+.app:has(.status-panel__details[open]) {
+  --drive-button-min-h: max(48px, calc(64 * var(--u)));
+}
+
+.app__header {
+  grid-area: header;
+  display: flex;
+  /* stretch makes the button take the h1's height exactly -- "same height as
+     Drive Remote Control" -- since the title is the taller of the two. */
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 8px;
+}
+.app__header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  align-self: center;
+}
+.app__fullscreen {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  padding: 0.2rem;
+  color: var(--text, inherit);
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.app__fullscreen:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.app__fullscreen svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+}
+
+/* ---- Kill switch ---- */
+
+.kill-switch {
+  grid-area: kill;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: calc(64 * var(--u));
+  border-radius: 10px;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.kill-switch--disarmed {
+  background: var(--surface-raised);
+  border-color: var(--disarmed);
+  color: var(--ink-muted);
+}
+
+.kill-switch--armed {
+  background: var(--armed);
+  border-color: var(--armed);
+  color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(208, 59, 59, 0.35);
+}
+
+/* Another device holds the arm token: this instance can't arm (only one
+   controller at a time), but the button still works as a global STOP. Amber,
+   distinct from both our-armed (red) and disarmed (muted). */
+.kill-switch--foreign {
+  background: var(--surface-raised);
+  border-color: var(--warn, #d08c1f);
+  color: var(--warn, #d08c1f);
+  box-shadow: 0 0 0 3px rgba(208, 140, 31, 0.25);
+}
+
+/* Socket down: `armed`/`foreignControl` are stale (last-known), so we can't
+   truthfully show ARMED/IN USE. Muted and de-emphasised, visibly NOT the red
+   armed state, and non-interactive (a tap couldn't reach anyone). Distinct
+   from --disarmed by the dimming + dashed border so it doesn't read as a
+   normal ready-to-arm state. */
+.kill-switch--offline {
+  background: var(--surface-raised);
+  border-style: dashed;
+  border-color: var(--border);
+  color: var(--ink-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/*
+ * Arming blocked because RX isn't answering. Distinct from --offline (which
+ * means "we can't reach the server"): here the fault is at the far end, and
+ * the operator's next action is to go check the RX unit's power, so it gets
+ * the warning colour rather than the muted grey of a connection we expect to
+ * come back on its own.
+ */
+.kill-switch--blocked {
+  background: var(--surface-raised);
+  border-style: dashed;
+  border-color: var(--warn);
+  color: var(--ink-muted);
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.kill-switch__state {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.kill-switch__hint {
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+/* ---- Drive controls ---- */
+
+.app__drives {
+  grid-area: drives;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 0; /* allow children to shrink/grow inside the 1fr row */
+}
+
+.drive-control {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+  min-height: 0;
+}
+
+.drive-control__label {
+  margin: 0;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.drive-button {
+  flex: 1;
+  min-height: var(--drive-button-min-h);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 1.4rem;
+  font-weight: 700;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--ink);
+  /* touch-action: none, not manipulation -- this button needs every raw
+     pointer event (including ones a browser would otherwise interpret as
+     the start of a scroll/pan gesture) so a press-and-hold never gets
+     hijacked mid-gesture. */
+  touch-action: none;
+  transition:
+    background-color 60ms ease,
+    transform 60ms ease;
+}
+
+.drive-button--forward {
+  border-color: color-mix(in srgb, var(--forward) 50%, var(--border));
+}
+.drive-button--reverse {
+  border-color: color-mix(in srgb, var(--reverse) 50%, var(--border));
+}
+
+.drive-button--forward.is-pressed {
+  background: var(--forward);
+  transform: scale(0.97);
+}
+.drive-button--reverse.is-pressed {
+  background: var(--reverse);
+  transform: scale(0.97);
+}
+
+.drive-control__state {
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--ink-muted);
+}
+.drive-control__state--forward {
+  color: var(--forward);
+}
+.drive-control__state--reverse {
+  color: var(--reverse);
+}
+.drive-control__state--neutral {
+  color: var(--neutral);
+}
+.drive-control__disarmed {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+.drive-control__override {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* A higher-precedence source (TX or the local switch) owns this drive
+   right now: dim the buttons so their pressed state reads as "requested,
+   not in effect", matching the "controlled by ..." note. Buttons stay
+   fully interactive (parity with TX -- see DriveControl) -- this is
+   purely a visual honesty cue, not a disable. */
+.drive-control.is-overridden .drive-button {
+  opacity: 0.55;
+}
+
+/* Not commandable (disarmed, offline, or the RX unit not answering): the
+   buttons are greyed and genuinely disabled -- a control that cannot move the
+   gear must not look like it can. Distinct from is-overridden's mere dimming:
+   here the coloured FWD/REV accent is dropped entirely so the pair reads as
+   plainly inert, and pointer/hover affordances are gone. The kill switch stays
+   the always-live stop. */
+.drive-button:disabled {
+  cursor: not-allowed;
+  background: var(--surface-raised);
+  border-color: var(--disarmed);
+  color: var(--ink-muted);
+  opacity: 0.4;
+  transform: none;
+}
+.drive-control.is-disabled .drive-control__label,
+.drive-control.is-disabled .drive-control__state {
+  opacity: 0.5;
+}
+
+/* ---- Status panel ---- */
+
+.status-panel {
+  grid-area: status;
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--u));
+  background: var(--surface-raised);
+  border-radius: 10px;
+  padding: calc(8 * var(--u));
+  font-size: 0.72rem;
+  /* Hug the content instead of stretching. With the detail collapsed the panel
+     is three lamps tall, and every pixel it gives back goes to the drives row's
+     1fr -- which is the point of collapsing it. */
+  align-self: start;
+  /* Opening the detail shows ALL of it. An earlier version capped this panel
+     and scrolled the lamp grid inside it, which kept the page exactly one
+     screen tall but made "Detail" open onto content that was visibly cut off,
+     with no scrollbar a phone would render -- it read as broken. Opening the
+     detail is a deliberate act by someone who has stopped manoeuvring to read
+     telemetry, so the honest behaviour is to give it the room: the drives row
+     is the 1fr and yields down to its touch floor first, and if a very short
+     screen still cannot contain the result the PAGE scrolls, which is at
+     least a scrollbar the operator can see and act on. */
+  min-height: 0;
+}
+
+.status-panel__details {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Auto-fitting columns rather than a fixed count: on a phone this lands as
+   2-3 lamps per row, on a laptop sidebar as one column, with no breakpoint
+   to maintain.
+
+   The track minimum is load-bearing on a narrow phone. At the original 108px
+   the three summary lamps got 320px of content width on a 360px screen, fitted
+   only two per row, and wrapped to a second row -- 82px of panel where 38px
+   would do. 88px keeps all three on one row down to a 320px screen. It costs a
+   little wrapping inside the longer readings, which is far cheaper than the
+   extra row. */
+.status-panel__summary,
+.status-panel__lamps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 6px;
+}
+
+.status-panel__lamps {
+  padding-top: 6px;
+}
+
+/* The detail's seven lamps are read at rest, not at a glance mid-manoeuvre, so
+   they are packed tighter than the three summary lamps above them. This is
+   what buys the room for all seven to be visible at once on a phone rather
+   than spilling past the bottom of the screen. */
+.status-panel__lamps .lamp {
+  padding: 3px 5px;
+}
+.status-panel__lamps .lamp__value {
+  line-height: 1.15;
+}
+
+/* The detail is collapsed on load. What stays above it -- Link, Commands,
+   Control, and the fault line -- is what an operator must not have to ask
+   for. */
+.status-panel__toggle {
+  display: block;
+  min-height: calc(32 * var(--u));
+  padding: calc(6 * var(--u)) 4px;
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  /* Drop the platform triangle in favour of the chevron below, so the marker
+     looks the same on every browser. Both properties are needed: WebKit uses
+     the pseudo-element, everyone else honours list-style. */
+  list-style: none;
+}
+.status-panel__toggle::-webkit-details-marker {
+  display: none;
+}
+.status-panel__toggle::after {
+  content: ' ▾';
+}
+.status-panel__details[open] .status-panel__toggle::after {
+  content: ' ▴';
+}
+
+/* No fault line here on purpose: the kill switch already names a unit that has
+   stopped answering, is never collapsed, and is the largest thing on screen.
+   See the note in StatusPanel.tsx. */
+
+/* ---- Traffic-light status lamps ----
+   A coloured lamp + a small fixed title + the current reading. The colour is
+   readable at a glance and in peripheral vision while the operator is looking
+   at the boat rather than the screen; the title keeps a lamp from ever being
+   a colour with no stated subject. */
+.lamp {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    'light title'
+    'value value';
+  align-items: center;
+  gap: 2px 6px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  min-width: 0;
+}
+
+.lamp__light {
+  grid-area: light;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--neutral);
+  /* The glow is what makes a lit lamp read as lit rather than as a coloured
+     dot, at a glance and at arm's length. */
+  box-shadow: none;
+}
+
+.lamp__title {
+  grid-area: title;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.58rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lamp__value {
+  grid-area: value;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.lamp--good .lamp__light {
+  background: var(--good);
+  box-shadow: 0 0 6px var(--good);
+}
+.lamp--warn .lamp__light {
+  background: var(--warn);
+  box-shadow: 0 0 6px var(--warn);
+}
+.lamp--bad .lamp__light {
+  background: var(--bad);
+  box-shadow: 0 0 6px var(--bad);
+}
+/* Not live: the reading is last-known, either because the socket is down or
+   because the unit that publishes it has stopped answering. Unlit and dimmed
+   so it reads as "was, not is" -- never as a live verdict. */
+.lamp--stale {
+  opacity: 0.45;
+}
+.lamp--stale .lamp__light {
+  background: var(--border);
+  box-shadow: none;
+}
+
+.status-panel__note {
+  margin: 2px 0 0;
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: rgba(250, 178, 25, 0.12);
+  border-left: 3px solid var(--warn);
+  color: var(--ink);
+}
+
+/* ---- Bow thruster ---- */
+
+.thruster-control {
+  grid-area: thruster;
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+  padding: calc(10 * var(--u));
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+
+.thruster-control__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.thruster-control__label {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.thruster-control__mode {
+  display: flex;
+  gap: 4px;
+}
+
+.mode-button {
+  padding: calc(6 * var(--u)) 12px;
+  min-height: calc(36 * var(--u));
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  background: transparent;
+  color: var(--ink-muted);
+}
+.mode-button.is-active {
+  border-color: var(--forward);
+  background: rgba(42, 120, 214, 0.18);
+  color: var(--ink);
+}
+
+.thruster-control__buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.thruster-button {
+  min-height: var(--thruster-button-min-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  /* Same reasoning as the drive buttons: every raw pointer event, so a
+     press-and-hold is never hijacked as the start of a scroll gesture. */
+  touch-action: none;
+  transition:
+    background-color 60ms ease,
+    transform 60ms ease;
+}
+.thruster-button.is-pressed {
+  background: var(--forward);
+  transform: scale(0.98);
+}
+
+.thruster-control__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+}
+.thruster-control__heading-value {
+  font-size: 2.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.thruster-control__heading-label {
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.thruster-control__trim {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.trim-button {
+  min-height: calc(56 * var(--u));
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-radius: 10px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.thruster-control__state {
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-height: 1.2em;
+}
+/* OFF reads muted-grey like the drives' NEUTRAL; PORT/STBD keep the default
+   (bright) text. */
+.thruster-control__state--off {
+  color: var(--neutral);
+}
+.thruster-control__note {
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+
+.thruster-control.is-overridden .thruster-button,
+.thruster-control.is-overridden .trim-button {
+  opacity: 0.55;
+}
+
+/* Not commandable (disarmed, offline, or the heading-hold unit not answering):
+   grey the widget and disable every control that COMMANDS the thruster -- the
+   thrust contacts and the trim steps -- so the bow-thruster panel cannot invite
+   a press it can't honour. Same rationale and same greyed palette as the
+   disabled drive buttons; the kill switch remains the always-live stop.
+
+   The MANUAL/HOLD chooser is excluded on purpose: it stays live and at full
+   contrast while disarmed, because picking the gate the next arm will open is
+   exactly what an operator does BEFORE arming. It commands nothing, so it
+   invites no press it can't honour. */
+.thruster-control.is-disabled .thruster-control__label,
+.thruster-control.is-disabled .thruster-control__heading,
+.thruster-control.is-disabled .thruster-control__state {
+  opacity: 0.5;
+}
+.thruster-button:disabled,
+.trim-button:disabled {
+  cursor: not-allowed;
+  background: var(--surface-raised);
+  border-color: var(--disarmed);
+  color: var(--ink-muted);
+  opacity: 0.4;
+  transform: none;
+}

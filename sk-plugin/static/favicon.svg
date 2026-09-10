@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108" role="img" aria-label="Drive Remote Control">
+  <!--
+    The same mark as the Android station's launcher icon
+    (android/app/src/main/res/drawable/ic_launcher_foreground.xml): two opposed
+    chevrons, forward (blue) over reverse (orange), the same pair the drive
+    buttons use, on the --surface background the whole UI is built on.
+
+    Kept on the Android adaptive icon's 108-unit canvas with the artwork inside
+    its 72-unit safe zone, so the two stations' icons are the same drawing at
+    the same proportions rather than two things that merely look similar. The
+    colours are the project's --forward / --reverse, shared with the firmware
+    diagrams and the plugin's own buttons.
+
+    Geometry and colours are duplicated in scripts/make-icon.cjs, which
+    rasterises the PNG that Signal K's webapp list needs. Change both together.
+  -->
+  <rect width="108" height="108" rx="20" fill="#0B0B0B"/>
+  <path fill="#2A78D6" d="M54,30 L74,50 L64,50 L64,52 L44,52 L44,50 L34,50 Z"/>
+  <path fill="#EB6834" d="M54,78 L34,58 L44,58 L44,56 L64,56 L64,58 L74,58 Z"/>
+</svg>

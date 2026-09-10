@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the "surface" custom property in sk-plugin/src/index.css, so
+         the launcher icon belongs to the same visual system as the other
+         command stations. (XML comments cannot contain a double dash, so the
+         CSS variables are named here without their leading dashes.) -->
+    <color name="ic_launcher_background">#0B0B0B</color>
+</resources>

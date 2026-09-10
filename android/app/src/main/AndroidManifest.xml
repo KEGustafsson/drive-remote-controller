@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- mDNS discovery. Some devices drop multicast to save power unless a
+         MulticastLock is held, which requires this permission (see
+         MdnsDiscovery). Discovery is a convenience, never a requirement:
+         manual host/port entry always works, and boat access points not
+         uncommonly block multicast outright. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.DriveRemote"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- allowBackup=false: the stored item is a Signal K access token that
+             authorises commanding machinery. It should not be copied off the
+             device by cloud backup; a replacement is one access request away. -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|fontScale|uiMode">
+
+            <!-- configChanges: this activity holds a live WebSocket, an armed
+                 state and possibly a finger on a drive button. Letting the
+                 system recreate it on every rotation or font-scale change
+                 would tear that down mid-manoeuvre. State is held in a
+                 ViewModel regardless; this avoids the churn entirely. The
+                 layout reads its size from the window it is actually given
+                 (BoxWithConstraints in ControlScreen), so handling the change
+                 here costs it nothing.
+
+                 There is deliberately NO screenOrientation here. The app is
+                 portrait-locked on phones and free on tablets, which is not a
+                 thing this attribute can say (it is one value for every
+                 device) so MainActivity.lockOrientationForFormFactor() says
+                 it instead, from the display size.
+
+                 It was "portrait" until it was watched on a tablet. The
+                 activity then LAUNCHED locked, which on a landscape tablet
+                 means letterboxed into a portrait pane, and the unlock in
+                 onCreate resized it a moment later: a small black rectangle
+                 that visibly grew to fill the screen at every launch. Declaring
+                 nothing means the window is created at the size the device is
+                 already at, and the lock that follows changes nothing on the
+                 devices where it matters.
+
+                 configChanges above covers orientation|screenSize, so whatever
+                 adjustment does happen recreates nothing.
+
+                 ControlScreen chooses its arrangement from the shape of the
+                 window it is given, and LayoutFloorsTest measures every one of
+                 them. -->
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

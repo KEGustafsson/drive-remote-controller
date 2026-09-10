@@ -1,0 +1,7 @@
+node_modules/
+public/
+*.tsbuildinfo
+.vite/
+# `npm pack` output, used to install the plugin on the server -- a build
+# artifact, not a source file.
+*.tgz

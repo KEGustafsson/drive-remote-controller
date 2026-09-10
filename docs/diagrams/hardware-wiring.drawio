@@ -1,0 +1,303 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="hardware-wiring" name="Hardware wiring TX + RX">
+    <mxGraphModel dx="1400" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" background="#fcfcfb" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="Hardware Wiring — TX + RX (SH-ESP32)" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=19;fontStyle=1;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="300" y="14" width="600" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="txhdr" value="TX — Handheld Controller (9 V battery)" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=14;fontStyle=1;fontColor=#2a78d6;" vertex="1" parent="1">
+          <mxGeometry x="70" y="48" width="400" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="rxhdr" value="RX — Motion Controller (drives servos)" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=14;fontStyle=1;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="715" y="48" width="400" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="divider" style="endArrow=none;html=1;strokeColor=#c3c2b7;strokeWidth=1.5;dashed=1;dashPattern=7 5;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="595" y="46" as="sourcePoint"/><mxPoint x="595" y="560" as="targetPoint"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="tx_port" value="&lt;b&gt;Port Switch&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO23 fwd · GPIO25 rev&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;momentary, spring-return, active-high&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#2a78d6;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="80" width="210" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="tx_stbd" value="&lt;b&gt;Stbd Switch&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO27 fwd · GPIO26 rev&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;momentary, spring-return, active-high&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#2a78d6;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="158" width="210" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="tx_en" value="&lt;b&gt;Enable / Kill Switch&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO21&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;latching ON/OFF toggle, active-high&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#b45309;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="236" width="210" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="tx_thr" value="&lt;b&gt;Thruster Buttons&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO18 port · GPIO19 stbd&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;momentary, spring-return, active-high&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#f2f8f7;strokeColor=#0f766e;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="314" width="210" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="tx_mode" value="&lt;b&gt;Thruster Mode&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO22 · HIGH = MANUAL&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;latching ON/OFF toggle, active-high&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#f2f8f7;strokeColor=#0f766e;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="392" width="210" height="64" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tx_esp" value="&lt;b style=&quot;font-size:14px&quot;&gt;SH-ESP32&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:12px&quot;&gt;TX unit&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;b style=&quot;font-size:11.5px&quot;&gt;Status LED — GPIO2&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;solid = both units answering&lt;br&gt;warn blink = one unit missing&lt;br&gt;fast blink = neither · off = no link&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;switch commons -&amp;gt; onboard 3V3&lt;br&gt;GPIO reads: INPUT_PULLDOWN&lt;br&gt;8 contacts in total&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;b style=&quot;font-size:11px&quot;&gt;VIN / GND terminal&lt;/b&gt;" style="rounded=1;arcSize=6;html=1;whiteSpace=wrap;verticalAlign=top;spacingTop=8;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=14;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="330" y="80" width="180" height="376" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="w1" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="230" y="112" as="sourcePoint"/><mxPoint x="326" y="112" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w2" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="230" y="190" as="sourcePoint"/><mxPoint x="326" y="190" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w3" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="230" y="268" as="sourcePoint"/><mxPoint x="326" y="268" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w4" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#0f766e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="230" y="346" as="sourcePoint"/><mxPoint x="326" y="346" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w5" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#0f766e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="230" y="424" as="sourcePoint"/><mxPoint x="326" y="424" as="targetPoint"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="batt" value="&lt;b style=&quot;font-size:12px&quot;&gt;9V Battery&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10px&quot;&gt;handheld pack&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6e7781;strokeWidth=2;fontFamily=Segoe UI;fontSize=12;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="330" y="502" width="85" height="54" as="geometry"/>
+        </mxCell>
+        <mxCell id="onoff" value="&lt;b style=&quot;font-size:11px&quot;&gt;ON/OFF Switch&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:9.5px&quot;&gt;user's own,&lt;br&gt;not firmware&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6e7781;strokeWidth=2;fontFamily=Segoe UI;fontSize=11;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="425" y="502" width="85" height="54" as="geometry"/>
+        </mxCell>
+        <mxCell id="w6" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="415" y="529" as="sourcePoint"/><mxPoint x="421" y="529" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w7" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="467" y="502" as="sourcePoint"/><mxPoint x="420" y="460" as="targetPoint"/>
+            <Array as="points"><mxPoint x="467" y="480"/><mxPoint x="420" y="480"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="rx_port" value="&lt;b&gt;Local Port Switch&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO23 fwd · GPIO25 rev&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;mirrors TX wiring — unconditional override&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1a7f37;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="650" y="80" width="200" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="rx_stbd" value="&lt;b&gt;Local Stbd Switch&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO27 fwd · GPIO26 rev&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;mirrors TX wiring — unconditional override&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1a7f37;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="650" y="158" width="200" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="rx_en" value="&lt;b&gt;Master Enable Switch&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO21&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;latching ON/OFF; gates remote sources only&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#b45309;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="650" y="236" width="200" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="rx_neutral" value="&lt;b&gt;Lever NEUTRAL Sensors&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11.5px&quot;&gt;GPIO36 port · GPIO39 stbd&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#b45309&quot; style=&quot;font-size:9.5px&quot;&gt;&lt;b&gt;ACTIVE-LOW&lt;/b&gt; switch or hall sensor&lt;br&gt;external 10 kΩ pull-up REQUIRED&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1a7f37;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="650" y="314" width="200" height="72" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="rx_esp" value="&lt;b style=&quot;font-size:14px&quot;&gt;SH-ESP32&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:12px&quot;&gt;RX unit&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;b style=&quot;font-size:11.5px&quot;&gt;Onboard LED — GPIO2&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10px&quot;&gt;off = no link · fast blink =&lt;br&gt;arm refused · slow = ready&lt;br&gt;solid = a remote is in command&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10px&quot;&gt;shift commons -&amp;gt; onboard 3V3&lt;br&gt;shift GPIOs: INPUT_PULLDOWN&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#b45309&quot;&gt;GPIO36/39: plain INPUT —&lt;br&gt;no internal pull exists&lt;/font&gt;&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;b style=&quot;font-size:11px&quot;&gt;VIN / GND terminal&lt;/b&gt;" style="rounded=1;arcSize=6;html=1;whiteSpace=wrap;verticalAlign=top;spacingTop=8;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=14;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="880" y="80" width="180" height="306" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="w8" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="850" y="112" as="sourcePoint"/><mxPoint x="876" y="112" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w9" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="850" y="190" as="sourcePoint"/><mxPoint x="876" y="190" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w10" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="850" y="268" as="sourcePoint"/><mxPoint x="876" y="268" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w11" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="850" y="350" as="sourcePoint"/><mxPoint x="876" y="350" as="targetPoint"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="servo_p" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;Port Servo&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;GPIO16 · PWM&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9px&quot;&gt;200 Hz, 1000–2000 µs&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="84" width="105" height="62" as="geometry"/>
+        </mxCell>
+        <mxCell id="servo_s" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;Stbd Servo&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;GPIO17 · PWM&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9px&quot;&gt;200 Hz, 1000–2000 µs&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="164" width="105" height="62" as="geometry"/>
+        </mxCell>
+        <mxCell id="relay" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;Engage Relay&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;GPIO33 · opto out&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9px&quot;&gt;ON while ARMED · needs&lt;br&gt;its own pull-down&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1a7f37;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="244" width="105" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="w12" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1060" y="115" as="sourcePoint"/><mxPoint x="1076" y="115" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w13" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1060" y="195" as="sourcePoint"/><mxPoint x="1076" y="195" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w14" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#1a7f37;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1060" y="279" as="sourcePoint"/><mxPoint x="1076" y="279" as="targetPoint"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="servopwr" value="&lt;b style=&quot;font-size:10.5px&quot;&gt;&lt;font color=&quot;#57534e&quot;&gt;Servo power + gnd&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10px&quot;&gt;signal + GND come off&lt;br&gt;the I²C header (16/17)&lt;br&gt;external supply —&lt;br&gt;not yet specified&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9px&quot;&gt;see MEASUREMENTS.md&lt;/font&gt;" style="rounded=1;arcSize=6;html=1;whiteSpace=wrap;fillColor=#fcfcfb;strokeColor=#898781;strokeWidth=2;dashed=1;dashPattern=6 4;fontFamily=Segoe UI;fontSize=10.5;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="1074" y="330" width="112" height="102" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="boatdc" value="&lt;b style=&quot;font-size:11.5px&quot;&gt;Boat DC&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10px&quot;&gt;8–32V system&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6e7781;strokeWidth=2;fontFamily=Segoe UI;fontSize=11.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="880" y="428" width="85" height="54" as="geometry"/>
+        </mxCell>
+        <mxCell id="termblock" value="&lt;b style=&quot;font-size:11px&quot;&gt;Terminal Block&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:9.5px&quot;&gt;fused, reverse-polarity&lt;br&gt;protected, TVS (on-board)&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6e7781;strokeWidth=2;fontFamily=Segoe UI;fontSize=11;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="964" y="428" width="124" height="54" as="geometry"/>
+        </mxCell>
+        <mxCell id="w15" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="965" y="455" as="sourcePoint"/><mxPoint x="968" y="455" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="w16" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1026" y="428" as="sourcePoint"/><mxPoint x="970" y="390" as="targetPoint"/>
+            <Array as="points"><mxPoint x="1026" y="408"/><mxPoint x="970" y="408"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="sch1box" value="" style="rounded=1;arcSize=4;html=1;fillColor=#ffffff;strokeColor=#898781;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="20" y="576" width="545" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="sch1title" value="&lt;b&gt;Shift / enable contact&lt;/b&gt; — active-HIGH (every TX + RX switch)" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="38" y="592" width="500" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_3v3n" value="" style="ellipse;html=1;fillColor=#1c1917;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="63" y="663" width="7" height="7" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_3v3t" value="&lt;b&gt;3V3&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="42" y="642" width="50" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_w1" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="66" y="666" as="sourcePoint"/><mxPoint x="150" y="666" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s1_t1" value="" style="ellipse;html=1;fillColor=none;strokeColor=#1c1917;strokeWidth=1.8;" vertex="1" parent="1">
+          <mxGeometry x="151" y="662" width="8" height="8" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_blade" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="160" y="663" as="sourcePoint"/><mxPoint x="215" y="642" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s1_t2" value="" style="ellipse;html=1;fillColor=none;strokeColor=#1c1917;strokeWidth=1.8;" vertex="1" parent="1">
+          <mxGeometry x="219" y="662" width="8" height="8" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_swt" value="switch contact" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10.5;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="140" y="620" width="120" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_w2" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="228" y="666" as="sourcePoint"/><mxPoint x="330" y="666" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s1_gn" value="" style="ellipse;html=1;fillColor=#1c1917;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="327" y="663" width="7" height="7" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_gt" value="&lt;b&gt;GPIO&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="305" y="642" width="50" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_res" style="endArrow=none;html=1;strokeColor=#8a877f;strokeWidth=1.6;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="330" y="670" as="sourcePoint"/><mxPoint x="330" y="722" as="targetPoint"/>
+            <Array as="points"><mxPoint x="330" y="682"/><mxPoint x="322" y="686"/><mxPoint x="338" y="694"/><mxPoint x="322" y="702"/><mxPoint x="338" y="710"/><mxPoint x="330" y="714"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s1_g1" style="endArrow=none;html=1;strokeColor=#8a877f;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="318" y="722" as="sourcePoint"/><mxPoint x="342" y="722" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s1_g2" style="endArrow=none;html=1;strokeColor=#8a877f;strokeWidth=1.6;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="323" y="727" as="sourcePoint"/><mxPoint x="337" y="727" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s1_g3" style="endArrow=none;html=1;strokeColor=#8a877f;strokeWidth=1.4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="327" y="732" as="sourcePoint"/><mxPoint x="333" y="732" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s1_rt" value="internal pull-down&lt;br&gt;(INPUT_PULLDOWN)" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10.5;fontColor=#8a877f;" vertex="1" parent="1">
+          <mxGeometry x="352" y="686" width="150" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1_read" value="open → GPIO reads LOW (neutral / off)&lt;br&gt;pressed → GPIO reads HIGH (active-high)" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10.5;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="740" width="330" height="28" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="sch2box" value="" style="rounded=1;arcSize=4;html=1;fillColor=#ffffff;strokeColor=#b45309;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="595" y="576" width="585" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="sch2title" value="&lt;b&gt;Lever NEUTRAL sensor&lt;/b&gt; — active-LOW &lt;font color=&quot;#b45309&quot;&gt;(the one exception, RX only)&lt;/font&gt;" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="613" y="592" width="540" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_3v3n" value="" style="ellipse;html=1;fillColor=#1c1917;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="866" y="623" width="7" height="7" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_3v3t" value="&lt;b&gt;3V3&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="845" y="604" width="50" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_res" style="endArrow=none;html=1;strokeColor=#b45309;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="869" y="630" as="sourcePoint"/><mxPoint x="869" y="682" as="targetPoint"/>
+            <Array as="points"><mxPoint x="869" y="642"/><mxPoint x="861" y="646"/><mxPoint x="877" y="654"/><mxPoint x="861" y="662"/><mxPoint x="877" y="670"/><mxPoint x="869" y="674"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s2_rt" value="&lt;b&gt;external 10 kΩ&lt;/b&gt;&lt;br&gt;pull-up — REQUIRED" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10.5;fontColor=#b45309;" vertex="1" parent="1">
+          <mxGeometry x="888" y="642" width="160" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_gn" value="" style="ellipse;html=1;fillColor=#1c1917;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="866" y="689" width="7" height="7" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_gt" value="&lt;b&gt;GPIO36 / 39&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;plain INPUT&lt;/font&gt;" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="888" y="684" width="140" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_w1" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="869" y="692" as="sourcePoint"/><mxPoint x="780" y="692" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s2_t2" value="" style="ellipse;html=1;fillColor=none;strokeColor=#1c1917;strokeWidth=1.8;" vertex="1" parent="1">
+          <mxGeometry x="772" y="688" width="8" height="8" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_blade" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="771" y="689" as="sourcePoint"/><mxPoint x="716" y="668" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s2_t1" value="" style="ellipse;html=1;fillColor=none;strokeColor=#1c1917;strokeWidth=1.8;" vertex="1" parent="1">
+          <mxGeometry x="708" y="688" width="8" height="8" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_swt" value="sensor / hall contact&lt;br&gt;&lt;font style=&quot;font-size:9.5px&quot;&gt;closed only while the lever is in neutral&lt;/font&gt;" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10.5;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="645" y="626" width="220" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2_w2" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="708" y="692" as="sourcePoint"/><mxPoint x="672" y="718" as="targetPoint"/>
+            <Array as="points"><mxPoint x="672" y="692"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s2_g1" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.8;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="660" y="718" as="sourcePoint"/><mxPoint x="684" y="718" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s2_g2" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.6;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="665" y="723" as="sourcePoint"/><mxPoint x="679" y="723" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s2_g3" style="endArrow=none;html=1;strokeColor=#1c1917;strokeWidth=1.4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="669" y="728" as="sourcePoint"/><mxPoint x="675" y="728" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="s2_read" value="lever in neutral → contact closed → GPIO reads &lt;b&gt;LOW&lt;/b&gt; = neutral&lt;br&gt;lever in gear, sensor dead, or wire broken → &lt;b&gt;HIGH&lt;/b&gt; = not neutral → &lt;b&gt;arming refused&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10.5;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="613" y="740" width="560" height="28" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="notebox" value="&lt;b style=&quot;font-size:12px&quot;&gt;Switch convention (every contact, both units):&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11.5px&quot;&gt;Momentary contacts wired to 3V3; a pressed switch reads HIGH. Releasing a shift or thruster control always reads the safe value — there is no latch. Enable, master-enable and thruster-mode switches use the same electrical convention but are latching ON/OFF toggles, not spring-return.&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10.5px&quot;&gt;RX's local switches reuse TX's exact GPIO numbers and convention on purpose — one wiring diagram describes both panels. RX's two lever-neutral sensors are the single exception: they are active-LOW and need external pull-ups, because that is what makes a failed sensor refuse the arm instead of granting it.&lt;/font&gt;" style="rounded=1;arcSize=4;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=16;spacingTop=8;spacingRight=16;fillColor=#fcfcfb;strokeColor=#898781;strokeWidth=1.5;dashed=1;dashPattern=5 4;fontFamily=Segoe UI;fontSize=12;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="794" width="1160" height="122" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="lg1" style="endArrow=classic;html=1;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="20" y="944" as="sourcePoint"/><mxPoint x="54" y="944" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="lg1t" value="Wired connection" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="62" y="936" width="140" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg2s" value="" style="rounded=1;arcSize=20;html=1;fillColor=none;strokeColor=#2a78d6;strokeWidth=2.5;" vertex="1" parent="1">
+          <mxGeometry x="210" y="937" width="20" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg2t" value="Momentary shift switch (TX)" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="238" y="936" width="200" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg3s" value="" style="rounded=1;arcSize=20;html=1;fillColor=none;strokeColor=#1a7f37;strokeWidth=2.5;" vertex="1" parent="1">
+          <mxGeometry x="446" y="937" width="20" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg3t" value="Hardwired local / arm hardware (RX)" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="474" y="936" width="240" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg4s" value="" style="rounded=1;arcSize=20;html=1;fillColor=none;strokeColor=#0f766e;strokeWidth=2.5;" vertex="1" parent="1">
+          <mxGeometry x="722" y="937" width="20" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg4t" value="Thruster control (TX)" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="750" y="936" width="160" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg5s" value="" style="rounded=1;arcSize=20;html=1;fillColor=none;strokeColor=#b45309;strokeWidth=2.5;" vertex="1" parent="1">
+          <mxGeometry x="918" y="937" width="20" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg5t" value="Latching enable / active-low sensor" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="946" y="936" width="240" height="16" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="hhnote" value="The heading-hold unit is wired separately — see hh-wiring.png" style="text;html=1;align=right;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#8a877f;" vertex="1" parent="1">
+          <mxGeometry x="700" y="966" width="480" height="16" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

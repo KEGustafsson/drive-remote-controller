@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two opposed chevrons: forward (blue) over reverse (orange), the same pair
+     the drive buttons use. Drawn inside the adaptive icon's 72dp safe zone of
+     the 108dp canvas so no launcher mask clips it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Forward chevron, pointing up. CSS custom property "forward", #2A78D6.
+         (Named without its leading dashes: a double dash is illegal inside an
+         XML comment and the resource merger rejects the file outright.) -->
+    <path
+        android:fillColor="#2A78D6"
+        android:pathData="M54,30 L74,50 L64,50 L64,52 L44,52 L44,50 L34,50 Z" />
+
+    <!-- Reverse chevron, pointing down. CSS custom property "reverse", #EB6834. -->
+    <path
+        android:fillColor="#EB6834"
+        android:pathData="M54,78 L34,58 L44,58 L44,56 L64,56 L64,58 L74,58 Z" />
+</vector>

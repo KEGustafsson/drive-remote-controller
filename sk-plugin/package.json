@@ -1,0 +1,54 @@
+{
+  "name": "signalk-drive-remote-controller",
+  "version": "1.0.0",
+  "description": "Signal K plugin + touch-friendly web UI acting as the remote controller for the Drive Remote Controller.",
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-webapp",
+    "signalk"
+  ],
+  "license": "EUPL-1.2",
+  "author": "Karl-Erik Gustafsson",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KEGustafsson/drive-remote-controller.git",
+    "directory": "sk-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/KEGustafsson/drive-remote-controller/issues"
+  },
+  "homepage": "https://github.com/KEGustafsson/drive-remote-controller/tree/main/sk-plugin#readme",
+  "main": "index.cjs",
+  "signalk": {
+    "appIcon": "./icons/icon-192x192.png"
+  },
+  "files": [
+    "index.cjs",
+    "arbiter.cjs",
+    "suspendClock.cjs",
+    "public"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.8",
+    "ws": "^8.18.0"
+  }
+}

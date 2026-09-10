@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A bare Material3 shell: the app is entirely Compose and paints its own
+         high-contrast helm palette (see ui/Theme.kt), so this only needs to
+         avoid a light-coloured flash before the first frame. -->
+    <style name="Theme.DriveRemote" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0B0B0B</item>
+        <item name="android:statusBarColor">#0B0B0B</item>
+        <item name="android:navigationBarColor">#0B0B0B</item>
+    </style>
+</resources>

@@ -1,0 +1,517 @@
+name: Release
+
+# Builds and publishes the Android station, and NOTHING ELSE:
+#
+#   * DriveRemoteController-<v>.apk        signed with the release key
+#   * DriveRemoteController-<v>-debug.apk  signed with the generic debug key
+#   * a CycloneDX SBOM, a SHA-256 for each APK, and R8's mapping file
+#
+# THE FIRMWARE AND THE PLUGIN ARE DELIBERATELY NOT RELEASED. Both used to be
+# built and published here. They are not any more, by owner decision: the three
+# firmwares reach a board over OTA from a working tree, and the plugin is
+# installed on the boat's server from `npm pack` output, so neither was ever
+# consumed FROM a Release. Publishing signed firmware for a system that has not
+# been through docs/SAFETY.md's commissioning checklists -- TX has never been
+# flashed at all -- is a decision nobody had asked for. ci.yml still builds all
+# three firmwares and the plugin on every push; what changed is what gets
+# published, not what gets checked.
+#
+# Two APKs rather than one because they are not interchangeable: the debug build
+# carries Compose's UI tooling and is signed with the machine-generic debug key,
+# and Android will not replace one with the other in either direction. Having
+# both on a Release means a phone can go back and forth without a rebuild.
+#
+# WHY THIS IS NOT TRIGGERED BY A PUSH TO main: this system commands a clutch and
+# a bow-thruster contactor, and by its own docs/SAFETY.md it has not been
+# through commissioning. Publishing on every merge, including a merge that only
+# fixed a typo, is not a thing to do by default. So a release is an explicit
+# act: Actions > Release > Run workflow. To adopt merge-is-the-release behaviour
+# instead, add
+#
+#     push:
+#       branches: [main]
+#
+# to the `on:` block below. Nothing else needs changing: `publish` is guarded on
+# `!inputs.dry_run`, and on a push trigger `inputs.dry_run` is null, so it runs.
+#
+# THE FIRMWARE IS BUILT FROM secrets.example.h. `secrets.h` is not tracked in
+# this repository, so a checkout carries no real WiFi or OTA password -- the
+# mains fall back to the template when the file is absent. That absence is
+# asserted rather than assumed: the build job fails if a secrets.h somehow
+# reaches the runner, because every value in one is compiled into the binary by
+# set_wifi_clients() and enable_ota(), and a published .bin built from it would
+# hand out the password that authorises reflashing a board wired to machinery.
+#
+# No real credential is committed any more: platformio.ini used to carry the OTA
+# password a second time as `upload_flags = --auth=...`, and scripts/ota_auth.py
+# now injects it from the untracked secrets.h at upload time instead. So the
+# absence check above is the guarantee, and check_no_secrets.py is the backstop:
+# it searches each image for whatever credentials the committed tree does hold,
+# which is currently none, and goes red the day that stops being true.
+#
+# Secrets used, all on the `android` job only:
+#   DRIVEREMOTE_KEYSTORE_BASE64    the release .keystore, base64
+#   DRIVEREMOTE_KEYSTORE_PASSWORD  its store password
+#   DRIVEREMOTE_KEY_ALIAS          the key alias inside the store
+#   DRIVEREMOTE_KEY_PASSWORD       the key's own password
+# Repository variable:
+#   DRIVEREMOTE_CERT_SHA256        the release certificate's SHA-256, lowercase
+#                                  hex without colons, checked before publishing
+# Without them the job fails; it never publishes an unsigned APK.
+#
+# Jobs are split so that no job holds both a secret and a write token: the three
+# build jobs have read-only tokens, `attest` can only sign attestations, and
+# `publish` has the only `contents: write` token and runs no repository code at
+# all -- no checkout, no Gradle, no npm, no PlatformIO.
+#
+# See docs/BUILDING.md section 10 for the procedures around this file.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and verify every asset, but do not publish a Release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a release in flight: a half-published Release is worse than a
+  # queued one, and these are started by hand rather than by a push.
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # One version for every artifact, computed once so the two APKs and the tag
+  # cannot disagree. It is the commit count, which
+  # is monotonic on main, so nobody edits a number -- the same scheme
+  # app/build.gradle.kts uses for versionCode.
+  #
+  # Still below 1.0 deliberately. SAFETY.md's commissioning checklists have not
+  # been worked through, and the version should not imply otherwise.
+  # ---------------------------------------------------------------------------
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      commit: ${{ steps.v.outputs.commit }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: v
+        run: |
+          set -euo pipefail
+          COUNT=$(git rev-list --count HEAD)
+          VERSION="0.$COUNT"
+          echo "$VERSION" | grep -Eq '^0\.[0-9]+$' \
+            || { echo "::error::computed version '$VERSION' is not a version"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION"
+
+  # ---------------------------------------------------------------------------
+  # The Android station. The only job that sees a signing secret, and it holds a
+  # read-only repository token while it does.
+  # ---------------------------------------------------------------------------
+  android:
+    name: Android station
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # The commit the version job resolved, not whatever main points at
+          # now, so the APKs and the tag describe the same tree.
+          ref: ${{ needs.version.outputs.commit }}
+          # versionCode is the commit count; a shallow clone would produce a
+          # lower one and phones would refuse the install as a downgrade.
+          # build.gradle.kts refuses a shallow clone outright when signing.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+
+      # compileSdk = 35. The runner image ships several platforms but not
+      # necessarily this one, and AGP will not substitute a different level.
+      # ci.yml learned this the hard way; the same step belongs here, before a
+      # build that happens with the signing keystore already on disk.
+      #
+      # sdkmanager is resolved by path, NOT assumed to be on PATH: the runner
+      # image sets ANDROID_HOME but does not export its cmdline-tools bin
+      # directory, so a bare `sdkmanager` exits 127.
+      - name: Install the SDK packages :app compiles against
+        run: |
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          manager="$(find "$sdk/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n1)"
+          if [ -z "$manager" ]; then
+            echo "::error::No sdkmanager under $sdk/cmdline-tools -- runner image changed?" >&2
+            exit 1
+          fi
+          echo "Using $manager"
+          # `yes` takes SIGPIPE the moment sdkmanager stops reading, which under
+          # the default `bash -eo pipefail` would fail this step even though the
+          # licences were accepted. Accepting them is best-effort by design.
+          yes 2>/dev/null | "$manager" --licenses > /dev/null || true
+          "$manager" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Release keystore from secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DRIVEREMOTE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.DRIVEREMOTE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DRIVEREMOTE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DRIVEREMOTE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Fail closed, and check all FOUR. An unset secret arrives as an empty
+          # string rather than as unset, so Gradle's `getenv(...) ?: default`
+          # elvis does not fire and the alias silently becomes "". That failed
+          # deep inside AGP's signing with an opaque keystore error instead of
+          # the message below, which is the one that names the fix.
+          missing=""
+          [ -n "$KEYSTORE_BASE64" ]  || missing="$missing DRIVEREMOTE_KEYSTORE_BASE64"
+          [ -n "$KEYSTORE_PASSWORD" ] || missing="$missing DRIVEREMOTE_KEYSTORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ]        || missing="$missing DRIVEREMOTE_KEY_ALIAS"
+          [ -n "$KEY_PASSWORD" ]     || missing="$missing DRIVEREMOTE_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::refusing to publish -- these secrets are not set:$missing. See docs/BUILDING.md section 10.4."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          [ -s "$RUNNER_TEMP/release.keystore" ] || {
+            echo "::error::DRIVEREMOTE_KEYSTORE_BASE64 decoded to an empty file"; exit 1; }
+
+      # assembleDebug is in the same invocation on purpose: one Gradle run, one
+      # configuration, so the two APKs cannot disagree about the version they
+      # were built from. The debug variant takes no signing secret -- it uses the
+      # runner's generated ~/.android/debug.keystore -- and is unminified, so it
+      # is also the build to install when a release-only R8 problem is suspected.
+      - name: Signed release APK, debug APK, SBOM and version
+        working-directory: android
+        env:
+          DRIVEREMOTE_KEYSTORE: ${{ runner.temp }}/release.keystore
+          DRIVEREMOTE_KEYSTORE_PASSWORD: ${{ secrets.DRIVEREMOTE_KEYSTORE_PASSWORD }}
+          DRIVEREMOTE_KEY_ALIAS: ${{ secrets.DRIVEREMOTE_KEY_ALIAS }}
+          DRIVEREMOTE_KEY_PASSWORD: ${{ secrets.DRIVEREMOTE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleRelease :app:assembleDebug :app:sbom :app:printVersion
+          GRADLE_VERSION=$(cat app/build/version.txt)
+          # The workflow's version and Gradle's are both the commit count. If
+          # they disagree, something is wrong with the checkout, not with one of
+          # the two -- stop rather than publish assets that disagree.
+          if [ "$GRADLE_VERSION" != "$VERSION" ]; then
+            echo "::error::Gradle built $GRADLE_VERSION but the release is $VERSION"
+            exit 1
+          fi
+
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.keystore"
+
+      # After the keystore is gone. apksigner needs no key to read a certificate.
+      - name: Verify the APK is signed with the release certificate
+        working-directory: android
+        env:
+          EXPECTED: ${{ vars.DRIVEREMOTE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$APK" ]; then
+            echo "::error::$APK is missing -- assembleRelease produced an UNSIGNED apk, so the keystore was not picked up"
+            ls -l app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)
+          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found under $SDK/build-tools"; exit 1; }
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK" 2>&1) \
+            || { echo "$CERTS"; echo "::error::apksigner verify failed"; exit 1; }
+          # apksigner labels this "Signer #1 certificate SHA-256 digest:" and,
+          # from build-tools 37, "V2 Signer: certificate SHA-256 digest:".
+          # `|| true` matters here more than anywhere else in the file. A
+          # legitimate grep miss -- apksigner relabels the line, or the APK is
+          # not signed at all -- would otherwise kill the step through pipefail
+          # with no message, and this is the most important check in the
+          # workflow. It had no diagnostic on its own failure path.
+          ACTUAL=$(echo "$CERTS" | grep -i "certificate SHA-256 digest" | head -1 \
+            | sed 's/.*digest: *//' | tr -d '[:space:]' | tr 'A-F' 'a-f' || true)
+          if [ -z "$ACTUAL" ]; then
+            echo "$CERTS"
+            echo "::error::could not read a certificate SHA-256 from apksigner's output"
+            exit 1
+          fi
+          echo "signer certificate sha256: $ACTUAL"
+          [ -n "$EXPECTED" ] || { echo "::error::repository variable DRIVEREMOTE_CERT_SHA256 is not set"; exit 1; }
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::APK is not signed with the expected release certificate"; exit 1; }
+
+      # R8 renames classes in the release build, so a stack trace off a phone is
+      # unreadable without the mapping file for THAT EXACT APK. It is published
+      # with the APK because it is the only copy that will ever match a released
+      # binary -- the build directory it came from does not survive the runner.
+      # ~30 MB, and gzipped because a release asset is downloaded far less often
+      # than it is stored.
+      - name: Name and hash the assets
+        working-directory: android
+        run: |
+          set -euo pipefail
+          BASE="DriveRemoteController-$VERSION"
+          mkdir -p "$GITHUB_WORKSPACE/assets"
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/assets/$BASE.apk"
+          cp app/build/reports/bom.json "$GITHUB_WORKSPACE/assets/$BASE.sbom.cdx.json"
+          DEBUG_APK=app/build/outputs/apk/debug/app-debug.apk
+          if [ ! -f "$DEBUG_APK" ]; then
+            echo "::error::$DEBUG_APK is missing -- assembleDebug did not produce one"
+            exit 1
+          fi
+          cp "$DEBUG_APK" "$GITHUB_WORKSPACE/assets/$BASE-debug.apk"
+          MAPPING=app/build/outputs/mapping/release/mapping.txt
+          if [ ! -f "$MAPPING" ]; then
+            echo "::error::$MAPPING is missing. isMinifyEnabled is true, so R8 must have produced one; without it a crash report from a released build cannot be read."
+            exit 1
+          fi
+          gzip -c "$MAPPING" > "$GITHUB_WORKSPACE/assets/$BASE.mapping.txt.gz"
+          cd "$GITHUB_WORKSPACE/assets"
+          sha256sum "$BASE.apk" > "$BASE.apk.sha256"
+          sha256sum "$BASE-debug.apk" > "$BASE-debug.apk.sha256"
+          sha256sum "$BASE.mapping.txt.gz" > "$BASE.mapping.txt.gz.sha256"
+          ls -l
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android
+          path: assets/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Signs a build-provenance attestation over every asset, so a downloader can
+  # prove a file came out of this repository's workflow at a named commit:
+  #
+  #   gh attestation verify <file> --repo <owner>/<repo>
+  #
+  # It can sign attestations and read the repository. It cannot write to it.
+  # ---------------------------------------------------------------------------
+  attest:
+    name: Attest
+    needs: [version, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      attested: ${{ steps.result.outputs.attested }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: List what is about to be released
+        run: |
+          set -euo pipefail
+          ls -l assets
+          COUNT=$(find assets -type f | wc -l)
+          # release apk, debug apk, sbom, mapping.txt.gz, and a checksum for each
+          # of the three binaries. Exactly 7.
+          # An exact count, not a floor: `-ge 6` would let one missing file
+          # through, which is precisely the case worth catching.
+          [ "$COUNT" -eq 7 ] || { echo "::error::expected 7 assets, found $COUNT -- the android job produced the wrong set"; exit 1; }
+
+      - name: Verify every checksum before attesting it
+        working-directory: assets
+        run: |
+          set -euo pipefail
+          for f in *.sha256; do sha256sum -c "$f"; done
+
+      # NOT allowed to block the release. Artifact attestations need a public
+      # repository, or a private one owned by an organisation on a plan that
+      # includes them. This repository is public, so it should qualify -- but the
+      # API can still refuse, and losing provenance is not a reason to withhold an
+      # APK that has already been built, signed and checked against its expected
+      # certificate. A silently missing attestation would be worse than a stated
+      # one, so the run summary and the release notes both say when there is none.
+      - id: attest
+        continue-on-error: true
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: assets/*
+
+      - id: result
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.attest.outcome }}" = "success" ]; then
+            echo "attested=true" >> "$GITHUB_OUTPUT"
+            echo "### Provenance attested" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "attested=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### No provenance attestation"
+              echo
+              echo "\`actions/attest-build-provenance\` failed, so the release notes will"
+              echo "not claim an attestation. Artifact attestations need a public repository,"
+              echo "or a private one owned by an organisation on a plan that includes them."
+              echo "Everything else about the release is unaffected: the assets were built,"
+              echo "checked for committed credentials, and their checksums verified."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::build provenance could not be attested; publishing without it"
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-files
+          path: assets/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # The only job with a write token, and kept as small as that implies: no
+  # checkout, no toolchain, no secrets, and no code from this repository. It
+  # downloads what the jobs above built, verified and attested, and creates the
+  # Release.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish
+    if: ${{ !inputs.dry_run }}
+    needs: [version, attest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      COMMIT: ${{ needs.version.outputs.commit }}
+      # Whether provenance was actually attested. The notes claim it only when
+      # it is true, so a release never advertises a verification that would fail
+      # for whoever tried it.
+      ATTESTED: ${{ needs.attest.outputs.attested }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-files
+          path: assets
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd assets
+          # The release APK is the asset this whole workflow exists to produce.
+          # Its absence means the android job published an unsigned build or none
+          # at all, and a Release without it would be an empty announcement.
+          APK="DriveRemoteController-$VERSION.apk"
+          [ -f "$APK" ] || { echo "::error::$APK is not among the release files"; exit 1; }
+
+          cat > release-notes.md <<EOF
+          Built from $COMMIT.
+
+          ## Read this before commanding anything
+
+          This app commands a boat's drives and its bow thruster. The system has
+          **not** been through the commissioning checklists in \`docs/SAFETY.md\`.
+          Work through those before connecting any output to a drive or a thruster.
+
+          ## What is here
+
+          The Android station, and nothing else. **The firmware and the Signal K
+          plugin are not released**: the three ESP32 units are flashed over the air
+          from a working tree, and the plugin is installed on the boat's server from
+          \`npm pack\` output, so neither was ever installed from a Release. Both are
+          still built and tested on every push — see the repository's CI.
+
+          | Asset | Signed with | Notes |
+          |---|---|---|
+          | \`DriveRemoteController-$VERSION.apk\` | the release key | Shrunk and obfuscated by R8 |
+          | \`DriveRemoteController-$VERSION-debug.apk\` | the generic Android debug key | Unminified, carries the Compose UI tooling |
+
+          Take the release APK unless you are chasing a fault that only appears in
+          the shrunk build — the debug one is the same code with nothing removed.
+
+          **They cannot replace each other.** Android refuses to install a build
+          signed with a different key over an existing one, in either direction, so
+          switching between them means \`adb uninstall
+          io.github.kegustafsson.driveremote\` first. **That uninstall clears the
+          stored Signal K token**, which lives in app-private storage excluded from
+          backup, so the station then needs a fresh access request approved in the
+          server's admin UI.
+
+          ## Reading a crash report
+
+          The release APK is obfuscated, so a stack trace from it is meaningless on
+          its own. \`DriveRemoteController-$VERSION.mapping.txt.gz\` is the mapping
+          file for this exact build — the only copy that will ever match it:
+
+          \`\`\`sh
+          gunzip DriveRemoteController-$VERSION.mapping.txt.gz
+          retrace DriveRemoteController-$VERSION.mapping.txt stacktrace.txt
+          \`\`\`
+
+          \`retrace\` is in the SDK's \`cmdline-tools\`. The debug APK needs none of
+          this.
+
+          The APK is shrunk and obfuscated by R8, so a stack trace from it is
+          unreadable on its own. \`DriveRemoteController-$VERSION.mapping.txt.gz\`
+          is the mapping file for this exact build — the only copy that will ever
+          match it. To read a crash report, \`gunzip\` it and pass it to
+          \`retrace\` (in the SDK's \`cmdline-tools\`):
+
+          \`\`\`sh
+          gunzip DriveRemoteController-$VERSION.mapping.txt.gz
+          retrace DriveRemoteController-$VERSION.mapping.txt stacktrace.txt
+          \`\`\`
+
+          ## Verifying what you downloaded
+
+          Both APKs and the mapping file have a \`.sha256\` beside them:
+
+          \`\`\`sh
+          sha256sum -c <file>.sha256
+          \`\`\`
+
+          There is also a CycloneDX software bill of materials
+          (\`.sbom.cdx.json\`) of everything on the release runtime classpath. The
+          checksum files and the SBOM are not themselves checksummed.
+          EOF
+
+          if [ "$ATTESTED" = "true" ]; then
+            cat >> release-notes.md <<EOF
+
+          Every file in this release carries a signed build-provenance attestation:
+
+          \`\`\`sh
+          gh attestation verify <file> --repo $GITHUB_REPOSITORY
+          \`\`\`
+          EOF
+          else
+            cat >> release-notes.md <<'EOF'
+
+          > **No provenance attestation.** This release could not be attested, so there
+          > is nothing for `gh attestation verify` to check. The assets were still built
+          > by the workflow, screened for committed credentials, and checksummed.
+          EOF
+          fi
+
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$COMMIT" \
+            --title "Drive Remote Controller $VERSION" \
+            --notes-file release-notes.md \
+            --prerelease \
+            $(ls -1 | grep -v '^release-notes.md$')

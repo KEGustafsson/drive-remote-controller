@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A Signal K server on a boat is almost always plain HTTP on a private network
+  (the units in this project talk to http://192.168.0.100:3000). Android blocks
+  cleartext by default since API 28, so it has to be permitted explicitly.
+
+  This file used to scope that permission to the RFC1918 ranges with eighteen
+  entries of the form <domain includeSubdomains="true">192.168.</domain>, on the
+  reasoning that "domain rules match by suffix, so the leading octets cover the
+  whole range". That reasoning is inverted, and none of those entries ever
+  matched anything. Android matches a domain by SUFFIX: the hostname must equal
+  it, or end with "." + it. That is correct for DNS names, where example.com
+  should cover api.example.com. An IP address's network part is a PREFIX, so
+  192.168.0.100 does not end with ".192.168" and never matched. Every attempt to
+  reach a boat server failed with "CLEARTEXT communication to 192.168.0.100 not
+  permitted by network security policy".
+
+  It cannot be fixed here. Android's network security config has no CIDR or
+  range syntax; the only things that can be written are exact hosts and DNS
+  suffixes, and the server's address is not known at build time.
+
+  So the restriction moved to where it can be expressed AND tested:
+  isPrivateHost() in the pure :core module, checked via
+  ServerAddress.isCleartextSafe before any address is used. The app refuses to
+  talk cleartext to anything that is not on a private network, which is the
+  property this file was trying and failing to enforce. Following AGENTS.md,
+  that is where it belonged in the first place: it is a decision, and decisions
+  live in the host-tested core rather than in platform configuration.
+
+  Note for anyone editing this file: a double dash is illegal inside an XML
+  comment, so the project's usual em-dash style cannot be used here.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

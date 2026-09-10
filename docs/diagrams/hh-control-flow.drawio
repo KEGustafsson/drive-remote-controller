@@ -1,0 +1,168 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="hh-control-flow" name="HH control flow">
+    <mxGraphModel dx="1400" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" background="#fcfcfb" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="HH — Bow Thruster Control Flow" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=19;fontStyle=1;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="300" y="16" width="600" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="One tick of the pinned safe-core task, every 10 ms — lib/control_core/heading/control_step.cpp" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12;fontColor=#8a877f;" vertex="1" parent="1">
+          <mxGeometry x="250" y="44" width="700" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="inhdr" value="INPUTS" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=12.5;fontStyle=1;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="30" y="78" width="120" height="16" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="in_eng" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;Local ENGAGE&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;debounced · always means HOLD&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#1a7f37;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="100" width="212" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="in_tx" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;TX via Signal K&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;command · mode · target · enabled&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#2a78d6;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="166" width="212" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="in_pl" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;Plugin via Signal K&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;same four fields&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#8250df;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="232" width="212" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="in_imu" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;IMU frame (100 Hz)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;yaw · roll · pitch&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="316" width="212" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="in_gnss" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;GNSS true heading&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;via Signal K · quality-gated&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="382" width="212" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="in_note" value="remote sources read from a mutex-protected&lt;br&gt;cache — the loop never waits on the network" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10;fontColor=#8a877f;" vertex="1" parent="1">
+          <mxGeometry x="20" y="444" width="212" height="28" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="arb" value="&lt;b&gt;ArbitrateThruster&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#1a7f37&quot; style=&quot;font-size:10.5px&quot;&gt;1 · local ENGAGE wins&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#2a78d6&quot; style=&quot;font-size:10.5px&quot;&gt;2 · TX, if live + enabled&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8250df&quot; style=&quot;font-size:10.5px&quot;&gt;3 · plugin, if live + enabled&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;4 · nobody → no engage&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10px&quot;&gt;fixed precedence, never recency&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="276" y="140" width="200" height="132" as="geometry"/>
+        </mxCell>
+        <mxCell id="arbout" value="→ engage request + MODE" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontStyle=1;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="276" y="286" width="200" height="16" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#1a7f37;strokeWidth=2.5;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="232" y="128" as="sourcePoint"/><mxPoint x="272" y="176" as="targetPoint"/>
+            <Array as="points"><mxPoint x="254" y="128"/><mxPoint x="254" y="176"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#2a78d6;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="232" y="194" as="sourcePoint"/><mxPoint x="272" y="194" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#8250df;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="232" y="260" as="sourcePoint"/><mxPoint x="272" y="226" as="targetPoint"/>
+            <Array as="points"><mxPoint x="254" y="260"/><mxPoint x="254" y="226"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="state" value="&lt;b&gt;State estimate&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;yaw rate: diff → LPF → spike reject&lt;br&gt;fusion: gyro predicts every tick,&lt;br&gt;GNSS corrects slowly when accepted&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10px&quot;&gt;never snapped by a command&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="276" y="326" width="200" height="112" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="232" y="344" as="sourcePoint"/><mxPoint x="272" y="344" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="232" y="410" as="sourcePoint"/><mxPoint x="272" y="394" as="targetPoint"/>
+            <Array as="points"><mxPoint x="254" y="410"/><mxPoint x="254" y="394"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="fsm" value="&lt;b style=&quot;font-size:13.5px&quot;&gt;Safety FSM&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10px&quot;&gt;every command enters here&lt;/font&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;font style=&quot;font-size:11px&quot;&gt;DISARMED → ARMED_IDLE&lt;br&gt;→ HOLDING&lt;br&gt;&lt;font color=&quot;#c0392b&quot;&gt;FAULT on IMU timeout&lt;/font&gt;&lt;/font&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10px&quot;&gt;deadman · good-heading arm gate&lt;br&gt;coast timers · fresh-edge to resume&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10px&quot;&gt;arm gate + coast are HOLD-only&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;verticalAlign=top;spacingTop=8;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=3;fontFamily=Segoe UI;fontSize=13.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="520" y="140" width="200" height="176" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="476" y="206" as="sourcePoint"/><mxPoint x="516" y="206" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="476" y="382" as="sourcePoint"/><mxPoint x="516" y="288" as="targetPoint"/>
+            <Array as="points"><mxPoint x="496" y="382"/><mxPoint x="496" y="288"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="manual" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;MANUAL — ManualThrust&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;button IS the direction&lt;br&gt;press → on, release → off,&lt;br&gt;same tick, no min-on/min-off&lt;/font&gt;&lt;br&gt;&lt;b style=&quot;font-size:10.5px&quot;&gt;&lt;font color=&quot;#b45309&quot;&gt;no added dwell (0.00 s)&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;the control box's own interlock applies&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#f2f8f7;strokeColor=#0f766e;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="520" y="360" width="200" height="118" as="geometry"/>
+        </mxCell>
+        <mxCell id="hold" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;HOLD — Switcher&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;s = error − Td × rate (lead)&lt;br&gt;Schmitt deadband on/off&lt;br&gt;min-on · min-off · &lt;b&gt;1.85 s dwell&lt;/b&gt;&lt;br&gt;duty tracking → widen / inhibit&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;setpoint captured on entering HOLDING,&lt;br&gt;then slewed to any commanded target&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=2;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="520" y="500" width="200" height="132" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e8" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#0f766e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="620" y="316" as="sourcePoint"/><mxPoint x="620" y="354" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="e8t" value="mode = manual" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10;fontColor=#0f766e;labelBackgroundColor=#fcfcfb;" vertex="1" parent="1">
+          <mxGeometry x="630" y="328" width="100" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="e9" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="700" y="316" as="sourcePoint"/><mxPoint x="700" y="494" as="targetPoint"/>
+            <Array as="points"><mxPoint x="760" y="316"/><mxPoint x="760" y="470"/><mxPoint x="700" y="470"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9t" value="mode =&lt;br&gt;hold" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=10;fontColor=#57534e;labelBackgroundColor=#fcfcfb;" vertex="1" parent="1">
+          <mxGeometry x="766" y="378" width="50" height="28" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="outmap" value="&lt;b&gt;ComputeOutputLevels&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;(armed, direction) → levels&lt;/font&gt;&lt;hr size=&quot;1&quot; color=&quot;#e1e0d9&quot;&gt;&lt;font style=&quot;font-size:10.5px&quot;&gt;cannot express both directions&lt;br&gt;directions forced low if not armed&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:10px&quot;&gt;one atomic GPIO write per tick&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;verticalAlign=top;spacingTop=8;fillColor=#ffffff;strokeColor=#24292f;strokeWidth=3;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="820" y="360" width="210" height="128" as="geometry"/>
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#0f766e;strokeWidth=2.5;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="720" y="419" as="sourcePoint"/><mxPoint x="816" y="419" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="e11" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#52514e;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="720" y="552" as="sourcePoint"/><mxPoint x="816" y="460" as="targetPoint"/>
+            <Array as="points"><mxPoint x="786" y="552"/><mxPoint x="786" y="460"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="gpios" value="&lt;b style=&quot;font-size:12.5px&quot;&gt;ENABLE · PORT · STBD&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10px&quot;&gt;GPIO 33 · 13 · 27&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#f2f8f7;strokeColor=#0f766e;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=12.5;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="850" y="540" width="150" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#0f766e;strokeWidth=2.5;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="925" y="488" as="sourcePoint"/><mxPoint x="925" y="534" as="targetPoint"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="wd" value="&lt;b&gt;&lt;font color=&quot;#c0392b&quot;&gt;Fail-off watchdog&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10.5px&quot;&gt;esp_timer on core 0 —&lt;br&gt;a separate task, separate core&lt;br&gt;&lt;br&gt;the control task refreshes a&lt;br&gt;heartbeat after each full tick&lt;/font&gt;&lt;br&gt;&lt;b style=&quot;font-size:10.5px&quot;&gt;&lt;font color=&quot;#c0392b&quot;&gt;stale → force all outputs off&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;bounds a latched direction if the loop wedges&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#c0392b;strokeWidth=2.5;fontFamily=Segoe UI;fontSize=13;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="820" y="140" width="210" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="e13" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#c0392b;strokeWidth=2.5;dashed=1;dashPattern=7 4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="925" y="280" as="sourcePoint"/><mxPoint x="925" y="354" as="targetPoint"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="tele" value="&lt;b style=&quot;font-size:12px&quot;&gt;Telemetry&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:10px&quot;&gt;snapshot →&lt;br&gt;SensESP loop&lt;br&gt;&lt;br&gt;hh.* + attitude&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#8a877f&quot; style=&quot;font-size:9.5px&quot;&gt;published at&lt;br&gt;15 Hz, one-way&lt;/font&gt;" style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#6e7781;strokeWidth=2;fontFamily=Segoe UI;fontSize=12;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="360" width="120" height="128" as="geometry"/>
+        </mxCell>
+        <mxCell id="e14" style="edgeStyle=none;html=1;endArrow=classic;strokeColor=#898781;strokeWidth=1.7;dashed=1;dashPattern=6 4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1030" y="400" as="sourcePoint"/><mxPoint x="1056" y="400" as="targetPoint"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="footnote" value="&lt;b style=&quot;font-size:12px&quot;&gt;Why the FSM sits between arbitration and the gates&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#57534e&quot; style=&quot;font-size:11px&quot;&gt;A remote command is fed to the FSM at exactly the position the local ENGAGE level occupies, so it passes every gate a local hold passes. There is no path from a station to an output that bypasses this box.&lt;/font&gt;" style="rounded=1;arcSize=6;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=16;spacingTop=6;spacingRight=16;fillColor=#fcfcfb;strokeColor=#898781;strokeWidth=1.5;dashed=1;dashPattern=5 4;fontFamily=Segoe UI;fontSize=12;fontColor=#1c1917;" vertex="1" parent="1">
+          <mxGeometry x="20" y="660" width="480" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="lgA" style="endArrow=classic;html=1;strokeColor=#0f766e;strokeWidth=2.5;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="540" y="690" as="sourcePoint"/><mxPoint x="568" y="690" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="lgAt" value="Thruster command path" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="576" y="682" width="220" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="lgB" style="endArrow=classic;html=1;strokeColor=#c0392b;strokeWidth=2.5;dashed=1;dashPattern=7 4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="540" y="716" as="sourcePoint"/><mxPoint x="568" y="716" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="lgBt" value="Fail-off, independent of the loop" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="576" y="708" width="260" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="lgC" style="endArrow=classic;html=1;strokeColor=#898781;strokeWidth=1.7;dashed=1;dashPattern=6 4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="540" y="742" as="sourcePoint"/><mxPoint x="568" y="742" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="lgCt" value="Telemetry (one-way out)" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Segoe UI;fontSize=11;fontColor=#57534e;" vertex="1" parent="1">
+          <mxGeometry x="576" y="734" width="220" height="16" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
