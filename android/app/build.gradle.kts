@@ -15,6 +15,7 @@ import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
   alias(libs.plugins.android.application)
@@ -163,7 +164,11 @@ android {
     targetCompatibility = JavaVersion.VERSION_17
   }
 
-  kotlinOptions { jvmTarget = "17" }
+  // The compilerOptions DSL, not the kotlinOptions one :core already left
+  // behind. `kotlinOptions { jvmTarget = "17" }` is an ERROR from Kotlin 2.2
+  // on, not a warning, so the Gradle dependency group could not be bumped while
+  // this module still used it. Same JVM target as before, and as :core.
+  kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
 
   buildFeatures { compose = true }
 
