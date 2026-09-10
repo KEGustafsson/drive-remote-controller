@@ -1,9 +1,7 @@
 package io.github.kegustafsson.driveremote
 
 import android.content.pm.ActivityInfo
-import android.os.Build
 import android.os.Bundle
-import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -100,15 +98,12 @@ class MainActivity : ComponentActivity() {
 
   /** The short side of the whole display in dp, letterboxing notwithstanding. */
   private fun smallestDisplayWidthDp(): Float {
+    // maximumWindowMetrics is API 30, which is minSdk, so there is no fallback
+    // branch here any more. It used to call the deprecated defaultDisplay
+    // .getRealMetrics() for API 26-29.
     val density = resources.displayMetrics.density
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      val bounds = windowManager.maximumWindowMetrics.bounds
-      return minOf(bounds.width(), bounds.height()) / density
-    }
-    val metrics = DisplayMetrics()
-    @Suppress("DEPRECATION")
-    windowManager.defaultDisplay.getRealMetrics(metrics)
-    return minOf(metrics.widthPixels, metrics.heightPixels) / metrics.density
+    val bounds = windowManager.maximumWindowMetrics.bounds
+    return minOf(bounds.width(), bounds.height()) / density
   }
 }
 

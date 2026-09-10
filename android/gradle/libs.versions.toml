@@ -1,5 +1,9 @@
 [versions]
-kotlin = "2.4.20"
+# Bounded by the R8 inside AGP, not by this project: AGP 8.13.2 carries
+# R8 8.13.23, which cannot parse Kotlin 2.4+ metadata and then shrinks
+# without Kotlin awareness, silently, in the release build only.
+# Measured here: 2.3.21 -> 0 warnings, 2.4.0 -> 8. Moves with AGP.
+kotlin = "2.3.21"
 junit = "5.14.4"
 kotlinxSerialization = "1.11.0"
 

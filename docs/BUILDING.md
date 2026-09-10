@@ -477,12 +477,13 @@ unzipping the artifacts in the Gradle cache rather than assumed:
 | kotlinx.serialization 1.7.3 | Yes — in `kotlinx-serialization-core`, including an R8-specific `kotlinx-serialization-r8.pro` | Nothing for compiler-generated serializers, which is all of `:core`'s |
 | **`androidx.security:security-crypto` 1.1.0-alpha06 → Tink** | **No.** The AAR carries no `proguard.txt` at all, and `tink-android-1.8.0` ships only protobuf rules rather than its own | **Expect to write rules here** — Tink registers its key managers reflectively |
 
-**That last row is the one that matters, because of where it fails.**
-`SettingsStore` keeps the Signal K token in `EncryptedSharedPreferences` behind a
-`MasterKey`. If R8 strips a Tink key manager, the symptom is a station that cannot read
-its own stored token: release build only, debug fine, and it presents as a server-side
-authentication problem rather than a build one. The blunt starting point, which trades
-away most of the shrinking in exchange for working:
+**That last row still matters, but less than it did.** The token store no longer uses
+that library: `SettingsStore` goes through `KeystoreEncryptedPreferences`, which uses the
+platform's own AES-256-GCM under an Android Keystore key and pulls in no Tink. Tink
+survives only because `LegacySecureStoreMigration` reads the old store once on upgrade —
+so these rules protect a migration rather than the live path, and **they should be deleted
+in the same commit as that file**, once every station has run a migrating build. Doing so
+also returns the ~96% of shrinking they cost. The blunt rule while they are needed:
 
 ```proguard
 -keep class com.google.crypto.tink.** { *; }

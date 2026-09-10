@@ -45,6 +45,22 @@ updates:
         versions: [">1.16.0"]
       - dependency-name: "androidx.core:core-ktx"
         versions: [">1.16.0"]
+      # Kotlin is bounded by the R8 that ships inside AGP, not by anything in
+      # this project. AGP 8.13.2 carries R8 8.13.23, which cannot parse metadata
+      # from Kotlin 2.4 or newer: it prints "An error occurred when parsing
+      # kotlin metadata" and then shrinks WITHOUT Kotlin awareness, silently, in
+      # the release build only. On an app whose R8 keep rules exist to stop a
+      # stripped Tink key manager breaking the token store, that is not a
+      # warning to live with.
+      #
+      # Measured on this project, not taken from a table -- assembleRelease,
+      # counting the warning:
+      #     2.2.20 -> 0    2.3.21 -> 0    2.4.0 -> 8    2.4.20 -> 8
+      # Raise this bound in the same commit that raises AGP to 9.x.
+      - dependency-name: "org.jetbrains.kotlin:*"
+        versions: [">=2.4.0"]
+      - dependency-name: "org.jetbrains.kotlin.*"
+        versions: [">=2.4.0"]
 
   - package-ecosystem: npm
     directory: /sk-plugin

@@ -101,10 +101,30 @@ android {
 
   defaultConfig {
     applicationId = "io.github.kegustafsson.driveremote"
-    // API 26 (Android 8.0). Below this, NsdManager's discovery callbacks are
-    // materially less reliable and there is no reason to carry the workarounds
-    // for a boat-helm app that will run on a modern phone.
-    minSdk = 26
+    // API 30 (Android 11), owner decision. Was 26: NsdManager's discovery
+    // callbacks are materially less reliable below that, and there was no
+    // reason to carry pre-26 workarounds for a boat-helm app.
+    //
+    // 30 buys one concrete simplification -- WindowManager.maximumWindowMetrics
+    // is API 30, so smallestDisplayWidthDp() no longer needs its deprecated
+    // defaultDisplay.getRealMetrics() fallback -- and it does NOT silence the
+    // NsdManager deprecation: registerServiceInfoCallback is API 34, so the
+    // deprecated resolveService call still serves Android 11, 12 and 13. That
+    // warning expires at minSdk 34, not here.
+    //
+    // IT ALSO ROUGHLY DOUBLES THE .apk FILE, AND THAT IS NOT A REGRESSION.
+    // From minSdk 28 AGP stops deflating classes.dex so Android can memory-map
+    // it straight out of the APK. Measured on this project, same commit, only
+    // minSdk differing:
+    //
+    //     minSdk 26   dex 3,882,000  Defl:N -> 1,627,465   apk 1,905,507
+    //     minSdk 30   dex 3,824,252  Stored -> 3,824,252   apk 4,100,963
+    //
+    // The CODE got smaller -- 57,748 bytes of dropped 26-29 compatibility
+    // paths. Installed size is unchanged, startup is faster (mmap instead of
+    // inflate), and any transport compresses it back down. Only the file on the
+    // Releases page is bigger. Do not "fix" this by lowering minSdk.
+    minSdk = 30
     targetSdk = 35
     versionCode = commitCount
     versionName = appVersion

@@ -7,8 +7,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import io.github.kegustafsson.driveremote.core.ServerAddress
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,16 +26,18 @@ class SettingsStore(context: Context) {
 
   private val appContext = context.applicationContext
 
+  // AES-256-GCM under a key held in the Android Keystore. This replaced
+  // androidx.security-crypto's EncryptedSharedPreferences, which 1.1.0
+  // deprecated without a replacement; KeystoreEncryptedPreferences presents the
+  // same SharedPreferences interface so nothing below this line changed --
+  // including the commit()/apply() distinction nextSessionGeneration depends on.
+  //
+  // The migration runs before the first read and is committed synchronously,
+  // because clientId and the session generation are read immediately.
   private val secure: SharedPreferences by lazy {
-    val masterKey =
-      MasterKey.Builder(appContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-    EncryptedSharedPreferences.create(
-      appContext,
-      "drive_remote_secure",
-      masterKey,
-      EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-      EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    KeystoreEncryptedPreferences(appContext, SECURE_FILE, SECURE_KEY_ALIAS).also {
+      LegacySecureStoreMigration.migrateIfNeeded(appContext, it)
+    }
   }
 
   /** The configured server, or null until one has been chosen. */
@@ -169,7 +169,11 @@ class SettingsStore(context: Context) {
     return secure.getLong(KEY_TOKEN_EXPIRY, Long.MAX_VALUE) <= nowMs
   }
 
-  private companion object {
+  internal companion object {
+    /** The encrypted file, and the Keystore alias protecting it. */
+    const val SECURE_FILE = "drive_remote_secure_v2"
+    const val SECURE_KEY_ALIAS = "drive_remote_secure"
+
     val KEY_HOST = stringPreferencesKey("server_host")
     val KEY_PORT = intPreferencesKey("server_port")
     val KEY_TLS = booleanPreferencesKey("server_tls")

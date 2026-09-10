@@ -10,6 +10,13 @@
 # (~96% of everything R8 keeps). Narrow it against
 # app/build/outputs/mapping/release/usage.txt only with a phone to hand: the
 # failure it guards against is silent at build time.
+#
+# THIS WHOLE BLOCK GOES WHEN LegacySecureStoreMigration.kt GOES. Tink reaches
+# this build only through androidx.security-crypto, and the migration file is
+# now its only caller -- SettingsStore moved to KeystoreEncryptedPreferences,
+# which uses the platform's own AES-GCM and pulls in no Tink at all. Deleting
+# the migration therefore removes the dependency, these rules, and with them
+# the 96%: the release APK should shrink substantially. Do them together.
 -keep class com.google.crypto.tink.** { *; }
 -keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite { <fields>; }
 

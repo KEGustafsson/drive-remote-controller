@@ -234,8 +234,16 @@ Two things identify the app, both in [`app/build.gradle.kts`](app/build.gradle.k
 | `applicationId` | `io.github.kegustafsson.driveremote` — the package the phone installs under. Change it and your build installs *alongside* the original rather than over it, which is what you want while comparing two versions. |
 | `namespace` | the Kotlin package root. Changing it means moving the source directories to match; changing only `applicationId` does not. |
 
-`minSdk = 26` (NsdManager's discovery callbacks are materially less reliable
-below it), `targetSdk`/`compileSdk = 35`.
+`minSdk = 30` (Android 11). Two consequences worth knowing. It does **not**
+silence the `NsdManager.resolveService` deprecation — the replacement is API 34,
+so the deprecated call still serves Android 11, 12 and 13 — and it roughly
+doubles the `.apk` file, because from minSdk 28 AGP stores `classes.dex`
+uncompressed for memory-mapping. Measured, same commit, only minSdk differing:
+1,905,507 → 4,100,963 bytes, while the dex itself got 57,748 bytes *smaller*.
+Installed size is unchanged and startup is faster; only the published file grows.
+
+It was `minSdk = 26` before, chosen because NsdManager's discovery callbacks are
+materially less reliable below that. `targetSdk`/`compileSdk = 35`.
 
 **The version comes from git**, not from a hand-edited number: `versionCode` is
 the commit count, which is monotonic on `main`, and `versionName` is
@@ -457,12 +465,14 @@ Checked by unzipping the artifacts in the Gradle cache, not assumed:
 | **`androidx.security:security-crypto` 1.1.0-alpha06 → Tink** | **No.** The AAR carries no `proguard.txt`, and `tink-android-1.8.0` ships only protobuf rules, not its own | **Expect to write rules here.** Tink registers key managers reflectively |
 | `NsdManager`, `DataStore` | n/a — framework, no reflection | Nothing |
 
-**The security-crypto row is the one to worry about**, because of where it fails.
-`SettingsStore` keeps the Signal K token in `EncryptedSharedPreferences` with a
-`MasterKey`; if R8 strips a Tink key manager, the symptom is a station that
-cannot read its own stored token — release build only, debug fine, and it looks
-like a server-side auth problem rather than a build one. The blunt starting
-point, which trades away most of the shrinking in exchange for working:
+**The security-crypto row still matters, but less than it did.** The token store
+itself no longer uses that library: `SettingsStore` now goes through
+`KeystoreEncryptedPreferences`, which uses the platform's own AES-256-GCM under
+an Android Keystore key and pulls in no Tink at all. Tink survives only because
+`LegacySecureStoreMigration` still reads the old store once — so these keeps
+protect a migration, not the live path, and **both should be deleted together**
+once every station has run a migrating build. That would also return the ~96%
+of shrinking they currently cost. The blunt rule while they are needed:
 
 ```proguard
 -keep class com.google.crypto.tink.** { *; }
@@ -588,7 +598,9 @@ thing that will catch the three drifting apart.
 | `net/IntentPoster.kt` | the intent POST, independent of the stream |
 | `auth/AccessRequestClient.kt` | HTTP for the token flow; all parsing is in `core` |
 | `discovery/MdnsDiscovery.kt` | `NsdManager` browse for `_signalk-http._tcp` |
-| `settings/SettingsStore.kt` | server in DataStore, token in EncryptedSharedPreferences |
+| `settings/SettingsStore.kt` | server in DataStore, token in `KeystoreEncryptedPreferences` |
+| `settings/KeystoreEncryptedPreferences.kt` | AES-256-GCM under an Android Keystore key; a `SharedPreferences` so the call sites did not change |
+| `settings/LegacySecureStoreMigration.kt` | one-time move off `androidx.security-crypto`. **Delete once every station has upgraded** |
 | `StationViewModel.kt` | command state, the 250 ms heartbeat, the staleness ticker |
 | `ui/Momentary.kt` | the per-pointer momentary button — the multi-touch primitive |
 | `ui/HelmScale.kt` | the proportional scale, and the floors and ceilings it moves |
