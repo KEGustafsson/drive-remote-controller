@@ -50,6 +50,22 @@ interface ThrusterControlProps {
    */
   holdsControl: boolean;
 
+  /**
+   * True when the HH unit ITSELF reports it is holding: hh.armed AND
+   * hh.mode === 'hold', with hh telemetry still arriving.
+   *
+   * Separate from [armed] because [armed] is only this app's own half of the
+   * question -- token held, socket up, HH answering -- and none of that says
+   * the unit engaged. HH may be faulted, its heading may not be trustworthy
+   * yet, or its own ENGAGE input may have taken the thruster; hh.setpointDeg
+   * reads as a live number in every one of those cases, because HH mirrors that
+   * path to the fused heading whenever it is NOT holding (ARCHITECTURE.md
+   * §9). So the heading here must never be labelled "holding" off a local
+   * guess -- a consumer that needs "holding this" rather than "would hold this"
+   * has to read the unit's own report, which is this prop.
+   */
+  holdEngaged: boolean;
+
   /** Source label when a higher-precedence station owns the thruster. */
   overriddenBy?: string;
 
@@ -71,6 +87,7 @@ export function ThrusterControl({
   heldDeg,
   armed,
   holdsControl,
+  holdEngaged,
   overriddenBy,
   reversalPending,
 }: ThrusterControlProps) {
@@ -208,12 +225,20 @@ export function ThrusterControl({
                   number is the boat's CURRENT heading, not a heading being
                   held. Label it for what it is -- with the mode chooser now
                   reachable while disarmed this panel is easy to open with
-                  nothing engaged, and "holding" there would be a lie. */}
+                  nothing engaged, and "holding" there would be a lie.
+
+                  Armed, the same lie is still possible: the mirror means the
+                  number looks identical whether HH engaged or not, so only the
+                  unit's own report (holdEngaged) may put the word "holding" on
+                  it. Anything else says what we actually know -- the hold has
+                  been REQUESTED. */}
               {disabled
                 ? 'current heading'
-                : trimDeg !== 0
-                  ? `holding · trim ${formatTrim(trimDeg)}°`
-                  : 'holding'}
+                : holdEngaged
+                  ? trimDeg !== 0
+                    ? `holding · trim ${formatTrim(trimDeg)}°`
+                    : 'holding'
+                  : 'hold requested · unit not holding'}
             </span>
           </div>
           <div
@@ -259,9 +284,17 @@ export function ThrusterControl({
             </button>
           </div>
           <div className="thruster-control__state" aria-live="polite">
-            {armed && !overriddenBy && (
+            {armed && !overriddenBy && holdEngaged && (
               <span className="thruster-control__note">
                 holding heading — trim with the arrows
+              </span>
+            )}
+            {/* Armed and asking for the hold, but HH has not said it engaged.
+                An invitation to trim would be an instruction to steer a hold
+                that is not running; name the wait instead. */}
+            {armed && !overriddenBy && !holdEngaged && (
+              <span className="thruster-control__note" role="status">
+                hold requested — waiting for the thruster unit to engage
               </span>
             )}
             {preArm && (

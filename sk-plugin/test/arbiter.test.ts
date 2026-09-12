@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 // @ts-expect-error -- plain CommonJS module, no .d.ts (pure JS by design,
 // mirroring how index.cjs itself is untyped). Shape is exercised below.
-import { ArmArbiter, MAX_TRIM_DEG, MAX_TRACKED_CLIENTS } from '../arbiter.cjs';
+import { ArmArbiter, isWellFormedIntent, MAX_TRIM_DEG, MAX_TRACKED_CLIENTS } from '../arbiter.cjs';
 
 // Convenience: build a client intent object. seq auto-increments per call
 // (unless a test overrides it) because the arbiter now ENFORCES per-client
@@ -112,14 +112,70 @@ describe('ArmArbiter: exclusive arm', () => {
     expect(a.state().activeClient).toBe('A');
     expect(a.state().enabled).toBe(true);
   });
+
+  // An arm edge is granted only on a packet whose command tuple is AT REST.
+  // Otherwise one POST takes the machinery from disarmed to moving, with no
+  // state in between for an operator to see. The edge is CONSUMED (the baseline
+  // clamps forward) exactly as a disarm edge is, so the way out is a fresh
+  // press from rest -- and RX applies the same rule to its own switches
+  // (drive/arm_gate.h `local_command_active`).
+  it('refuses an arm edge that arrives with a drive already commanded', () => {
+    const a = makeArbiter();
+    a.onIntent(intent('A', { armReq: 0 }), 0);
+    a.onIntent(intent('A', { armReq: 1, port: 'forward' }), 10);
+    expect(a.state()).toMatchObject({
+      enabled: false,
+      activeClient: '',
+      port: 'neutral',
+    });
+
+    // The heartbeat repeats it 250 ms later; still not an arm.
+    a.onIntent(intent('A', { armReq: 1, port: 'forward' }), 260);
+    expect(a.state().enabled).toBe(false);
+
+    // Letting go does not arm either -- that edge was spent, not banked.
+    a.onIntent(intent('A', { armReq: 1 }), 270);
+    expect(a.state().enabled).toBe(false);
+
+    // A fresh press from rest arms, and only then does a command reach a drive.
+    a.onIntent(intent('A', { armReq: 2 }), 280);
+    expect(a.state()).toMatchObject({ enabled: true, activeClient: 'A' });
+    a.onIntent(intent('A', { armReq: 2, port: 'forward' }), 290);
+    expect(a.state().port).toBe('forward');
+  });
+
+  it('refuses an arm edge carrying thrust or a trim -- but a MODE is not a command', () => {
+    const a = makeArbiter();
+    a.onIntent(intent('A', { armReq: 0 }), 0);
+    a.onIntent(
+      intent('A', { armReq: 1, thrusterMode: 'manual', thruster: 'port' }),
+      10,
+    );
+    expect(a.state().enabled).toBe(false);
+    a.onIntent(intent('A', { armReq: 2, thrusterMode: 'hold', trimDeg: 10 }), 20);
+    expect(a.state().enabled).toBe(false);
+
+    // HOLD with no trim asks for nothing on its own: it selects which gate the
+    // arm opens, which is exactly what the operator picks while disarmed.
+    a.onIntent(intent('A', { armReq: 3, thrusterMode: 'hold' }), 30);
+    expect(a.state()).toMatchObject({
+      enabled: true,
+      thrusterMode: 'hold',
+      thruster: 'off',
+      trimDeg: 0,
+    });
+  });
 });
 
 describe('ArmArbiter: universal disarm', () => {
   it('honours STOP even when it is the new client’s first accepted packet', () => {
     const a = makeArbiter();
     a.onIntent(intent('A', { armReq: 0 }), 0);
-    a.onIntent(intent('A', { armReq: 1, port: 'forward' }), 10);
-    expect(a.state().enabled).toBe(true);
+    // The arm edge is granted only from a resting tuple, so A arms with its
+    // contacts released and commands on the NEXT intent (arbiter.cjs).
+    a.onIntent(intent('A', { armReq: 1 }), 10);
+    a.onIntent(intent('A', { armReq: 1, port: 'forward' }), 15);
+    expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
 
     // B's mount heartbeat may have been lost or may arrive after this packet.
     // Universal STOP must not depend on having observed a baseline first.
@@ -194,7 +250,7 @@ describe('ArmArbiter: universal disarm', () => {
     a.onIntent(intent('B', { seq: 2, disarmReq: 3 }), 10);
     // A takes the token and is manoeuvring.
     a.onIntent(intent('A', { seq: 3, armReq: 0 }), 20);
-    a.onIntent(intent('A', { seq: 4, armReq: 1, port: 'forward' }), 30);
+    a.onIntent(intent('A', { seq: 4, armReq: 1 }), 30); // arms from rest
     a.onIntent(intent('A', { seq: 5, armReq: 1, port: 'forward' }), 1200);
     a.tick(1200); // B is evicted; its counter (3) is remembered.
     expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
@@ -225,7 +281,8 @@ describe('ArmArbiter: universal disarm', () => {
   it('honours STOP from an untracked station when the client table is full', () => {
     const a = makeArbiter();
     a.onIntent(intent('holder', { seq: 1, armReq: 0 }), 0);
-    a.onIntent(intent('holder', { seq: 2, armReq: 1, port: 'forward' }), 1);
+    a.onIntent(intent('holder', { seq: 2, armReq: 1 }), 1); // arms from rest
+    a.onIntent(intent('holder', { seq: 3, armReq: 1, port: 'forward' }), 2);
     expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
 
     // Fill the table to capacity with other live stations.
@@ -358,7 +415,8 @@ describe('ArmArbiter: command forwarding', () => {
   it('only the holder\'s port/stbd reach the canonical command outputs', () => {
     const a = makeArbiter();
     a.onIntent(intent('A', { armReq: 0 }), 0);
-    a.onIntent(intent('A', { armReq: 1, port: 'forward', stbd: 'reverse' }), 10);
+    a.onIntent(intent('A', { armReq: 1 }), 10); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, port: 'forward', stbd: 'reverse' }), 20);
     // A non-holder pressing buttons must not command anything.
     a.onIntent(intent('B', { port: 'forward', stbd: 'forward' }), 20);
     expect(a.state()).toMatchObject({ port: 'forward', stbd: 'reverse' });
@@ -367,8 +425,10 @@ describe('ArmArbiter: command forwarding', () => {
   it('releasing the token forces both commands back to neutral', () => {
     const a = makeArbiter();
     a.onIntent(intent('A', { armReq: 0 }), 0);
-    a.onIntent(intent('A', { armReq: 1, port: 'forward', stbd: 'reverse' }), 10);
-    a.onIntent(intent('A', { armReq: 1, disarmReq: 1, port: 'forward' }), 20);
+    a.onIntent(intent('A', { armReq: 1 }), 10); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, port: 'forward', stbd: 'reverse' }), 20);
+    expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
+    a.onIntent(intent('A', { armReq: 1, disarmReq: 1, port: 'forward' }), 30);
     expect(a.state()).toMatchObject({
       enabled: false,
       port: 'neutral',
@@ -393,6 +453,20 @@ describe('ArmArbiter: malformed intents are ignored', () => {
     expect(a.onIntent(intent('', { armReq: 99 }), 20)).toBe(false); // blank
     expect(a.onIntent(null, 20)).toBe(false);
     expect(a.state().activeClient).toBe('A');
+  });
+
+  // The same three structural checks, exported so the HTTP shell can answer 400
+  // instead of acknowledging a body the arbiter never read (index.cjs).
+  it('exposes the structural verdict the route answers 400 on', () => {
+    expect(isWellFormedIntent(intent('A'))).toBe(true);
+    expect(isWellFormedIntent(null)).toBe(false);
+    expect(isWellFormedIntent('not-an-object')).toBe(false);
+    expect(isWellFormedIntent({ armReq: 1 })).toBe(false); // no clientId
+    expect(isWellFormedIntent({ clientId: '' })).toBe(false);
+    expect(isWellFormedIntent({ clientId: 'x'.repeat(65) })).toBe(false);
+    // A garbage FIELD is not malformed -- it is screened to its safe value, so
+    // the STOP counter riding alongside it is still read.
+    expect(isWellFormedIntent(intent('A', { port: 'sideways' }))).toBe(true);
   });
 
   // Client records are evicted on every tick, so this bounds only the window
@@ -757,7 +831,8 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
-    a.onIntent(intent('A', { armReq: 1, seq: 2, port: 'forward' }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 3);
     expect(a.state().port).toBe('forward');
 
     // RX disappears while HH keeps the shared token alive.
@@ -767,22 +842,22 @@ describe('ArmArbiter: two units, one ARM', () => {
 
     // Even a station that keeps asking for forward cannot plant a latent
     // command while RX is absent.
-    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 3010);
+    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'forward' }), 3010);
     a.onRxTelemetry(3100);
     expect(a.state().port).toBe('neutral');
 
     // A STILL-HELD button is not a fresh command. seq advances on the 250 ms
     // heartbeat whether or not the finger moved, so it cannot be the evidence
     // of operator intent -- it orders transport, nothing more.
-    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'forward' }), 3110);
+    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'forward' }), 3110);
     expect(a.state().port).toBe('neutral');
 
     // Releasing is the baseline the quarantine waits for...
-    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'neutral' }), 3120);
+    a.onIntent(intent('A', { armReq: 1, seq: 6, port: 'neutral' }), 3120);
     expect(a.state().port).toBe('neutral');
 
     // ...and the next forward after it is a genuinely new command.
-    a.onIntent(intent('A', { armReq: 1, seq: 6, port: 'forward' }), 3130);
+    a.onIntent(intent('A', { armReq: 1, seq: 7, port: 'forward' }), 3130);
     expect(a.state().port).toBe('forward');
   });
 
@@ -791,14 +866,15 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest
     a.onIntent(
       intent('A', {
         armReq: 1,
-        seq: 2,
+        seq: 3,
         thrusterMode: 'manual',
         thruster: 'port',
       }),
-      2,
+      3,
     );
     expect(a.state().thruster).toBe('port');
 
@@ -817,7 +893,7 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onIntent(
       intent('A', {
         armReq: 1,
-        seq: 3,
+        seq: 4,
         thrusterMode: 'manual',
         thruster: 'port',
       }),
@@ -838,7 +914,10 @@ describe('ArmArbiter: two units, one ARM', () => {
     const a = bareArbiter({ staleTimeoutMs: Number.POSITIVE_INFINITY });
     a.onRxTelemetry(0); // HH never seen: the arm goes through RX alone
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
-    a.onIntent(intent('A', { armReq: 1, seq: 2, thrusterMode: 'hold', trimDeg: 5 }), 2);
+    // Arms from rest: HOLD with no trim is a resting tuple (the mode selects a
+    // gate, it does not command), so the arm is granted and the trim follows.
+    a.onIntent(intent('A', { armReq: 1, seq: 2, thrusterMode: 'hold' }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 3, thrusterMode: 'hold', trimDeg: 5 }), 3);
     expect(a.state()).toMatchObject({
       enabled: true,
       hhLive: false,
@@ -851,20 +930,20 @@ describe('ArmArbiter: two units, one ARM', () => {
     // even though the holder keeps asking for HOLD with a trim.
     a.onHhTelemetry(100);
     expect(a.state()).toMatchObject({ hhLive: true, thrusterMode: 'manual' });
-    a.onIntent(intent('A', { armReq: 1, seq: 3, thrusterMode: 'hold', trimDeg: 5 }), 110);
+    a.onIntent(intent('A', { armReq: 1, seq: 4, thrusterMode: 'hold', trimDeg: 5 }), 110);
     expect(a.state()).toMatchObject({ thrusterMode: 'manual', trimDeg: 0 });
 
     // The release (off, no trim) lifts it; the next HOLD intent is honoured.
     a.onIntent(
-      intent('A', { armReq: 1, seq: 4, thrusterMode: 'hold', thruster: 'off', trimDeg: 0 }),
+      intent('A', { armReq: 1, seq: 5, thrusterMode: 'hold', thruster: 'off', trimDeg: 0 }),
       120,
     );
-    a.onIntent(intent('A', { armReq: 1, seq: 5, thrusterMode: 'hold', trimDeg: 5 }), 130);
+    a.onIntent(intent('A', { armReq: 1, seq: 6, thrusterMode: 'hold', trimDeg: 5 }), 130);
     expect(a.state()).toMatchObject({ thrusterMode: 'hold', trimDeg: 5 });
 
     // With nobody armed, enabled=false makes the tuple inert and the garbage
     // default 'hold' is the right rest again.
-    a.onIntent(intent('A', { armReq: 1, disarmReq: 1, seq: 6 }), 140);
+    a.onIntent(intent('A', { armReq: 1, disarmReq: 1, seq: 7 }), 140);
     expect(a.state()).toMatchObject({ enabled: false, thrusterMode: 'hold' });
   });
 
@@ -878,7 +957,8 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 10 }), 1);
-    a.onIntent(intent('A', { armReq: 1, seq: 11, port: 'forward' }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 11 }), 2); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, seq: 12, port: 'forward' }), 3);
     expect(a.state().port).toBe('forward');
 
     // RX is dead by now (rxStaleTimeoutMs 1500). This intent is the first
@@ -902,12 +982,13 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
-    a.onIntent(intent('A', { armReq: 1, seq: 2, port: 'forward' }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 3);
     expect(a.state().port).toBe('forward');
 
     // Still inside rxStaleTimeoutMs (1500), so this observes nothing.
     a.onHhTelemetry(1400);
-    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 1400);
+    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'forward' }), 1400);
     expect(a.state().port).toBe('forward');
 
     // RX returns at 1600 having been out since 0 -- past the timeout, but no
@@ -917,10 +998,10 @@ describe('ArmArbiter: two units, one ARM', () => {
     expect(a.state()).toMatchObject({ rxLive: true, port: 'neutral' });
 
     // The held button still does not resume it -- release, then command.
-    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'forward' }), 1610);
+    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'forward' }), 1610);
     expect(a.state().port).toBe('neutral');
-    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'neutral' }), 1620);
-    a.onIntent(intent('A', { armReq: 1, seq: 6, port: 'forward' }), 1630);
+    a.onIntent(intent('A', { armReq: 1, seq: 6, port: 'neutral' }), 1620);
+    a.onIntent(intent('A', { armReq: 1, seq: 7, port: 'forward' }), 1630);
     expect(a.state().port).toBe('forward');
   });
 
@@ -935,7 +1016,8 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
     const held = { armReq: 1, thrusterMode: 'manual' as const, thruster: 'port' as const };
-    a.onIntent(intent('A', { ...held, seq: 2 }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest
+    a.onIntent(intent('A', { ...held, seq: 3 }), 3);
     expect(a.state().thruster).toBe('port');
 
     // HH goes away and comes back, RX holding the token throughout.
@@ -945,12 +1027,12 @@ describe('ArmArbiter: two units, one ARM', () => {
     expect(a.state()).toMatchObject({ hhLive: true, thruster: 'off' });
 
     // Still held: still off.
-    a.onIntent(intent('A', { ...held, seq: 3 }), 3110);
+    a.onIntent(intent('A', { ...held, seq: 4 }), 3110);
     expect(a.state().thruster).toBe('off');
 
     // Released, then commanded again.
-    a.onIntent(intent('A', { armReq: 1, seq: 4, thrusterMode: 'manual', thruster: 'off' }), 3120);
-    a.onIntent(intent('A', { ...held, seq: 5 }), 3130);
+    a.onIntent(intent('A', { armReq: 1, seq: 5, thrusterMode: 'manual', thruster: 'off' }), 3120);
+    a.onIntent(intent('A', { ...held, seq: 6 }), 3130);
     expect(a.state().thruster).toBe('port');
   });
 
@@ -965,7 +1047,8 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('phone', { session: 2, seq: 40, armReq: 0 }), 1);
-    a.onIntent(intent('phone', { session: 2, seq: 41, armReq: 1, port: 'forward' }), 2);
+    a.onIntent(intent('phone', { session: 2, seq: 41, armReq: 1 }), 2); // arms from rest
+    a.onIntent(intent('phone', { session: 2, seq: 42, armReq: 1, port: 'forward' }), 3);
     expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
 
     // Relaunch: same clientId, new session, seq and counters from scratch. The
@@ -984,7 +1067,8 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('phone', { session: 2, seq: 40, armReq: 0 }), 1);
-    a.onIntent(intent('phone', { session: 2, seq: 41, armReq: 1, port: 'forward' }), 2);
+    a.onIntent(intent('phone', { session: 2, seq: 41, armReq: 1 }), 2); // arms from rest
+    a.onIntent(intent('phone', { session: 2, seq: 42, armReq: 1, port: 'forward' }), 3);
     expect(a.state().port).toBe('forward');
 
     // Relaunch, and the operator is not touching anything.
@@ -995,7 +1079,7 @@ describe('ArmArbiter: two units, one ARM', () => {
     // s1's last POST finally lands, still carrying 'forward'. It must be
     // discarded outright -- not treated as a third session.
     expect(
-      a.onIntent(intent('phone', { session: 2, seq: 42, armReq: 1, port: 'forward' }), 320),
+      a.onIntent(intent('phone', { session: 2, seq: 43, armReq: 1, port: 'forward' }), 320),
     ).toBe(false);
     expect(a.state()).toMatchObject({ enabled: false, port: 'neutral' });
 
@@ -1098,7 +1182,9 @@ describe('ArmArbiter: two units, one ARM', () => {
       a.onIntent(intent('phone', { session: i, seq: 1, armReq: 0 }), t);
       t += 10;
     }
-    a.onIntent(intent('phone', { session: 40, seq: 2, armReq: 1, port: 'forward' }), t);
+    a.onIntent(intent('phone', { session: 40, seq: 2, armReq: 1 }), t); // arms from rest
+    t += 10;
+    a.onIntent(intent('phone', { session: 40, seq: 3, armReq: 1, port: 'forward' }), t);
     expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
 
     // Generation 1, forty relaunches ago, is still closed. The unordered version
@@ -1119,7 +1205,8 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('phone', { seq: 40, armReq: 0 }), 1); // no session
-    a.onIntent(intent('phone', { seq: 41, armReq: 1, port: 'forward' }), 2);
+    a.onIntent(intent('phone', { seq: 41, armReq: 1 }), 2); // arms from rest
+    a.onIntent(intent('phone', { seq: 42, armReq: 1, port: 'forward' }), 3);
     expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
 
     a.onIntent(intent('phone', { session: 1, seq: 1, armReq: 0, disarmReq: 1 }), 300);
@@ -1133,10 +1220,11 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('phone', { session: 5, seq: 1, armReq: 0 }), 1);
-    a.onIntent(intent('phone', { session: 5, seq: 2, armReq: 1, port: 'forward' }), 2);
+    a.onIntent(intent('phone', { session: 5, seq: 2, armReq: 1 }), 2); // arms from rest
+    a.onIntent(intent('phone', { session: 5, seq: 3, armReq: 1, port: 'forward' }), 3);
     expect(a.state().port).toBe('forward');
 
-    expect(a.onIntent(intent('phone', { seq: 3, disarmReq: 9 }), 3)).toBe(false);
+    expect(a.onIntent(intent('phone', { seq: 4, disarmReq: 9 }), 4)).toBe(false);
     expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
   });
 
@@ -1168,7 +1256,7 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('phone', { session: 2, seq: 10, armReq: 0 }), 1);
-    a.onIntent(intent('phone', { session: 2, seq: 11, armReq: 1, port: 'forward' }), 2);
+    a.onIntent(intent('phone', { session: 2, seq: 11, armReq: 1 }), 2); // arms from rest
     a.onIntent(intent('phone', { session: 2, seq: 12, armReq: 1, port: 'neutral' }), 3);
     a.onIntent(intent('phone', { session: 2, seq: 13, armReq: 1, port: 'forward' }), 4);
     expect(a.state().port).toBe('forward');
@@ -1188,18 +1276,19 @@ describe('ArmArbiter: two units, one ARM', () => {
     // HH only. RX has never existed as far as this arbiter is concerned.
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
-    a.onIntent(intent('A', { armReq: 1, seq: 2, port: 'forward' }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest, through HH
+    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 3);
     expect(a.state()).toMatchObject({ enabled: true, rxLive: false, port: 'neutral' });
 
     // RX powers up for the first time. The held press must not come alive with
     // it -- there has been no safe baseline for the drives at any point.
     a.onRxTelemetry(3000);
-    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 3010);
+    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'forward' }), 3010);
     expect(a.state()).toMatchObject({ rxLive: true, port: 'neutral' });
 
     // Release once RX is live, then command.
-    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'neutral' }), 3020);
-    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'forward' }), 3030);
+    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'neutral' }), 3020);
+    a.onIntent(intent('A', { armReq: 1, seq: 6, port: 'forward' }), 3030);
     expect(a.state().port).toBe('forward');
   });
 
@@ -1214,7 +1303,8 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
-    a.onIntent(intent('A', { armReq: 1, seq: 2, port: 'forward' }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 3);
     expect(a.state().port).toBe('forward');
 
     // RX drops out; HH keeps the holder armed so the session survives.
@@ -1223,18 +1313,18 @@ describe('ArmArbiter: two units, one ARM', () => {
     expect(a.state()).toMatchObject({ enabled: true, rxLive: false, port: 'neutral' });
 
     // Operator lets go, then presses again -- both while RX is absent.
-    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'neutral' }), 3010);
-    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'forward' }), 3020);
+    a.onIntent(intent('A', { armReq: 1, seq: 4, port: 'neutral' }), 3010);
+    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'forward' }), 3020);
     expect(a.state().port).toBe('neutral');
 
     // RX returns. The press above must NOT come alive with it.
     a.onRxTelemetry(3100);
-    a.onIntent(intent('A', { armReq: 1, seq: 5, port: 'forward' }), 3110);
+    a.onIntent(intent('A', { armReq: 1, seq: 6, port: 'forward' }), 3110);
     expect(a.state()).toMatchObject({ rxLive: true, port: 'neutral' });
 
     // Only a release seen while RX is live opens the way again.
-    a.onIntent(intent('A', { armReq: 1, seq: 6, port: 'neutral' }), 3120);
-    a.onIntent(intent('A', { armReq: 1, seq: 7, port: 'forward' }), 3130);
+    a.onIntent(intent('A', { armReq: 1, seq: 7, port: 'neutral' }), 3120);
+    a.onIntent(intent('A', { armReq: 1, seq: 8, port: 'forward' }), 3130);
     expect(a.state().port).toBe('forward');
   });
 
@@ -1251,7 +1341,9 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
     const holding = { armReq: 1, thrusterMode: 'hold' as const, thruster: 'off' as const, trimDeg: 10 };
-    a.onIntent(intent('A', { ...holding, seq: 2 }), 2);
+    // Arms from rest -- HOLD with no trim commands nothing -- then trims.
+    a.onIntent(intent('A', { armReq: 1, seq: 2, thrusterMode: 'hold' }), 2);
+    a.onIntent(intent('A', { ...holding, seq: 3 }), 3);
     expect(a.state().trimDeg).toBe(10);
 
     // HH drops out and returns, RX keeping the token alive throughout.
@@ -1262,16 +1354,16 @@ describe('ArmArbiter: two units, one ARM', () => {
 
     // The same HOLD intent -- direction 'off', trim still 10 -- must NOT be
     // taken as the operator letting go.
-    a.onIntent(intent('A', { ...holding, seq: 3 }), 3110);
-    a.onIntent(intent('A', { ...holding, seq: 4 }), 3120);
+    a.onIntent(intent('A', { ...holding, seq: 4 }), 3110);
+    a.onIntent(intent('A', { ...holding, seq: 5 }), 3120);
     expect(a.state().trimDeg).toBe(0);
 
     // Trimming back to zero is the release; then a fresh offset applies.
     a.onIntent(
-      intent('A', { armReq: 1, seq: 5, thrusterMode: 'hold', thruster: 'off', trimDeg: 0 }),
+      intent('A', { armReq: 1, seq: 6, thrusterMode: 'hold', thruster: 'off', trimDeg: 0 }),
       3130,
     );
-    a.onIntent(intent('A', { ...holding, seq: 6 }), 3140);
+    a.onIntent(intent('A', { ...holding, seq: 7 }), 3140);
     expect(a.state().trimDeg).toBe(10);
   });
 
@@ -1283,9 +1375,10 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest
     a.onIntent(
-      intent('A', { armReq: 1, seq: 2, port: 'forward', thrusterMode: 'manual', thruster: 'port' }),
-      2,
+      intent('A', { armReq: 1, seq: 3, port: 'forward', thrusterMode: 'manual', thruster: 'port' }),
+      3,
     );
     expect(a.state()).toMatchObject({ port: 'forward', thruster: 'port' });
 
@@ -1300,7 +1393,7 @@ describe('ArmArbiter: two units, one ARM', () => {
 
     // The drives were never absent, so a held forward keeps working.
     a.onIntent(
-      intent('A', { armReq: 1, seq: 3, port: 'forward', thrusterMode: 'manual', thruster: 'port' }),
+      intent('A', { armReq: 1, seq: 4, port: 'forward', thrusterMode: 'manual', thruster: 'port' }),
       3110,
     );
     expect(a.state()).toMatchObject({ port: 'forward', thruster: 'off' });
@@ -1313,19 +1406,20 @@ describe('ArmArbiter: two units, one ARM', () => {
     a.onRxTelemetry(0);
     a.onHhTelemetry(0);
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 1);
-    a.onIntent(intent('A', { armReq: 1, seq: 2, port: 'forward' }), 2);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 2); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 3);
 
     // RX drops, the operator disarms, RX returns.
     a.onHhTelemetry(3000);
     a.tick(3000);
-    a.onIntent(intent('A', { armReq: 1, disarmReq: 1, seq: 3, port: 'neutral' }), 3010);
+    a.onIntent(intent('A', { armReq: 1, disarmReq: 1, seq: 4, port: 'neutral' }), 3010);
     expect(a.state().enabled).toBe(false);
     a.onRxTelemetry(3100);
 
     // Re-arming from neutral and then commanding works without an extra
     // release: the disarm already was the release.
-    a.onIntent(intent('A', { armReq: 2, disarmReq: 1, seq: 4, port: 'neutral' }), 3110);
-    a.onIntent(intent('A', { armReq: 2, disarmReq: 1, seq: 5, port: 'forward' }), 3120);
+    a.onIntent(intent('A', { armReq: 2, disarmReq: 1, seq: 5, port: 'neutral' }), 3110);
+    a.onIntent(intent('A', { armReq: 2, disarmReq: 1, seq: 6, port: 'forward' }), 3120);
     expect(a.state()).toMatchObject({ enabled: true, port: 'forward' });
   });
 
@@ -1429,11 +1523,12 @@ describe('ArmArbiter: replay / out-of-order intents cannot corrupt edges', () =>
   it('an out-of-order intent does not revert the holder commands', () => {
     const a = makeArbiter();
     a.onIntent(intent('A', { armReq: 0, seq: 1 }), 0);
-    a.onIntent(intent('A', { armReq: 1, seq: 2, port: 'forward' }), 10);
+    a.onIntent(intent('A', { armReq: 1, seq: 2 }), 10); // arms from rest
+    a.onIntent(intent('A', { armReq: 1, seq: 3, port: 'forward' }), 20);
     expect(a.state().port).toBe('forward');
     // A stale heartbeat from before the press arrives late: discarded whole,
     // so the live command is not flickered back to neutral by old data.
-    a.onIntent(intent('A', { armReq: 1, seq: 1, port: 'neutral' }), 20);
+    a.onIntent(intent('A', { armReq: 1, seq: 1, port: 'neutral' }), 30);
     expect(a.state().port).toBe('forward');
   });
 

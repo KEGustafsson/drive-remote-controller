@@ -717,7 +717,10 @@ tap (the silent re-arm the 2026-07-23 review found and closed).
 The arbiter is the **sole writer** of the `plugin.*` paths and enforces:
 
 - **Exclusive arm.** At most one client holds the token. A fresh arm edge is
-  granted only when nobody holds it and at least one unit is live.
+  granted only when nobody holds it, at least one unit is live, and the packet
+  carrying it commands nothing (both drives neutral, thruster off, trim 0) —
+  the plugin's analogue of RX refusing to arm while its own switch is off
+  neutral. A press that fails the last condition is consumed, not banked.
 - **Universal disarm.** A disarm edge from *any* client releases the token
   immediately, whether or not that client holds it.
 - **Edge, not level.** A client heart-beating an old `armReq` across a release

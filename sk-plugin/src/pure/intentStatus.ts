@@ -25,8 +25,9 @@ export type IntentStatus =
   | 'auth'
   // 503: the plugin's route answered, but the plugin is not running.
   | 'unavailable'
-  // Any other failure -- a network error, a timeout, a 5xx: the server or the
-  // route is not answering at all.
+  // Any other failure -- a network error, a timeout, a 5xx, or a 400 from a
+  // body the plugin refused to read: whatever the cause, this station's
+  // commands are not being acted on.
   | 'network';
 
 /** Classify a rejected PostIntent promise. */

@@ -18,7 +18,6 @@
 // React's render cycle and survives StrictMode's double-invoke in dev.
 
 import {
-  PERIODIC_REFRESH_MS,
   RECONNECT_INITIAL_DELAY_MS,
   RECONNECT_MAX_DELAY_MS,
   SUBSCRIBE_PATHS,
@@ -238,7 +237,3 @@ export function createSkClient(
     },
   };
 }
-
-// Re-exported so callers that need the cadence (e.g. the periodic-refresh
-// interval in useSkConnection.ts) import it from one place.
-export { PERIODIC_REFRESH_MS };

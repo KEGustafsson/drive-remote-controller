@@ -136,10 +136,13 @@ describe('registerWithRouter', () => {
     legacyPlugin.stop();
   });
 
-  it('still acknowledges a malformed body rather than throwing', () => {
-    // The arbiter is the validator (arbiter.test.ts pins that); the route must
-    // not crash the server's request handling on garbage, and must not leave a
-    // station's heartbeat hanging on an unanswered request.
+  it('answers 400 to a body that is not an intent, rather than acknowledging it', () => {
+    // The route must not crash the server's request handling on garbage, and
+    // must not leave a station's heartbeat hanging on an unanswered request --
+    // but a 200 here was worse than either: onIntent returns "the published
+    // state changed", so a body it refused whole was indistinguishable from an
+    // accepted heartbeat, and a station whose payload was wrong reported its
+    // commands as reaching the boat while nothing it sent was ever read.
     vi.useFakeTimers();
     const router = makeAccessRouter();
     const plugin = createPlugin(makeApp());
@@ -147,11 +150,31 @@ describe('registerWithRouter', () => {
     plugin.start();
     const handler = router.registrar.post.mock.calls[0][1];
 
-    for (const body of [undefined, null, 'not-an-object', { clientId: '' }]) {
+    for (const body of [
+      undefined,
+      null,
+      'not-an-object',
+      { clientId: '' },
+      { armReq: 1 },
+      { clientId: 'x'.repeat(65) },
+    ]) {
       const res = callHandler(handler, body);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({ ok: true });
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        ok: false,
+        error: 'malformed intent',
+      });
     }
+
+    // A well-formed intent whose FIELDS are garbage is still accepted: those
+    // are screened to their safe values, and the packet's STOP counter is read.
+    const ok = callHandler(handler, {
+      clientId: 'ui-test-client', seq: 1, armReq: 0, disarmReq: 0,
+      port: 'sideways', stbd: 42, thruster: 'PORT',
+      thrusterMode: 'MANUAL', trimDeg: 'north',
+    });
+    expect(ok.status).toHaveBeenCalledWith(200);
+    expect(ok.json).toHaveBeenCalledWith({ ok: true });
     plugin.stop();
   });
 
@@ -181,9 +204,11 @@ describe('registerWithRouter', () => {
     const router = makeAccessRouter();
     plugin.registerWithRouter(router);
     const handler = router.registrar.post.mock.calls[0][1];
+    // At rest: the arbiter grants an arm edge only on a packet that commands
+    // nothing (arbiter.cjs), so this station arms with its contacts released.
     const arm = (seq: number, armReq: number) => ({
       clientId: 'ui-lifecycle', seq, armReq, disarmReq: 0,
-      port: 'forward', stbd: 'neutral', thruster: 'off',
+      port: 'neutral', stbd: 'neutral', thruster: 'off',
       thrusterMode: 'manual', trimDeg: 0,
     });
 
@@ -261,8 +286,15 @@ describe('registerWithRouter', () => {
       port: 'neutral', stbd: 'neutral', thruster: 'off',
       thrusterMode: 'manual', trimDeg: 0,
     });
+    // The arm edge is granted only from rest, so the motion follows it in the
+    // next packet -- which is what the operator's hands do anyway.
     callHandler(handler, {
       clientId: 'ui-stop-test', seq: 2, armReq: 1, disarmReq: 0,
+      port: 'neutral', stbd: 'neutral', thruster: 'off',
+      thrusterMode: 'manual', trimDeg: 0,
+    });
+    callHandler(handler, {
+      clientId: 'ui-stop-test', seq: 3, armReq: 1, disarmReq: 0,
       port: 'forward', stbd: 'reverse', thruster: 'port',
       thrusterMode: 'manual', trimDeg: 0,
     });
@@ -381,8 +413,15 @@ describe('registerWithRouter', () => {
       port: 'neutral', stbd: 'neutral', thruster: 'off',
       thrusterMode: 'manual', trimDeg: 0,
     });
+    // Arms from rest (the arbiter grants no arm edge on a commanding packet),
+    // then pushes the port lever forward on the next heartbeat.
     callHandler(handler, {
       clientId: 'suspend-test', seq: 2, armReq: 1, disarmReq: 0,
+      port: 'neutral', stbd: 'neutral', thruster: 'off',
+      thrusterMode: 'manual', trimDeg: 0,
+    });
+    callHandler(handler, {
+      clientId: 'suspend-test', seq: 3, armReq: 1, disarmReq: 0,
       port: 'forward', stbd: 'neutral', thruster: 'off',
       thrusterMode: 'manual', trimDeg: 0,
     });

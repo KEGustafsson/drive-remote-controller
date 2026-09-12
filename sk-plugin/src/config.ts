@@ -5,10 +5,10 @@
 // by name so a diff is easy to spot.
 
 // ---- Signal K path contract (ARCHITECTURE.md §9) ----
-// This plugin only needs the "plugin.*" paths (what it publishes) and the
-// "rx.*" paths (what it reads for the status display) -- it has no reason
-// to touch TX's own paths, though rx.linkOk/rx.*.source indirectly reflect
-// TX's activity too.
+// This plugin needs the "plugin.*" paths (what it publishes) plus the "rx.*"
+// and "hh.*" paths (what it reads for the status display and the thruster
+// panel) -- it has no reason to touch TX's own paths, though rx.linkOk and
+// rx.*.source indirectly reflect TX's activity too.
 // These three are the RX-facing command paths. IMPORTANT: this web UI no
 // longer WRITES them -- the Node plugin (index.cjs) is their single
 // authoritative writer, arbitrating between all open UI instances (see
