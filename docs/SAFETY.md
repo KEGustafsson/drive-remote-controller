@@ -146,7 +146,14 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
 8. **A remote command enters through the same gate as a local one.** Never add a
    path that reaches the outputs without passing the safety FSM.
 9. **Leaving HOLDING requires a fresh engage edge to resume.** Thrust never
-   restarts silently because a sensor recovered.
+   restarts silently because a sensor recovered. For a remote station the
+   engage edge is its `enabled` flag going false then true, and a link outage
+   cannot manufacture one: a station whose link to HH went stale while it was
+   engaging HOLD is refused when the link returns, however its retained
+   `enabled` reads, until HH has seen it live and *disabled* — the operator
+   must disarm and re-arm. MANUAL deliberately resumes after a blip, exactly
+   as a held shift switch does at RX: a momentary button is the operator's
+   presence, a hold is not. (`ControlStep`'s re-engage latch; test_control_step.)
 
 ---
 

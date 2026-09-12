@@ -816,24 +816,32 @@ writes any more. Change all of them in the same commit.
 
 ## 10. Releases
 
-`.github/workflows/release.yml` builds every artifact this project produces, verifies each
-one, signs a provenance attestation over the set, and publishes a single GitHub Release
-carrying the lot.
+`.github/workflows/release.yml` builds the Android station, verifies it, signs a
+provenance attestation over the set when the repository is entitled to one, and publishes
+a single GitHub Release.
+
+**Only the Android station is released.** The three firmwares and the plugin used to be
+built and published here too. They are not any more, by owner decision recorded in the
+workflow's header: the firmwares reach a board over OTA from a working tree
+([§4](#4-flashing)), the plugin is installed on the boat's server from `npm pack` output
+([§5.1](#51-installing-into-a-signal-k-server)), so neither was ever consumed *from* a
+Release — and publishing signed firmware for a system that has not been through
+SAFETY.md's commissioning checklists is a decision nobody had asked for. `ci.yml` still
+builds all three firmwares and the plugin on every push; what changed is what gets
+published, not what gets checked.
 
 ### 10.1 What a release contains
 
 One version number covers everything, so no two assets in a release can disagree about
 what they came from.
 
-| Asset | Per | What it is |
-|---|---|---|
-| `drive-remote-controller-<unit>-<v>-factory.bin` | tx, rx, hh | The whole flash image, for a board that has never run this firmware. Flash at offset 0. |
-| `drive-remote-controller-<unit>-<v>-ota.bin` | tx, rx, hh | The application image alone, for an over-the-air update. |
-| `DriveRemoteController-<v>.apk` | — | The Android station, signed with the release key. |
-| `DriveRemoteController-<v>.mapping.txt.gz` | — | R8's deobfuscation map for that exact APK, gzipped (~30 MB raw). Without it a stack trace off a phone is unreadable, and this is the only copy that will ever match the published binary. |
-| `signalk-drive-remote-controller-<x.y.z>.tgz` | — | The plugin, packed as a server installs it. It keeps its own semantic version. |
-| `*.sha256` | every binary | Its checksum. |
-| `*.sbom.cdx.json` | every artifact | A CycloneDX 1.5 software bill of materials. |
+| Asset | What it is |
+|---|---|
+| `DriveRemoteController-<v>.apk` | The Android station, signed with the release key, shrunk and obfuscated by R8. |
+| `DriveRemoteController-<v>-debug.apk` | The same commit signed with the generic Android debug key, unminified, carrying Compose's UI tooling. Android will not replace one with the other in either direction, so both are published and a phone can go back and forth without a rebuild. |
+| `DriveRemoteController-<v>.mapping.txt.gz` | R8's deobfuscation map for that exact release APK, gzipped (~30 MB raw). Without it a stack trace off a phone is unreadable, and this is the only copy that will ever match the published binary. |
+| `DriveRemoteController-<v>.sbom.cdx.json` | A CycloneDX software bill of materials for the release runtime classpath. |
+| `*.sha256` | A checksum for each of the two APKs and the mapping file — seven assets in all, and `attest` refuses any other count. |
 
 Every file also carries a signed build-provenance attestation — **when the repository is
 entitled to one.** Artifact attestations need a public repository, or a private one owned
@@ -860,38 +868,30 @@ fails the job if the two disagree.
 > default. To adopt merge-is-the-release behaviour instead, add `push: branches: [main]`
 > to the workflow's `on:` block and drop the `github.event_name` guard on `publish`.
 
-### 10.3 The one thing that makes firmware releasable at all
+### 10.3 The one thing that would make firmware releasable at all
+
+Kept because it is the reason the firmware jobs were removable at all, and the guard it
+describes still runs in CI.
 
 Every value in a `secrets.h` is compiled into the binary: `set_wifi_clients()` takes the
 SSIDs and passwords, `enable_ota()` takes the OTA password. **A published `.bin` built
 from a real one would hand out the boat's WiFi password and the password that authorises
 reflashing a board wired to machinery**, both recoverable with `strings`.
 
-`secrets.h` is untracked, so a release checkout has none and the mains build against
-`secrets.example.h` — the published firmware joins no network until its recipient
-configures WiFi through SensESP's setup portal and sets their own OTA password. That
-absence is asserted rather than assumed: the release job **fails outright if a `secrets.h`
-is present at all**, because a stale cache or a future `.gitignore` change is exactly how
-a real one would reach a published image.
-
-`esp32/scripts/check_no_secrets.py` then searches the actual bytes of each image for any
-credential it can find in the committed tree. With the OTA password moved out of
+`secrets.h` is untracked, so a clean checkout has none and the mains build against
+`secrets.example.h` — a firmware built that way joins no network until its recipient
+configures WiFi through SensESP's setup portal and sets their own OTA password. When
+firmware was released, that absence was asserted rather than assumed (the job failed
+outright if a `secrets.h` was present at all), and
+`esp32/scripts/check_no_secrets.py` then searched the actual bytes of each image for any
+credential it could find in the committed tree. With the OTA password moved out of
 `platformio.ini` there is nothing left for it to look for, and it says so and passes —
-**the guarantee is now the absence assertion above, not the search.** The search is kept
-as the backstop that goes red the day somebody writes a credential back into a committed
-file. It runs against both the OTA image and the factory image, and never prints a value
-it matched; the job log names only which setting leaked.
+the guard is the backstop that goes red the day somebody writes a credential back into a
+committed file. `ci.yml`'s release-scripts job still exercises it in both directions on
+every push ([§7](#7-continuous-integration)), so it is ready the day firmware is
+published again.
 
-It reads **two** files, and the second one matters more than it looks. `platformio.ini`
-carries the OTA password a second time, as `upload_flags = --auth=…`, in a file that has
-nothing to do with `secrets.h`. Checking only `secrets.h` would mean that cleaning that
-file up per [§8](#8-credentials-and-what-must-be-rotated) without also fixing
-`platformio.ini` leaves this guard with nothing to look for while the password is still in
-the repository and still compiled into the firmware. Verified: given `platformio.ini`
-alone, the guard still catches the OTA password in a real image.
-
-Run it by hand the same way, and on a locally built image it should **fail** — that is the
-point:
+Run it by hand against a locally built image, and it should **fail** — that is the point:
 
 ```sh
 cd esp32
@@ -902,14 +902,12 @@ python scripts/check_no_secrets.py \
 ```
 
 `--secrets-file` reads the working tree, which is what you want here: your own `secrets.h`
-is not in git for `--ref` to read. The release pipeline uses `--ref
-"HEAD:esp32/platformio.ini"` instead, because there it is checking a file the workflow
-itself could have modified.
+is not in git for `--ref` to read.
 
 > **This is not theoretical.** Run against a real locally built `firmware.bin` on
 > 2026-09-09, the guard found **all five** committed values in the image — the OTA
 > password, both WiFi passwords and both SSIDs — and found them again in the merged factory
-> image. Every firmware binary built from this working tree carries the whole set.
+> image. Every firmware binary built from a real `secrets.h` carries the whole set.
 
 ### 10.4 One-time setup, before the first release
 
@@ -958,13 +956,11 @@ No job holds both a secret and a token that could write to the repository.
 | Job | Token | Holds |
 |---|---|---|
 | `version` | read | nothing |
-| `firmware` ×3 | read | nothing |
-| `plugin` | read | nothing |
 | `android` | read | the keystore, deleted immediately after the build |
 | `attest` | read, plus attestation signing | nothing |
 | `publish` | **write** | nothing, and it runs no code from this repository — no checkout, no Gradle, no npm, no PlatformIO |
 
-So a compromised action in a build job can read this repository and nothing more, and the
+So a compromised action in the build job can read this repository and nothing more, and the
 one job that can create a Release only downloads files that have already been built,
 checked and attested.
 
@@ -976,8 +972,9 @@ apksigner verify --print-certs DriveRemoteController-<v>.apk
 gh attestation verify DriveRemoteController-<v>.apk --repo <owner>/<repo>   # if attested
 ```
 
-Each **binary** has a `.sha256`; the checksum files and the SBOMs do not have one of their
-own. The attestation line only applies to a release whose notes say it was attested.
+Both APKs and the mapping file have a `.sha256`; the checksum files and the SBOM do not
+have one of their own. The attestation line only applies to a release whose notes say it
+was attested.
 
 `sha256sum` is the one line with no PowerShell equivalent; there, compare by eye:
 
