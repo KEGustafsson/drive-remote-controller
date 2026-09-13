@@ -7272,3 +7272,31 @@ build host's `esp32/include/secrets.h` was created from the sibling project's
 copy plus the server and HH addresses observed live; the OTA password
 authenticated, so it matches what the boards were built with. Suites: native
 285 (was 280); all three firmwares build.
+
+## 2026-09-13 — The counter signature, written down as a check
+
+The future-stamp fix landed with its evidence in a commit message: 9 future
+stamps absorbed, 0 stale verdicts, over 11 minutes of continuous `HOLDING`. That
+is the right evidence and it was in the wrong place — a commit message is not
+something anyone reads before a sea trial, and the four counters it cites are on
+HH's status page precisely because the unit has no serial console on the boat.
+
+SAFETY.md's thruster checklist now carries the reading. The shape of the check
+matters more than the numbers: **future stamps climbing is the healthy state**,
+because the race is normal and `ElapsedMs` absorbs it, so a counter stuck at 0
+over a long hold means the diagnostic is not running rather than that the defect
+is gone. What must be 0 is *Live -> stale verdicts* with nothing interrupted.
+The deliberate-interruption check above it gained the same route: on the boat,
+`re-engage BLOCKED` on the serial console is unreadable, and the same event
+shows as that counter stepping by one with *Age at last stale (ms)* just over
+the window.
+
+AGENTS.md's hardware status was also a commit behind and said the staleness
+windows had never been on hardware. They have, in the undisturbed case — an
+11-minute hold — and the honest gap is narrower and sharper than "none of it":
+no interruption was ever provoked, so none of the three staleness lines has been
+walked, least of all the one saying a MANUAL command must still stop within
+~1 s. RX's unflashed state is recorded there too, next to the fix it is carrying
+but not yet running.
+
+Documentation only; no code changed.

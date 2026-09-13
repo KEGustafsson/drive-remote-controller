@@ -215,10 +215,27 @@ owner met `RE-ARM TO ENGAGE` frequently the same day: at 1000 ms, three missed
 250 ms republishes in HH's own inbound path dropped the commanding station to
 not-live, which arms the re-engage latch — permanent until a human re-arms. HOLD
 now gets 2000 ms and MANUAL keeps 1000 (`kThrusterHoldSourceStalenessMs` /
-`kThrusterManualSourceStalenessMs`). None of that has been on hardware: work
-through the two staleness lines in SAFETY.md's thruster checklist before
-trusting either number, especially the one that says a MANUAL command must still
-stop within ~1 s.
+`kThrusterManualSourceStalenessMs`). HH has since run with both numbers on
+hardware, but only in the undisturbed case: no interruption was ever provoked,
+so not one of the three staleness lines in SAFETY.md's thruster checklist has
+been walked — a ~1.5 s gap surviving, a >2 s gap still dropping and latching,
+and above all a MANUAL command still stopping within ~1 s. Work through them
+before trusting either number.
+
+**And the window was not what was ending the holds.** They kept ending 41-226 s
+in with nothing on the link silent. The control task reads `millis()` once per
+tick; an SK listener callback completing before that tick reaches its
+`Snapshot()` stamps a LATER time, and `now_ms - last_update_ms` on `uint32_t`
+called the freshest evidence the unit held ~49 days old. The source latched
+stale, and the re-engage latch turned that one tick into the end of the hold.
+`common/elapsed_ms.h` reads a future stamp as age 0; `LinkWatchdog`,
+`AgeCachedSnapshot` and both units' `Snapshot()` use it. Flashed to HH and held
+11 minutes continuously: 9 future stamps absorbed, 0 stale verdicts, 0 of 9737
+`hh.linkUp` samples false. **RX carries the same fix and has NOT been flashed**
+— its drive path still has the same exposure (a healthy station read not-live
+for one refresh, failing to NEUTRAL and recovering on the next delta). The
+counters that prove this stay fixed are on HH's status page, and SAFETY.md's
+thruster checklist says what they must read.
 
 **Resolved layout defect, now guarded by a suite, still awaiting phone
 remeasurement:** expanding Android telemetry formerly compressed each drive
