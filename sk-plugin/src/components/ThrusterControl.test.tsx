@@ -24,6 +24,10 @@ function renderControl(
       heldDeg={40}
       armed={true}
       holdsControl={true}
+      // Default to the unit reporting the hold, so the tests below are about
+      // the widget rather than about the not-holding wording; the tests that
+      // care pass it explicitly.
+      holdEngaged={true}
       {...props}
     />,
   );
@@ -164,6 +168,35 @@ describe('ThrusterControl in HOLD mode', () => {
     expect(screen.getByText('holding')).toBeInTheDocument();
   });
 
+  it('says the hold is only REQUESTED until the unit reports it is holding', () => {
+    // Armed and asking for HOLD says nothing about whether HH engaged: it may
+    // be faulted, its heading may not be good yet, or its own ENGAGE input may
+    // have taken the thruster -- and the setpoint reads as a live number in all
+    // of those, because HH mirrors it to the fused heading when it is not
+    // holding. Only the unit's own report may put "holding" on the screen.
+    renderControl({ mode: 'hold', heldDeg: 40, trimDeg: 0, holdEngaged: false });
+    expect(screen.getByText('hold requested · unit not holding')).toBeInTheDocument();
+    expect(screen.queryByText('holding')).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/waiting for the thruster unit to engage/),
+    ).toBeInTheDocument();
+    // The number stays -- it is the indication that degrades, not the data.
+    expect(screen.getByText('040°')).toBeInTheDocument();
+    // And an invitation to trim a hold that is not running would be worse than
+    // no note at all.
+    expect(screen.queryByText(/trim with the arrows/)).not.toBeInTheDocument();
+  });
+
+  it('reports the unit, not the trim, while the hold has not engaged', () => {
+    // A trim readout beside an unengaged hold would describe an offset that is
+    // steering nothing; what the operator needs to know is that the unit has
+    // not taken the hold. The trim itself is not lost -- the buttons still show
+    // it back the moment HH reports it is holding.
+    renderControl({ mode: 'hold', heldDeg: 40, trimDeg: 11, holdEngaged: false });
+    expect(screen.getByText('hold requested · unit not holding')).toBeInTheDocument();
+    expect(screen.queryByText(/trim \+11°/)).not.toBeInTheDocument();
+  });
+
   it('keeps showing the held heading and states the trim offset once trimmed', () => {
     // The big number stays the ACTUAL held heading (HH already folds the trim
     // into it as it slews); the trim is shown as a signed offset beside it.
@@ -217,6 +250,7 @@ describe('ThrusterControl mode switch', () => {
       heldDeg: 40,
       armed: true,
       holdsControl: true,
+      holdEngaged: true,
     };
     const { rerender } = render(<ThrusterControl mode="manual" {...props} />);
     press(screen.getByLabelText('Thrust bow to port'));

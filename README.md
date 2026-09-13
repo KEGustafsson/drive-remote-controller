@@ -127,22 +127,22 @@ failure means.
 
 ### Releases
 
-A release carries all five artifacts at one version: the three firmware images
-(a factory image and an OTA image each), the packed Signal K plugin, and the
-signed Android APK — every one of them with a SHA-256, a CycloneDX SBOM and a
-signed build-provenance attestation.
+A release carries the Android station only: the release-signed APK, a
+debug-signed APK, R8's mapping file and a CycloneDX SBOM, with a SHA-256 for
+each binary and a build-provenance attestation when the repository is entitled
+to one. The firmwares and the plugin are built and checked by CI on every push
+but deliberately not published — they reach the boat over OTA and `npm pack`
+from a working tree, and this system has not been through commissioning.
 
-It is run **by hand**, never on a merge: *Actions › Release › Run workflow*. This
-system commands a clutch and a thruster contactor and has not been through
-commissioning, so publishing firmware for it is a decision rather than a side
-effect of merging. [BUILDING.md §10](docs/BUILDING.md#10-releases) has the
-procedure and the one-time signing setup.
+It is run **by hand**, never on a merge: *Actions › Release › Run workflow*.
+[BUILDING.md §10](docs/BUILDING.md#10-releases) has the procedure and the
+one-time signing setup.
 
-**Released firmware carries no credentials.** It is built from
-`secrets.example.h` — the release job refuses to build at all if a `secrets.h`
-is present — and the pipeline then searches every published image for the one
-credential that is still committed and refuses to publish if it finds it. A
-locally built binary has had no such check.
+**No firmware is published, and none could carry a credential if it were.**
+`secrets.h` is gitignored, so a clean checkout builds from `secrets.example.h`;
+CI self-tests the guard (`esp32/scripts/check_no_secrets.py`) that would refuse
+an image carrying a committed credential, ready for the day firmware is
+released again. A locally built binary has had no such check.
 
 All three units are Hat Labs **SH-ESP32** boards. WiFi and OTA credentials live
 in `esp32/include/secrets.h` (template: `esp32/include/secrets.example.h`) and are never

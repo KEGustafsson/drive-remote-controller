@@ -40,6 +40,10 @@
 //    can NEVER silently re-arm -- re-arming requires a fresh press (a new
 //    counter value). This is what makes a global disarm actually stick even
 //    while the previous holder keeps heart-beating armReq unchanged.
+//  - AND ARMING ONLY FROM REST: an arm edge is granted only on a packet whose
+//    command tuple commands nothing, so one message can never take the
+//    machinery from disarmed to moving. The edge is consumed either way, as a
+//    disarm edge is, so the way through is to let go and press again.
 //
 // A client intent (POSTed by each UI to the plugin's own
 // /plugins/<id>/intent route, ~250 ms heartbeat -- deliberately NOT a Signal
@@ -93,8 +97,6 @@ function sanitizeThruster(v) {
   return THRUSTER_DIRECTIONS.includes(v) ? v : 'off';
 }
 
-// Anything unrecognised reads as 'hold' -- never as direct manual control of a
-// thruster. Same defensive default as the firmware's ThrusterModeFromSkString.
 /**
  * The thruster mode published for an ARMED holder whose thruster is not
  * commandable (HH absent, or quarantined after an absence). Deliberately
@@ -105,6 +107,8 @@ function sanitizeThruster(v) {
  */
 const REST_MODE_WHILE_ARMED = 'manual';
 
+// Anything unrecognised reads as 'hold' -- never as direct manual control of a
+// thruster. Same defensive default as the firmware's ThrusterModeFromSkString.
 function sanitizeThrusterMode(v) {
   return THRUSTER_MODES.includes(v) ? v : 'hold';
 }
@@ -158,6 +162,33 @@ function sanitizeCounter(v) {
 // mints a fresh clientId per page load and so needs no generation at all.
 function sanitizeSession(v) {
   return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : null;
+}
+
+/**
+ * Is this body an intent at all? The three structural checks onIntent applies
+ * before it will look at anything else -- an object, with a clientId that is a
+ * non-empty string short enough to become a Map key (see MAX_TRACKED_CLIENTS).
+ *
+ * Exported so the HTTP shell can ANSWER a malformed body instead of
+ * acknowledging it. onIntent returns "the published state changed", and a body
+ * it refuses outright changes nothing, which is indistinguishable from a
+ * perfectly good heartbeat that happened to command the same thing -- so the
+ * route used to reply 200 {ok:true} to garbage. A station whose payload is
+ * wrong (a field renamed on one side of the hand-synced wire format, a proxy
+ * mangling the body) would then report commands as reaching the boat while
+ * nothing it sent was ever read. Same rule as everywhere else here: never
+ * present unconfirmable data as live.
+ *
+ * Deliberately structural only. Every FIELD is still screened by the
+ * sanitizers -- a garbage position reads as 'neutral', not as a 400 -- because
+ * refusing the whole packet over one bad field would discard the STOP counter
+ * riding along with it.
+ */
+function isWellFormedIntent(intent) {
+  if (!intent || typeof intent !== 'object') return false;
+  const clientId = intent.clientId;
+  if (typeof clientId !== 'string' || clientId.length === 0) return false;
+  return clientId.length <= 64;
 }
 
 class ArmArbiter {
@@ -239,7 +270,9 @@ class ArmArbiter {
     this._driveNeedsRelease = true;
     this._thrusterNeedsRelease = true;
     // Per-client bookkeeping, keyed by clientId.
-    this._clients = new Map(); // clientId -> { lastSeenMs, lastArmReq, lastDisarmReq, port, stbd }
+    // clientId -> { lastSeenMs, session, lastSeq, lastArmReq, lastDisarmReq,
+    //               port, stbd, thruster, thrusterMode, trimDeg }
+    this._clients = new Map();
     // Counter baselines that OUTLIVE eviction from _clients, keyed by the same
     // clientId. A station's arm/disarm counters are cumulative for the life of
     // its session, so a station we have merely stopped hearing from is not a
@@ -351,13 +384,13 @@ class ArmArbiter {
    */
   onIntent(intent, nowMs) {
     this._refreshUnitLiveness(nowMs);
-    if (!intent || typeof intent !== 'object') return false;
+    // Structural screening (an object, a usable clientId -- the latter bounds
+    // per-client bookkeeping, since a clientId is a short generated token and
+    // anything oversized is garbage or abuse that must not become a Map key).
+    // Shared with the HTTP shell, which answers 400 on the same verdict rather
+    // than acknowledging a body nothing here can read.
+    if (!isWellFormedIntent(intent)) return false;
     const clientId = intent.clientId;
-    if (typeof clientId !== 'string' || clientId.length === 0) return false;
-    // Bound per-client bookkeeping: a clientId is a short generated token
-    // (makeClientId is ~40 chars); anything oversized is garbage or abuse and
-    // must not become a Map key.
-    if (clientId.length > 64) return false;
 
     const before = this._stateKey();
 
@@ -665,7 +698,30 @@ class ArmArbiter {
       // (nothing could ever arm first). rx.linkUp's value is no good as a
       // gate either: it is exactly the value that sits at a stale `true`
       // when RX is switched off.
-      if (this.holder === null && (this._rxLive || this._hhLive)) {
+      //
+      // AND granted only on a packet whose COMMAND TUPLE IS AT REST.
+      //
+      // The tuple is stored before this gate runs, so `{armReq: +1, port:
+      // 'forward'}` used to arm and move in one packet: a single POST took the
+      // machinery from disarmed to turning, with no intervening state in which
+      // an operator could see what was about to happen. The arm itself is the
+      // action the operator authorised; the motion in the same breath is not.
+      // So the edge is CONSUMED without being granted (the monotonic clamp
+      // below already moves the baseline forward), and arming then needs a
+      // fresh press from rest -- the same shape as the disarm-edge rule just
+      // above, and as RX refusing to arm while its own switch is off neutral
+      // (drive/arm_gate.h `local_command_active`).
+      //
+      // thrusterMode is deliberately NOT part of "at rest": it selects which
+      // gate the arm opens and commands nothing on its own (the browser and
+      // the phone both let the operator choose it while disarmed), so
+      // requiring 'manual' here would make arming into HOLD impossible.
+      const atRest =
+        port === 'neutral' &&
+        stbd === 'neutral' &&
+        thruster === 'off' &&
+        trimDeg === 0;
+      if (this.holder === null && (this._rxLive || this._hhLive) && atRest) {
         this.holder = clientId;
       }
     }
@@ -969,4 +1025,9 @@ class ArmArbiter {
   }
 }
 
-module.exports = { ArmArbiter, MAX_TRIM_DEG, MAX_TRACKED_CLIENTS };
+module.exports = {
+  ArmArbiter,
+  isWellFormedIntent,
+  MAX_TRIM_DEG,
+  MAX_TRACKED_CLIENTS,
+};

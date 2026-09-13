@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket as NodeWebSocket } from 'ws';
 import { App } from './App';
 import { IntentPostError, type PostIntent } from './clientIntent';
+import { PERIODIC_REFRESH_MS } from './config';
 import { SkClientContext } from './hooks/useSkConnection';
 import { createSkClient, type SkClient } from './skClient';
 import { startArbiterServer, type ArbiterHarness } from '../test/arbiterServer';
@@ -101,7 +102,11 @@ describe('App', () => {
     const port = screen.getByLabelText('Port drive control');
     pointerDown(within(port).getByLabelText('Port forward'), 1);
     // Let several heartbeats elapse -- any delta-publishing would show here.
-    await new Promise((r) => setTimeout(r, 600));
+    // act-wrapped like every other wait: the liveness poll and the arbiter's
+    // echoes both re-render while we sit here.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+    });
 
     const msgs = harness.clientMessages() as Array<Record<string, unknown>>;
     expect(msgs.length).toBeGreaterThan(0); // it did talk (the subscribe)
@@ -193,7 +198,9 @@ describe('App', () => {
     expect(within(port).getByText('NEUTRAL')).toBeInTheDocument(); // no command
     expect(screen.getByText('DISARMED')).toBeInTheDocument();
     // Let a heartbeat elapse; the intent must stay neutral and unarmed.
-    await new Promise((r) => setTimeout(r, 300));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
     const s = harness.state();
     expect(s.enabled).toBe(false);
     expect(s.port).toBe('neutral');
@@ -376,8 +383,13 @@ describe('App when a unit is switched off', () => {
     expect(btn).toBeDisabled();
 
     fireEvent.click(btn!);
-    // Nothing armed, on either side of the wire.
-    await new Promise((r) => setTimeout(r, 400));
+    // Nothing armed, on either side of the wire. The liveness poll re-renders
+    // four times a second, so the wait is act-wrapped like every other wait in
+    // this block -- unwrapped, those renders land outside act() and the run
+    // warns about something that has nothing to do with what is asserted.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
     expect(screen.queryByText('ARMED')).not.toBeInTheDocument();
     expect(harness.state().enabled).toBe(false);
   });
@@ -463,5 +475,108 @@ describe('App when a unit is switched off', () => {
     // And arming works again -- no page reload needed.
     fireEvent.click(screen.getByText('DISARMED'));
     await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument());
+  });
+});
+
+// The heading label is HH's statement, not this app's. Being armed with HOLD
+// selected says only that the hold was REQUESTED: HH may be faulted, its
+// heading may not be good yet, or its own ENGAGE input may have taken the
+// thruster -- and hh.setpointDeg reads as a live number in all of those,
+// because HH mirrors it to the fused heading whenever it is not holding
+// (ARCHITECTURE.md §9). So "holding" may only come from hh.armed + hh.mode.
+describe('App: "holding" comes from the HH unit, never from being armed', () => {
+  async function armIntoHold() {
+    await renderApp();
+    await arm();
+    fireEvent.click(screen.getByText('HOLD'));
+  }
+
+  it('does not claim a hold while HH reports it is not holding', async () => {
+    await armIntoHold();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.armed', value: false },
+      { path: 'control.remoteController.hh.mode', value: 'hold' },
+      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+    ]);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('hold requested · unit not holding'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('holding')).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/waiting for the thruster unit to engage/),
+    ).toBeInTheDocument();
+    // The heading itself is still shown -- the INDICATION degrades, the data
+    // does not disappear.
+    expect(screen.getByText('040°')).toBeInTheDocument();
+  });
+
+  it('says holding once HH reports armed and in HOLD', async () => {
+    await armIntoHold();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.armed', value: true },
+      { path: 'control.remoteController.hh.mode', value: 'hold' },
+      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+    ]);
+
+    await waitFor(() => expect(screen.getByText('holding')).toBeInTheDocument());
+    expect(screen.getByText(/trim with the arrows/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/waiting for the thruster unit to engage/),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('App: the intent heartbeat', () => {
+  it('never stacks up POSTs -- a heartbeat waits for the one in flight', async () => {
+    // Every 250 ms tick used to fire a fetch regardless, so a server answering
+    // slowly (or not at all, until the 2 s abort) put up to eight requests on
+    // the wire -- past the browser's per-host connection limit, with an urgent
+    // STOP queued behind heartbeats whose content was already obsolete.
+    let calls = 0;
+    await renderApp({
+      postIntent: () => {
+        calls += 1;
+        return new Promise<void>(() => {}); // never resolves
+      },
+    });
+    expect(calls).toBe(1); // the mount send, still in flight
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, PERIODIC_REFRESH_MS * 5));
+    });
+    expect(calls).toBe(1); // ...and every heartbeat since has coalesced into it
+
+    // A body change is an operator action, not a heartbeat: it goes out at
+    // once, whatever is still unanswered.
+    fireEvent.click(screen.getByText('DISARMED'));
+    await waitFor(() => expect(calls).toBe(2));
+  });
+
+  it('keeps waiting while an OLDER request is still unanswered', async () => {
+    // Remembering only the newest request would let an operator action that
+    // settles quickly clear the marker while the mount request still hangs --
+    // and the heartbeat would then rebuild the very backlog it exists to
+    // prevent. Every unsettled request counts, not just the last one sent.
+    let calls = 0;
+    await renderApp({
+      postIntent: () => {
+        calls += 1;
+        return calls === 1
+          ? new Promise<void>(() => {}) // the mount send never settles...
+          : Promise.resolve(); // ...every later one settles at once
+      },
+    });
+    expect(calls).toBe(1);
+
+    fireEvent.click(screen.getByText('DISARMED'));
+    await waitFor(() => expect(calls).toBe(2)); // the operator action, settled
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, PERIODIC_REFRESH_MS * 5));
+    });
+    expect(calls).toBe(2); // no heartbeat: the mount request is still pending
   });
 });

@@ -2,7 +2,7 @@
 
 // Pins the safe-core pipeline to a dedicated FreeRTOS task on
 // core 1, fixed period, higher priority than the Arduino loop task -- see
-// CLAUDE.md "Architecture." Once begin() is called, this task owns the BNO
+// ARCHITECTURE.md §3. Once begin() is called, this task owns the BNO
 // UART, the ENGAGE GPIO, and the thruster output GPIOs exclusively --
 // main.cpp/SensESP code must not touch them directly anymore. The only
 // cross-task boundaries are SkHeadingIn's internal mutex (read-only from
@@ -37,7 +37,7 @@
 // fused_deg() is already a live consumer (published as
 // navigation.attitude and sensors.headingHold.fusedHeading), so an
 // uncorrected mount would make the fused heading itself drift the wrong
-// way, not just the displayed rateOfTurn. The ARCHITECTURE.md §11 sea-trial
+// way, not just the displayed rateOfTurn. The ARCHITECTURE.md §12 sea-trial
 // Switcher knobs get the same live/persisted treatment and are pushed
 // through ControlStep::SetSwitchTunables() each tick, where
 // Switcher::SetTunables validates/clamps them (untrusted-boundary rules --
@@ -107,6 +107,13 @@ class ControlTask {
     float setpoint_deg = 0.0f;
   };
 
+  // Drives ENABLE/PORT/STBD to their inactive levels and nothing else, so
+  // setup() can call it as its very first statement -- ahead of the SensESP
+  // builder's filesystem mount and WiFi bring-up, which is time the outputs
+  // would otherwise spend held safe only by the output stage's own pull-downs.
+  // begin() repeats it (idempotent) via Outputs::begin().
+  static void DriveOutputsSafeEarly();
+
   static const char* StateName(control_core::FsmState s);
   static const char* CmdName(control_core::Cmd c);
 
@@ -161,6 +168,9 @@ class ControlTask {
   float last_pitch_deg_ = 0.0f;  // frames
   // Last Step() outputs, for the periodic status log (this task only).
   control_core::ControlStep::Outputs last_step_{};
+  // Edge detector for the re-engage-blocked warning in Tick(): the latch is a
+  // level, and one log line per 10 ms tick would bury everything else.
+  bool prev_reengage_blocked_ = false;
 
   // Fail-off watchdog heartbeat: refreshed by Run() after every completed
   // tick; read by the esp_timer callback on core 0. Plain 32-bit atomic --
@@ -181,7 +191,7 @@ class ControlTask {
   std::shared_ptr<sensesp::PersistingObservableValue<float>> imu_pitch_tare_deg_;
   std::shared_ptr<sensesp::PersistingObservableValue<bool>> imu_yaw_rate_invert_;
 
-  // ARCHITECTURE.md §11 sea-trial tuning knobs, same live/persisted/not-mutex-
+  // ARCHITECTURE.md §12 sea-trial tuning knobs, same live/persisted/not-mutex-
   // protected treatment as the IMU tare values above -- read via ->get()
   // each tick and pushed into the ControlStep's Switcher via
   // SetSwitchTunables(), which validates/clamps every value (see
@@ -195,7 +205,7 @@ class ControlTask {
   std::shared_ptr<sensesp::PersistingObservableValue<float>> switch_duty_warn_;
   std::shared_ptr<sensesp::PersistingObservableValue<float>> switch_duty_max_;
 
-  // One-way boundary (CLAUDE.md): written only by this task, read only by
+  // One-way boundary (ARCHITECTURE.md §3): written only by this task, read only by
   // main.cpp's telemetry-publish loop via latestTelemetry().
   mutable SemaphoreHandle_t telemetry_mutex_ = nullptr;
   TelemetrySnapshot telemetry_{};

@@ -78,9 +78,25 @@ class PrivateAddressTest {
   }
 
   @Test
+  fun `accepts the suffixes reserved for private networks`() {
+    // home.arpa is RFC 8375; internal was reserved by ICANN in 2024. Neither
+    // can be delegated in public DNS, so a name under one is as unroutable as
+    // .local -- which is what a boat network with a real resolver rather than
+    // mDNS will be using.
+    assertTrue(isPrivateHost("signalk.home.arpa"))
+    assertTrue(isPrivateHost("home.arpa"))
+    assertTrue(isPrivateHost("signalk.internal"))
+    assertTrue(isPrivateHost("boat.lan.internal."))
+  }
+
+  @Test
   fun `rejects public DNS names`() {
     assertFalse(isPrivateHost("example.com"))
     assertFalse(isPrivateHost("signalk.example.com"))
+    // The reserved suffixes are suffixes, not substrings: as a mere label in
+    // front of a public name they say nothing about where the host is.
+    assertFalse(isPrivateHost("home.arpa.example.com"))
+    assertFalse(isPrivateHost("internal.example.com"))
     // Ends with "local" but is not in the .local zone. The suffix tested is
     // ".local" with the dot, so this is not mistaken for mDNS.
     assertFalse(isPrivateHost("evil.notlocal"))

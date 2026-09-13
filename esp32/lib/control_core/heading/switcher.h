@@ -88,7 +88,7 @@ class Switcher {
   static constexpr float kMaxOnMinS = 0.1f;
   static constexpr float kMaxOnMaxS = 10.0f;
 
-  // Live-update the non-safety-critical tuning knobs (ARCHITECTURE.md §11: on_thr,
+  // Live-update the non-safety-critical tuning knobs (ARCHITECTURE.md §12: on_thr,
   // off_thr, lead_time/Td, min_on, max_on, min_off, duty_warn, duty_max) without
   // resetting switching state or duty memory -- for sea-trial tuning from
   // the web UI while a hold may be in progress. Deliberately does NOT touch

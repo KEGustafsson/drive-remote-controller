@@ -82,16 +82,6 @@ function Lamp({
   );
 }
 
-function commandsLamp(
-  writeStatus: WriteStatus,
-  intentStatus: IntentStatus,
-): {
-  value: string;
-  status: LampStatus;
-} {
-  return commandsIndication(writeStatus, intentStatus);
-}
-
 // A unit's own presence, worded so "check power" appears only when that is
 // actually the likely cause.
 function unitLamp(
@@ -154,7 +144,7 @@ export function StatusPanel({
   const thrusterMode = values[SK_HH_MODE_PATH];
   const thrusterSource = values[SK_HH_SOURCE_PATH];
 
-  const commands = commandsLamp(writeStatus, intentStatus);
+  const commands = commandsIndication(writeStatus, intentStatus);
   const rxUnit = unitLamp(rxLiveness, live);
   const hhUnit = unitLamp(hhLiveness, live);
 

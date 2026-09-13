@@ -4,13 +4,13 @@
 #include <driver/gpio.h>
 #include <ESP32Servo.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
 
 #include "common/cached_snapshot.h"
 
 namespace {
 constexpr const char* kTag = "rx_control";
 
-using control_core::ActiveSource;
 using control_core::Arbitrate;
 using control_core::ArmGateInputs;
 using control_core::FromSwitch;
@@ -33,34 +33,45 @@ bool NeutralAsserted(int raw_level) {
 }
 }  // namespace
 
-void ControlTask::begin(SkCommandIn* sk_tx, SkCommandIn* sk_plugin) {
-  sk_tx_ = sk_tx;
-  sk_plugin_ = sk_plugin;
-
-  // FIRST hardware action of the whole firmware: release the actuator-engage
-  // relay. Everything below this line -- including attaching the servos and
-  // driving them to neutral -- must happen with the linkage disconnected, so
-  // that whatever position the servos were left in cannot be transmitted to a
-  // lever. (The pin is a floating input from reset until this runs; the relay
-  // driver's own pull-down covers that window -- see config.h.)
-  // Level first, THEN the driver: the released level goes into the GPIO output
-  // register while the pin is still an input, so pinMode(OUTPUT) starts driving
-  // that rather than the pin's reset default. That default is LOW, which is
-  // only accidentally "released" -- with kRxArmOutputActiveHigh false it is
-  // ENGAGED, and this pin drives a clutch onto a shift lever. The final write
-  // re-asserts with the driver live so nothing here depends on what pinMode()
-  // does to the output register (it does nothing: __pinMode() calls
-  // gpio_config(), which leaves the output data register alone).
-  //
-  // The first write MUST be gpio_set_level(), not digitalWrite():
-  // arduino-esp32 3.x gates digitalWrite() behind its peripheral manager, so
-  // on a pin that has not yet had pinMode() called it writes nothing at all
-  // and merely logs "IO 33 is not set as GPIO" (esp32-hal-gpio.c). Using it
-  // here would leave this whole level-before-driver ordering doing nothing.
+// Release the actuator-engage relay, and nothing else. Called as the very
+// first statement of setup() (ahead of the SensESP builder) and again from
+// begin(); it is idempotent.
+//
+// Everything that follows -- SensESP's filesystem/WiFi bring-up, attaching the
+// servos, driving them to neutral -- must happen with the linkage
+// disconnected, so that whatever position the servos were left in cannot be
+// transmitted to a lever. (The pin is a floating input from reset until this
+// runs; the relay driver's own pull-down covers that window -- see config.h.)
+//
+// Level first, THEN the driver: the released level goes into the GPIO output
+// register while the pin is still an input, so pinMode(OUTPUT) starts driving
+// that rather than the pin's reset default. That default is LOW, which is
+// only accidentally "released" -- with kRxArmOutputActiveHigh false it is
+// ENGAGED, and this pin drives a clutch onto a shift lever. The final write
+// re-asserts with the driver live so nothing here depends on what pinMode()
+// does to the output register (it does nothing: __pinMode() calls
+// gpio_config(), which leaves the output data register alone).
+//
+// The first write MUST be gpio_set_level(), not digitalWrite():
+// arduino-esp32 3.x gates digitalWrite() behind its peripheral manager, so
+// on a pin that has not yet had pinMode() called it writes nothing at all
+// and merely logs "IO 33 is not set as GPIO" (esp32-hal-gpio.c). Using it
+// here would leave this whole level-before-driver ordering doing nothing.
+void ControlTask::DriveOutputsSafeEarly() {
   gpio_set_level(static_cast<gpio_num_t>(config::kRxArmOutputPin),
                  ArmPinLevel(false) == HIGH ? 1 : 0);
   pinMode(config::kRxArmOutputPin, OUTPUT);
   digitalWrite(config::kRxArmOutputPin, ArmPinLevel(false));
+}
+
+void ControlTask::begin(SkCommandIn* sk_tx, SkCommandIn* sk_plugin) {
+  sk_tx_ = sk_tx;
+  sk_plugin_ = sk_plugin;
+
+  // Repeat of setup()'s first statement -- the relay must be released before
+  // anything else here runs, and begin() must not depend on the caller having
+  // done it.
+  DriveOutputsSafeEarly();
 
   telemetry_mutex_ = xSemaphoreCreateMutex();
   if (telemetry_mutex_ == nullptr) {
@@ -108,6 +119,33 @@ void ControlTask::begin(SkCommandIn* sk_tx, SkCommandIn* sk_plugin) {
     return;
   }
 
+  // Independent fail-off watchdog (see control_task.h): seed the heartbeat so
+  // the timer measures "since begin()" until the first tick, then start the
+  // periodic check. Started BEFORE the task, as HH does, so there is no window
+  // where a task that fails to start goes unwatched -- a trip while the relay
+  // is already released is a loud no-op.
+  heartbeat_ms_.store(millis(), std::memory_order_relaxed);
+  esp_timer_create_args_t failoff_args = {};
+  failoff_args.callback = &ControlTask::FailoffWatchdogTrampoline;
+  failoff_args.arg = this;
+  failoff_args.dispatch_method = ESP_TIMER_TASK;
+  failoff_args.name = "rx_arm_failoff";
+  failoff_args.skip_unhandled_events = true;
+  // Logged, not ESP_ERROR_CHECK'd: a failure here costs the extra layer, and
+  // the TWDT still reboots a wedged task. A boot loop would be worse than a
+  // logged degradation.
+  esp_err_t timer_err = esp_timer_create(&failoff_args, &failoff_timer_);
+  if (timer_err == ESP_OK) {
+    timer_err = esp_timer_start_periodic(
+        failoff_timer_, config::kOutputFailoffCheckPeriodMs * 1000ULL);
+  }
+  if (timer_err != ESP_OK) {
+    ESP_LOGE(kTag,
+             "fail-off watchdog not started (err=%d) -- ARM relay is protected "
+             "by the task watchdog only",
+             static_cast<int>(timer_err));
+  }
+
   BaseType_t rc = xTaskCreatePinnedToCore(
       &ControlTask::TaskEntry, "rx_control", config::kControlTaskStackBytes,
       this, config::kControlTaskPriority, &task_handle_,
@@ -128,6 +166,43 @@ void ControlTask::TaskEntry(void* pv) {
   static_cast<ControlTask*>(pv)->Run();
 }
 
+void ControlTask::FailoffWatchdogTrampoline(void* arg) {
+  static_cast<ControlTask*>(arg)->CheckFailoff();
+}
+
+// Runs in the esp_timer service task (core 0), NOT the control task -- the
+// whole point is that it keeps running when the control task doesn't.
+//
+// It releases the ARM relay and only the ARM relay. The relay is the drives'
+// ENABLE: releasing it disconnects the linkage, which is a stronger stop than
+// commanding NEUTRAL and is the same thing a disarm does. The SERVOS are
+// deliberately left alone -- ESP32Servo is not safe to call from another task
+// (writeMicroseconds() touches LEDC channel state the control task owns), and
+// a torn write to a servo channel is a worse failure than a servo holding its
+// pulse. So the servos keep their last pulse into a disconnected linkage until
+// the TWDT (5 s, panic) reboots the board, which re-runs begin() and drives
+// them back to neutral.
+//
+// Idempotent, and repeated every check period until the heartbeat resumes: if
+// the control task recovers it simply reasserts its own ArmGate-derived level
+// on its next tick.
+void ControlTask::CheckFailoff() {
+  uint32_t now_ms = millis();
+  uint32_t age_ms = now_ms - heartbeat_ms_.load(std::memory_order_relaxed);
+  if (age_ms <= config::kRxOutputFailoffTimeoutMs) {
+    return;
+  }
+  gpio_set_level(static_cast<gpio_num_t>(config::kRxArmOutputPin),
+                 ArmPinLevel(false) == HIGH ? 1 : 0);
+  if (now_ms - last_failoff_log_ms_ >= 1000) {
+    last_failoff_log_ms_ = now_ms;
+    ESP_LOGE(kTag,
+             "FAIL-OFF: control task heartbeat stale (%u ms) -- engage relay "
+             "released",
+             static_cast<unsigned>(age_ms));
+  }
+}
+
 void ControlTask::Run() {
   TickType_t last_wake = xTaskGetTickCount();
   const TickType_t period = pdMS_TO_TICKS(config::kRxControlPeriodMs);
@@ -136,7 +211,9 @@ void ControlTask::Run() {
   // outputs and the engage relay, so if it ever stalls (it has no blocking
   // calls, so this is defense-in-depth) the TWDT reboots the board -- which
   // re-runs begin(), releasing the relay and driving both servos back to
-  // neutral, the fail-safe state. A failure
+  // neutral, the fail-safe state. The esp_timer fail-off above gets the relay
+  // released in ~200 ms rather than waiting out the TWDT's 5 s; the TWDT is
+  // what eventually recovers the board. A failure
   // here (TWDT not initialised on this core) is non-fatal: the loop still
   // runs, just unwatched, so we don't treat it as an error.
   esp_task_wdt_add(nullptr);
@@ -266,6 +343,10 @@ void ControlTask::Run() {
       xSemaphoreGive(telemetry_mutex_);
     }
 
+    // Refresh the fail-off watchdog only after a fully completed tick -- a
+    // task that wedges mid-tick must look stale, not alive.
+    heartbeat_ms_.store(now, std::memory_order_relaxed);
+
     vTaskDelayUntil(&last_wake, period);
   }
 }
@@ -296,18 +377,4 @@ void ControlTask::SetStbdCalibration(const control_core::ServoCalibration& cal) 
   portENTER_CRITICAL(&calibration_mux_);
   stbd_cal_ = cal;
   portEXIT_CRITICAL(&calibration_mux_);
-}
-
-const char* ControlTask::SourceName(ActiveSource source) {
-  switch (source) {
-    case ActiveSource::kLocal:
-      return "local";
-    case ActiveSource::kTx:
-      return "tx";
-    case ActiveSource::kPlugin:
-      return "plugin";
-    case ActiveSource::kNone:
-    default:
-      return "none";
-  }
 }

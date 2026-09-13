@@ -98,6 +98,40 @@ class SkValueStoreTest {
   }
 
   @Test
+  fun `clear forgets both the values and their arrival stamps`() {
+    val store = SkValueStore()
+    store.apply(
+      listOf(SkContract.PLUGIN_ACTIVE_CLIENT to "me", SkContract.RX_PORT_STATE to "forward"),
+      nowMs = 1_000,
+    )
+    store.clear()
+
+    assertNull(store[SkContract.PLUGIN_ACTIVE_CLIENT])
+    assertFalse(store.hasEverReceived(SkContract.PLUGIN_ACTIVE_CLIENT))
+    assertNull(store.ageMs(SkContract.RX_PORT_STATE, nowMs = 1_000), "the stamp must go too")
+    assertEquals(emptyMap<String, Any?>(), store.snapshot())
+
+    // And it is empty, not broken: the next session fills it normally.
+    store.apply(listOf(SkContract.RX_PORT_STATE to "neutral"), nowMs = 2_000)
+    assertEquals(0L, store.ageMs(SkContract.RX_PORT_STATE, nowMs = 2_000))
+  }
+
+  @Test
+  fun `a cleared store no longer paints this station as armed`() {
+    // The reason clear() exists. A revoked token ends the session with our own
+    // clientId standing in activeClient, and the value never withdraws itself --
+    // so a station that reaches a control screen again reads as ARMED with no
+    // session behind it, and a server whose plugin is stopped sends nothing that
+    // would correct it.
+    val store = SkValueStore()
+    store.apply(listOf(SkContract.PLUGIN_ACTIVE_CLIENT to "me"), nowMs = 1_000)
+    assertEquals(ControlState.YOU, controlStateOf(store[SkContract.PLUGIN_ACTIVE_CLIENT], "me"))
+
+    store.clear()
+    assertEquals(ControlState.NONE, controlStateOf(store[SkContract.PLUGIN_ACTIVE_CLIENT], "me"))
+  }
+
+  @Test
   fun `keeps last-known values across a disconnect`() {
     // Not cleared on purpose: the UI keeps showing what it last saw, greyed
     // out. The arrival clock is what stops last-known being read as live.

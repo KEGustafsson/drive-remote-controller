@@ -284,6 +284,10 @@ private val armed =
     rxLinkOk = true,
     rxMasterEnable = true,
     hhArmed = true,
+    // HH's own report, which is what the HOLD panel's "HOLDING" caption reads
+    // (StationView.holdEngaged). Armed AND in hold, so a HOLD-mode rendering
+    // here is the engaged one.
+    hhMode = "hold",
     thrusterState = "off",
   )
 

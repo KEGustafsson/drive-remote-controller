@@ -216,6 +216,10 @@ only when it *is* that holder. Concretely:
   the other), then tap again to arm — passing through the safe disarmed state.
 - **Fail-safe:** if the holder's tab closes or its WiFi drops, its heartbeat
   stops and the token auto-releases (→ disarmed, both drives NEUTRAL).
+- **Arming only from rest.** An arm press is granted only on a packet that
+  commands nothing — both drives NEUTRAL, thruster off, no trim — so one
+  message can never take the machinery from disarmed to moving. A press made
+  while a contact is held is consumed and refused; let go and press again.
 
 ## Bow thruster: MANUAL and HOLD
 
@@ -250,8 +254,12 @@ the trim steps) stays greyed and inert until this app holds the token, the
 socket is up and the heading-hold unit is answering. One consequence is stated
 on the widget rather than left to be discovered: **with HOLD selected, arming
 alone starts the hold** — the unit captures the heading and works the thruster
-with no further press. Disarmed, the panel says so, and it labels the big number
-"current heading" instead of "holding", because nothing is being held yet.
+with no further press. The big number is labelled by what the unit itself
+reports, never by what this app asked for: "current heading" while disarmed,
+"holding" only once `hh.armed` and `hh.mode` say the hold is running, and
+"hold requested · unit not holding" in between — HH mirrors its setpoint to
+the live heading whenever it is not holding, so the number alone cannot tell
+the two apart.
 
 Authority is the same rule as the drives: the unit's own engage switch wins
 unconditionally, then TX, then this app — and the app says "controlled by TX

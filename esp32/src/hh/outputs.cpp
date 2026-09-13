@@ -31,6 +31,28 @@ void WritePin(uint8_t pin, bool logical_high) {
 
 }  // namespace
 
+void Outputs::safeLevelsEarly() {
+  // Same level-before-driver ordering, and the same reason, as begin() below:
+  // the safe levels go into the GPIO output register while the pins are still
+  // inputs, so pinMode(OUTPUT) starts driving those rather than the pins'
+  // reset default. Polarity is not duplicated here -- the levels come from
+  // ComputeOutputLevels(disarmed, off) and go out through WritePin, exactly as
+  // every other write in this class does.
+  const control_core::OutputLevels levels =
+      control_core::ComputeOutputLevels(false, control_core::Cmd::kOff);
+  WritePin(config::kThrusterEnablePin, levels.enable);
+  WritePin(config::kThrusterPortPin, levels.port);
+  WritePin(config::kThrusterStbdPin, levels.stbd);
+
+  pinMode(config::kThrusterEnablePin, OUTPUT);
+  pinMode(config::kThrusterPortPin, OUTPUT);
+  pinMode(config::kThrusterStbdPin, OUTPUT);
+
+  WritePin(config::kThrusterEnablePin, levels.enable);
+  WritePin(config::kThrusterPortPin, levels.port);
+  WritePin(config::kThrusterStbdPin, levels.stbd);
+}
+
 void Outputs::begin() {
   armed_ = false;
   dir_ = control_core::Cmd::kOff;

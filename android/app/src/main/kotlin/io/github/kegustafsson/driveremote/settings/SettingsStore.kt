@@ -18,7 +18,7 @@ private val Context.dataStore by preferencesDataStore(name = "drive_remote_setti
  * Persisted settings: which server to talk to, this station's identity, and its
  * access token.
  *
- * The token is kept in [EncryptedSharedPreferences] rather than DataStore
+ * The token is kept in [KeystoreEncryptedPreferences] rather than DataStore
  * because it authorises commanding machinery -- it is the one stored value
  * whose disclosure matters. Everything else is ordinary preferences.
  */
@@ -122,6 +122,38 @@ class SettingsStore(context: Context) {
     return next
   }
 
+  // The token, the server that issued it and its stated expiry, held in memory
+  // after the first read.
+  //
+  // The encrypted file is still the persistence layer and still the only place
+  // any of this is stored; this is a cache in front of it, and it exists because
+  // of how often it is read. Every token() and tokenExpired() is an AES-GCM
+  // decrypt against a key in the Android Keystore, and both are called on the
+  // main thread on every 250 ms heartbeat tick -- four Keystore round trips a
+  // second, for values that change only when setToken() is called.
+  //
+  // Filled on first read and replaced by setToken(), which is the ONLY writer of
+  // these three keys, so the cache cannot silently diverge from the file. The
+  // lock is there because the readers are not all on one dispatcher -- the same
+  // reasoning as IntentPoster's authLock, and just as cheap: no I/O inside it.
+  private val cacheLock = Any()
+  private var cacheLoaded = false
+  private var cachedToken: String? = null
+  private var cachedTokenServer: String? = null
+  /** Null means the server stated no expiry, which is not the same as "expired". */
+  private var cachedExpiryMs: Long? = null
+
+  /** Caller must hold [cacheLock]. */
+  private fun loadCache() {
+    if (cacheLoaded) return
+    cachedToken = secure.getString(KEY_TOKEN, null)
+    cachedTokenServer = secure.getString(KEY_TOKEN_SERVER, null)
+    cachedExpiryMs =
+      if (secure.contains(KEY_TOKEN_EXPIRY)) secure.getLong(KEY_TOKEN_EXPIRY, Long.MAX_VALUE)
+      else null
+    cacheLoaded = true
+  }
+
   /**
    * The Signal K access token, or null if we do not hold one.
    *
@@ -132,31 +164,54 @@ class SettingsStore(context: Context) {
    * the control screen holding the first server's token, and the operator
    * would watch it fail as a 401 rather than simply being asked to authorise
    * the new server.
+   *
+   * The binding is by `host:port` and does NOT include the scheme, so the same
+   * host reached over https and over http counts as the same issuer. That is
+   * the key the token was stored under before this was noticed, and changing it
+   * now would invalidate every stored token on upgrade for no safety gain --
+   * the cleartext gate ([io.github.kegustafsson.driveremote.core.isPrivateHost])
+   * is what decides whether the token may travel in the clear, not this.
    */
   fun token(forServer: ServerAddress? = null): String? {
-    val token = secure.getString(KEY_TOKEN, null) ?: return null
-    if (forServer == null) return token
-    val issuedBy = secure.getString(KEY_TOKEN_SERVER, null)
-    // A token stored before this binding existed has no recorded server. Treat
-    // it as belonging to the configured one rather than forcing a
-    // re-authorisation on upgrade.
-    if (issuedBy != null && issuedBy != forServer.toString()) return null
-    return token
+    synchronized(cacheLock) {
+      loadCache()
+      val token = cachedToken ?: return null
+      if (forServer == null) return token
+      // A token stored before this binding existed has no recorded server. Treat
+      // it as belonging to the configured one rather than forcing a
+      // re-authorisation on upgrade.
+      val issuedBy = cachedTokenServer
+      if (issuedBy != null && issuedBy != forServer.toString()) return null
+      return token
+    }
   }
 
   /** Which server issued the stored token, if one is held. */
-  fun tokenServer(): String? = secure.getString(KEY_TOKEN_SERVER, null)
+  fun tokenServer(): String? =
+    synchronized(cacheLock) {
+      loadCache()
+      cachedTokenServer
+    }
 
   fun setToken(token: String?, expiresAtMs: Long?, server: ServerAddress? = null) {
-    secure
-      .edit()
-      .apply {
-        if (token == null) remove(KEY_TOKEN) else putString(KEY_TOKEN, token)
-        if (expiresAtMs == null) remove(KEY_TOKEN_EXPIRY) else putLong(KEY_TOKEN_EXPIRY, expiresAtMs)
-        if (token == null || server == null) remove(KEY_TOKEN_SERVER)
-        else putString(KEY_TOKEN_SERVER, server.toString())
-      }
-      .apply()
+    synchronized(cacheLock) {
+      secure
+        .edit()
+        .apply {
+          if (token == null) remove(KEY_TOKEN) else putString(KEY_TOKEN, token)
+          if (expiresAtMs == null) remove(KEY_TOKEN_EXPIRY)
+          else putLong(KEY_TOKEN_EXPIRY, expiresAtMs)
+          if (token == null || server == null) remove(KEY_TOKEN_SERVER)
+          else putString(KEY_TOKEN_SERVER, server.toString())
+        }
+        .apply()
+      // Refreshed here rather than invalidated: this is the whole of what was
+      // written, so the next read has no reason to go back to the Keystore.
+      cachedToken = token
+      cachedExpiryMs = expiresAtMs
+      cachedTokenServer = if (token == null) null else server?.toString()
+      cacheLoaded = true
+    }
   }
 
   /**
@@ -167,8 +222,11 @@ class SettingsStore(context: Context) {
    * would disarm a working station for no reason.
    */
   fun tokenExpired(nowMs: Long): Boolean {
-    if (!secure.contains(KEY_TOKEN_EXPIRY)) return false
-    return secure.getLong(KEY_TOKEN_EXPIRY, Long.MAX_VALUE) <= nowMs
+    synchronized(cacheLock) {
+      loadCache()
+      val expiry = cachedExpiryMs ?: return false
+      return expiry <= nowMs
+    }
   }
 
   internal companion object {

@@ -72,11 +72,32 @@ class SkValueStore(private val accept: Set<String> = SkContract.SUBSCRIBE_PATHS.
   fun stringOrNull(path: String): String? = values[path] as? String
 
   /**
-   * Values are deliberately NOT cleared on disconnect -- the browser client
-   * does not clear them either. They stay readable as last-known so the UI can
-   * keep showing what it last saw while greying it out, rather than blanking
-   * the panel. The arrival clock is what stops last-known from being mistaken
-   * for live.
+   * Values are deliberately NOT cleared on a DROPPED socket -- the browser
+   * client does not clear them either. They stay readable as last-known so the
+   * UI can keep showing what it last saw while greying it out, rather than
+   * blanking the panel. The arrival clock is what stops last-known from being
+   * mistaken for live.
+   *
+   * Only [clear] empties the store, and only where a session has ENDED.
    */
   fun snapshot(): Map<String, Any?> = values.toMap()
+
+  /**
+   * Forget everything: values and arrival stamps alike.
+   *
+   * For the END of a session -- a caller-initiated close, or the stream being
+   * re-pointed at another server -- and never for a reconnect, which is what
+   * last-known values exist for (see [snapshot]).
+   *
+   * `plugin.activeClient` is why this is needed. It is retained by Signal K
+   * like every other path, so a session that ended while this station held the
+   * arm token leaves its own clientId standing in here -- and the next session
+   * derives ARMED from it before any delta has arrived. On a server whose
+   * plugin is stopped none ever does, so the kill switch reads ARMED with no
+   * session behind it, and everything gated on "not armed" is locked out.
+   */
+  fun clear() {
+    values.clear()
+    receivedAtMs.clear()
+  }
 }

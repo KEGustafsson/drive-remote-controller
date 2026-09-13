@@ -146,7 +146,16 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
 8. **A remote command enters through the same gate as a local one.** Never add a
    path that reaches the outputs without passing the safety FSM.
 9. **Leaving HOLDING requires a fresh engage edge to resume.** Thrust never
-   restarts silently because a sensor recovered.
+   restarts silently because a sensor recovered. For a remote station the
+   engage edge is its `enabled` flag going false then true, and a link outage
+   cannot manufacture one: a station whose link to HH went stale while it was
+   engaging HOLD is refused when the link returns, however its retained
+   `enabled` reads, until HH has seen it live and *disabled* — the operator
+   must disarm and re-arm. HH boots in that same refused state for both remote
+   sources, so a station left armed across an HH power-cycle cannot engage a
+   hold at boot either. MANUAL deliberately resumes after a link blip, exactly
+   as a held shift switch does at RX: a momentary button is the operator's
+   presence, a hold is not. (`ControlStep`'s re-engage latch; test_control_step.)
 
 ---
 
@@ -284,6 +293,7 @@ mechanical, with a meter or a scope on the GPIO33 line.**
 - [ ] Master enable OFF mid-shift, levers in gear → relay releases immediately; re-arming is refused until both levers are returned to neutral.
 - [ ] **Watch what the lever does on that disarm** (engine off, linkage connected, boat secured). Expected: the clutch lets go and the lever stays in gear. Confirm that is what this mechanism should do — if a kill-switch press must leave the engines in neutral instead, that is the disarm-sequence change described under invariant 7, and it needs deciding here rather than at sea.
 - [ ] Power-cycle RX with a lever in gear → boots disarmed, relay released, arming refused until the levers are returned to neutral.
+- [ ] **Independent fail-off watchdog fires (RX):** wedge the control task (e.g. a debug-build infinite loop in `Run()`), scope GPIO33 releasing within ~`kRxOutputFailoffTimeoutMs + kOutputFailoffCheckPeriodMs` (~225 ms). The servos hold their last pulse into the released linkage until the task watchdog reboots the board; that is by design, and this check is the one that proves the relay does not wait for it. Bench-unverified, like HH's.
 - [ ] Local switches override any remote command instantly, armed and disarmed.
 - [ ] TX's enable switch OFF stops TX commanding immediately, not after a timeout.
 - [ ] RX's master enable OFF stops all remote sources; local switch commands still reach the servos (the linkage is released, so nothing moves — that is expected, see invariant 3).

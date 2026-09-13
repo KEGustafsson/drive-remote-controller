@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "sensesp/system/lambda_consumer.h"
+#include "strict_sk_listeners.h"
 
 void SkCommandIn::begin(const char* port_path, const char* stbd_path,
                          const char* enabled_path, int listen_delay_ms) {
@@ -39,7 +40,14 @@ void SkCommandIn::begin(const char* port_path, const char* stbd_path,
         xSemaphoreGive(mutex_);
       }));
 
-  enabled_listener_ = std::make_shared<sensesp::SKValueListener<bool>>(
+  // StrictBoolListener, not the stock SKValueListener<bool>: SensESP's default
+  // parse_value coerces, and ArduinoJson reads ANY string/object/array as
+  // true -- so `"false"` or `{}` on this path would read as a station
+  // reporting itself ARMED. Non-boolean deltas are dropped instead, which also
+  // withholds the watchdog feed below, so a source publishing the wrong type
+  // goes stale and arbitration drops the drives to NEUTRAL. See
+  // include/strict_sk_listeners.h.
+  enabled_listener_ = std::make_shared<StrictBoolListener>(
       enabled_path, listen_delay_ms);
   enabled_listener_->connect_to(new sensesp::LambdaConsumer<bool>(
       [this](bool value) {

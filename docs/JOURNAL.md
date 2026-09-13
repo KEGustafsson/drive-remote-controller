@@ -6932,3 +6932,103 @@ The notes tell the truth about what is missing, unprompted: "**No provenance
 attestation.** This release could not be attested, so there is nothing for `gh
 attestation verify` to check." That sentence is the whole point of making
 `attest` non-blocking rather than removing it.
+
+## 2026-09-13 — A whole-repository adversarial review, and what it turned up
+
+Four parallel reviews (firmware glue, pure core, plugin, Android), each told
+to verify before reporting; the code changes were then implemented by a
+second model and re-verified here. Every suite is green: native 276 (was
+268), plugin 277 (was 268), Android core 178 (was 171) and app 75 (was 73),
+all three firmwares compile, `assembleDebug` builds. Nothing here has been on
+hardware.
+
+### Three findings that mattered
+
+**A hold could re-engage itself.** The FSM's "fresh engage edge" was derived
+from the arbitrated `engage_request`, a level regenerated every tick from
+`live && enabled`. HOLDING under TX, TX's link goes stale for a second, HH
+disarms — then the link returns, TX's *retained* `enabled=true, mode=hold`
+qualifies again, the FSM sees a rising edge and captures a new base heading
+with nobody having touched anything. The same held for the plugin tier on an
+HH-side blip, and for HH power-cycled under a station left armed: a fresh
+unit has no history and reads a retained value as a press. Thruster
+invariant 9 said the opposite in words. `ControlStep` now latches each
+remote source out after a stale drop while it was engaging HOLD, and starts
+both sources latched at boot; only seeing the station *live and disarmed*
+clears it, which is the fresh edge the invariant asks for. MANUAL resumes
+after a link blip on purpose — a held button is the operator's presence,
+exactly as a held shift switch is at RX — but not across an HH boot, where
+there is no button to interrupt, only a retained value. Eight new cases in
+`test_control_step`, each shown red without its half of the fix. HH logs the
+refusal; it is not published, because HH's telemetry loop already sits at 18
+deltas against SensESP's 20-deep, drop-oldest queue (now written next to the
+loop, with `linkUp` deliberately last).
+
+**RX's web-UI servo calibration never applied until reboot.** A web save goes
+`from_json()` → `save()`, and SensESP's `PersistingObservableValue::from_json`
+assigns without `emit()`, so the six `LambdaConsumer`s fired once at boot and
+never again — "live-tunable, no reflash" was untrue for the one unit that
+claimed it. RX now polls the six values every 250 ms as HH always did for its
+tunables, and creates them *before* the control task starts so the first
+servo write uses the persisted neutral rather than 1500 µs.
+
+**The "holding" label was a local guess.** Both stations wrote "holding"
+whenever they could command the thruster, without reading `hh.armed` or
+`hh.mode` — subscribed, consumed by nothing. HH mirrors its setpoint to the
+fused heading whenever it is *not* holding, so the number reads the same
+whether the unit engaged, refused on a bad heading, faulted, or was taken by
+its own ENGAGE input. The browser panel now says "holding" only on the unit's
+own report and "hold requested · unit not holding" otherwise, which is also
+what the new latch above surfaces to the operator. The Android panel had the
+same defect and carries the same rule now, derived once in `StationView` as
+`holdEngaged` and pinned by both the core and the layout suites.
+
+### The rest, briefly
+
+- **Arbiter:** an arm edge riding on a packet that already commands motion
+  used to arm and move in one POST; it now grants only from a rest tuple and
+  consumes the edge otherwise, the plugin's twin of RX's neutral interlock.
+  Twenty-one tests had pinned the old behaviour. `/intent` answers 400 to a
+  body it cannot read instead of `200 {ok:true}`; browser heartbeats coalesce
+  to one in flight so a STOP can never queue behind stale heartbeats.
+- **Android:** the value store is cleared when a session ends or re-points,
+  so a retained `activeClient` can no longer paint ARMED on a new session and
+  lock Disconnect; the heartbeat is a fixed 250 ms cadence outside the press
+  lane rather than send-then-delay (one 800 ms POST used to hand the arbiter
+  a >1 s gap); the token is cached in memory instead of three Keystore
+  decrypts per tick on the main thread; a 403 is explained as a read-only
+  token; `home.arpa` and `.internal` count as private; leftovers of the
+  deleted security-crypto migration are gone.
+- **Firmware boundary:** `enabled` listeners accepted any string or object as
+  `true` (ArduinoJson's coercion) — the unsafe reading; a strict bool
+  listener now drops anything that is not a bool, and the heading listener
+  drops anything that is not a number. Safe output levels are `setup()`'s
+  first statement on both units, before SensESP is constructed. RX gains the
+  `esp_timer` fail-off watchdog HH already had, releasing the engage relay
+  within ~225 ms of a wedged control task instead of holding a clutch in gear
+  for the task watchdog's 5 s. `hh.thruster.state` is lower-case like every
+  other contract string.
+- **Docs:** BUILDING.md §10, README and SECURITY.md still described a release
+  that published firmware and the plugin with 21 assets; the workflow has only
+  ever published the Android station here, by the owner decision its own
+  header records. They now describe what runs.
+
+### Open, deliberately not changed
+
+- TX's thruster mode switch fails open to HOLD (`INPUT_PULLDOWN`, HIGH =
+  MANUAL): a broken wire plus enable ON publishes `mode=hold`, and arming
+  with HOLD selected engages the hold with no further press. Reversing the
+  polarity would make an open circuit read MANUAL. The pin is marked "confirm
+  at wiring" and TX has never been flashed, so this is the owner's call.
+- Both fail-off watchdogs are bench-unverified; the drive checklist now
+  carries the RX item beside HH's.
+- RX's relay pin has two writers without a mutex (the control task and the
+  watchdog), unlike HH's spinlocked outputs; they only disagree during a
+  trip, and the watchdog repeats every 25 ms.
+- A HOLD handed over between two stations — TX stale, plugin live and armed
+  in HOLD — continues without an FSM edge, under the plugin's authority and
+  TX's captured base heading. That is the fixed-precedence rule as
+  documented, and the same handover a deliberate TX disable produces today;
+  CodeRabbit read it as a re-engage. Making a source change a re-engage
+  boundary would drop a hold the plugin operator deliberately armed for,
+  so it is left as designed and raised here for the owner.

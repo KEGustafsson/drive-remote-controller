@@ -1,6 +1,6 @@
 #pragma once
 
-// RX safe core (ARCHITECTURE.md, CLAUDE.md "Architecture"): a FreeRTOS task
+// RX safe core (ARCHITECTURE.md §3): a FreeRTOS task
 // pinned to core 1, higher priority than the Arduino loop task, fixed
 // period. Owns the local switches, the RX master enable switch, the two
 // lever-neutral sensors, the actuator-engage (ARM) output and the two servo
@@ -12,11 +12,25 @@
 // Never blocks on WiFi/SK -- SkCommandIn::Snapshot() is non-blocking and a
 // momentary miss just reuses the previous tick's cached RemoteSource.
 //
-// One-way boundary (SAFETY.md drive invariant 6, never block): the SensESP loop
-// telemetry/config, and the link-OK LED) reads a mutex-protected
+// One-way boundary (SAFETY.md drive invariant 6, never block): the SensESP
+// loop (telemetry, web config and the link-OK LED) reads a mutex-protected
 // TelemetrySnapshot this task writes every tick; it never waits on it.
+//
+// FAIL-OFF WATCHDOG (independent of this task, mirroring HH's): begin() also
+// starts a periodic esp_timer callback -- dispatched from the esp_timer
+// service task on core 0, outside this task's scheduling -- that RELEASES THE
+// ARM RELAY if this task stops refreshing its heartbeat
+// (config::kRxOutputFailoffTimeoutMs). The relay is the drives' ENABLE:
+// releasing it disconnects the linkage, so a wedged control task can no longer
+// hold a servo in gear with the clutch engaged until the TWDT reboots
+// (SAFETY.md drive invariant 5, fail to NEUTRAL rather than to the last
+// value). The servos themselves are deliberately NOT touched from the timer
+// task -- see ControlTask::CheckFailoff.
 
+#include <atomic>
 #include <cstdint>
+
+#include <esp_timer.h>
 
 #include "drive/arbitration.h"
 #include "drive/arm_gate.h"
@@ -67,6 +81,14 @@ class ControlTask {
     bool link_up = false;
   };
 
+  // Drives the actuator-engage (ARM) output to its RELEASED level, and
+  // nothing else. Static and free of every other dependency so setup() can
+  // call it as its very first statement, ahead of the SensESP builder: the
+  // filesystem mount and WiFi bring-up in that chain take time during which
+  // the relay would otherwise be held safe only by its own pull-down.
+  // begin() repeats it (idempotent) once the rest of the pins are configured.
+  static void DriveOutputsSafeEarly();
+
   // sk_tx/sk_plugin: the two SkCommandIn instances owned by
   // main.cpp: Snapshot() -- see SAFETY.md drive invariant 6's mutex boundary --
   // must outlive this task. Creates and starts the pinned FreeRTOS task;
@@ -78,11 +100,6 @@ class ControlTask {
   // case.
   bool latestTelemetry(TelemetrySnapshot* out) const;
 
-  // For logging/telemetry. DrivePosition already has
-  // control_core::ToSkString() (drive_command.h) -- no need to duplicate
-  // that here, only ActiveSource lacks a string form.
-  static const char* SourceName(control_core::ActiveSource source);
-
   // Live-tunable calibration hooks for the web-UI ConfigItem callbacks.
   // Defaults to config::kServo*UsDefault until then (see control_task.cpp).
   void SetPortCalibration(const control_core::ServoCalibration& cal);
@@ -91,6 +108,8 @@ class ControlTask {
  private:
   static void TaskEntry(void* pv);
   [[noreturn]] void Run();
+  static void FailoffWatchdogTrampoline(void* arg);
+  void CheckFailoff();
 
   SkCommandIn* sk_tx_ = nullptr;
   SkCommandIn* sk_plugin_ = nullptr;
@@ -139,6 +158,13 @@ class ControlTask {
   control_core::RemoteSource last_tx_stbd_;
   control_core::RemoteSource last_plugin_port_;
   control_core::RemoteSource last_plugin_stbd_;
+
+  // Fail-off watchdog heartbeat: refreshed by Run() after every completed
+  // tick, read by the esp_timer callback on core 0. Plain 32-bit atomic -- no
+  // lock, because the watchdog has to work precisely when this task is wedged.
+  std::atomic<uint32_t> heartbeat_ms_{0};
+  esp_timer_handle_t failoff_timer_ = nullptr;
+  uint32_t last_failoff_log_ms_ = 0;
 
   TaskHandle_t task_handle_ = nullptr;
   SemaphoreHandle_t telemetry_mutex_ = nullptr;

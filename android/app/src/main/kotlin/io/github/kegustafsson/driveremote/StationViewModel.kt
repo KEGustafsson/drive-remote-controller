@@ -16,6 +16,7 @@ import io.github.kegustafsson.driveremote.core.ThrusterDirection
 import io.github.kegustafsson.driveremote.core.ThrusterMode
 import io.github.kegustafsson.driveremote.core.TokenHealth
 import io.github.kegustafsson.driveremote.core.deriveStationView
+import io.github.kegustafsson.driveremote.core.tokenRefusedNotice
 import io.github.kegustafsson.driveremote.net.IntentPoster
 import io.github.kegustafsson.driveremote.net.SkStream
 import io.github.kegustafsson.driveremote.settings.SettingsStore
@@ -96,6 +97,17 @@ data class UiState(
  * mystery. See [Stage.Starting].
  */
 private const val SettingsReadRevealMs = 1_000L
+
+/**
+ * How many heartbeat POSTs may be outstanding before a tick is skipped.
+ *
+ * A POST stalling all the way to its 1 s `callTimeout` overlaps four ticks, so
+ * three already outstanding means the server has effectively stopped answering.
+ * Bounded because a server in that state must not have this loop open a socket
+ * every 250 ms for as long as the operator stays on the control screen -- and
+ * the tick that is skipped carries nothing the outstanding sends do not.
+ */
+private const val MaxHeartbeatsInFlight = 3
 
 /**
  * Holds the station's command state and runs its two loops: the 250 ms intent
@@ -394,13 +406,16 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    * see or stop it. Disarming first is one tap and makes the state
    * unambiguous.
    *
-   * "Armed" here means armed IN A LIVE SESSION. Outside [Stage.Ready] the
-   * stream is closed, but the value store it was built from is deliberately
-   * never cleared, so `activeClient` can still name this station after a
-   * token revocation ended the session -- and the ticker keeps re-deriving
-   * `view.armed == true` from it. There is no session holding anything, and
-   * refusing there locked the operator on the access screen (which does not
-   * even show this refusal) with no way to pick another server.
+   * "Armed" here means armed IN A LIVE SESSION, and both halves of that are
+   * load-bearing. `view.armed` is derived from the arbiter's `activeClient`,
+   * which Signal K retains like any other path, so an ended session used to
+   * leave this station's own clientId standing in the store and the ticker kept
+   * re-deriving `view.armed == true` from it -- a refusal with nothing holding
+   * anything, which locked the operator on the access screen (where this notice
+   * is not even shown) with no way to pick another server. The store is now
+   * emptied when the session ends ([SkStream.close] calls the store's own
+   * `clear()`), so that value cannot outlive its session; the [Stage.Ready]
+   * test stays as the cheap second answer to the same question.
    */
   fun changeServer() {
     if (_uiState.value.stage == Stage.Ready && _uiState.value.view?.armed == true) {
@@ -422,19 +437,19 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
   }
 
   /**
-   * The server has stopped accepting our token -- withdrawn in the admin UI, or
-   * expired without having said when.
+   * The server has stopped accepting our token -- withdrawn in the admin UI,
+   * expired without having said when, or never granted read/write at all.
    *
    * Everything stops, the token is discarded, and the operator is returned to
    * the server screen to obtain a new one. Continuing to display a control
    * panel would be the failure mode SAFETY.md names directly: presenting a
    * station as live and commanding when the server has stopped listening to it.
+   *
+   * The wording is [tokenRefusedNotice]'s, because 403 and 401 need different
+   * remedies from the operator and only one of them is "request a new token".
    */
   private fun onTokenRejected(code: Int) =
-    endSession(
-      "${_uiState.value.server} rejected this device's access token (HTTP $code). It was most " +
-        "likely revoked or expired. Choose the server again to request a new one."
-    )
+    endSession(tokenRefusedNotice("${_uiState.value.server}", code))
 
   /**
    * The stored token has passed the expiry the server stated when it issued it.
@@ -506,7 +521,14 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     // eviction timeout during which the arbiter still believes we hold the arm.
     viewModelScope.launch {
       withContext(NonCancellable) {
-        if (address != null) {
+        // Only where there was authority to release, for the same reason
+        // onBackgrounded() is gated on Stage.Ready: teardown() also runs from the
+        // access-request screens, where `token` is null because none has been
+        // issued yet. There is nothing to let go of there, and the send would be
+        // a bare unauthenticated POST that the server answers 401 -- a rejection
+        // this station then has to reason about, arising from a session it never
+        // had.
+        if (address != null && token != null) {
           // ClientIntent.safe() rather than a hand-built tuple. This used to pass
           // the CURRENT thruster mode and trim, which in HOLD is not a safe
           // intent at all: HH follows the trimmed setpoint, not the direction, so
@@ -665,12 +687,48 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
 
   // ---- Loops -------------------------------------------------------------
 
+  /**
+   * The intent heartbeat: a FIXED 250 ms cadence, not send-then-wait.
+   *
+   * The cadence is a contract with the arbiter, which evicts a station whose
+   * last intent is older than [SkContract.SK_STALENESS_TIMEOUT_MS] -- one
+   * second, four periods. Sending inside the loop and then delaying made the
+   * real period 250 ms **plus** the round trip, so the margin was spent on the
+   * network rather than held in reserve: one POST answering in 800 ms leaves a
+   * 1050 ms gap and the arbiter evicts an armed station mid-manoeuvre, and a
+   * POST that stalls to its 1 s `callTimeout` -- slow, not lost -- guarantees
+   * it. So each tick is scheduled from the tick's own start and the send runs
+   * beside it rather than in front of it.
+   *
+   * Heartbeats deliberately do NOT take [intentMutex]. That lane exists so a
+   * press can never arrive after its own release, and it is presses that need
+   * it; a periodic refresh carries whatever the state is at the moment it is
+   * built, and ordering is already guaranteed by the sequence number claimed
+   * before any I/O -- an overtaken older heartbeat carries the lower seq and the
+   * arbiter discards it on `seq <= lastSeq`, exactly as the urgent path relies
+   * on. Holding the lane here is what let one slow POST delay the next tick.
+   *
+   * Pile-up is bounded instead: a dead server that answers nothing must not
+   * accumulate a socket every 250 ms, so a tick with [MaxHeartbeatsInFlight]
+   * already outstanding is skipped. Skipping costs nothing that matters -- the
+   * intent it would have sent is the same one the outstanding sends carry.
+   */
+  /**
+   * Heartbeat POSTs still on the wire, across every heartbeat loop this
+   * ViewModel has run. Touched only on the main dispatcher (viewModelScope is
+   * Dispatchers.Main.immediate, and a child's `finally` resumes there once its
+   * IO block returns, cancelled or not), so a plain Int is sufficient -- the
+   * same reasoning as nextSeq().
+   */
+  private var heartbeatsInFlight = 0
+
   private fun startHeartbeat() {
     if (heartbeatJob != null || !foreground) return
     heartbeatJob =
       viewModelScope.launch {
         while (isActive) {
-          // Checked before each send rather than only at startup: a session can
+          val tickStartedMs = SystemClock.elapsedRealtime()
+          // Checked before each tick rather than only at startup: a session can
           // outlast the expiry the server stated, and the moment it does this
           // station's authority is gone whether or not a request has been
           // refused yet.
@@ -678,9 +736,27 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
             onTokenExpired()
             return@launch
           }
-          val mySeq = nextSeq()
-          intentMutex.withLock { sendIntent(mySeq) }
-          delay(SkContract.PERIODIC_REFRESH_MS)
+          if (heartbeatsInFlight < MaxHeartbeatsInFlight) {
+            val mySeq = nextSeq()
+            heartbeatsInFlight += 1
+            // A child of this coroutine, so stopHeartbeat() cancels it too --
+            // but cancellation cannot interrupt a blocking OkHttp call already
+            // on the IO thread, so the child (and its `finally`) outlives the
+            // loop that launched it. That is why the counter is a field of the
+            // ViewModel and not a local of this loop: a loop restarted by
+            // onForegrounded() must still count the previous loop's stragglers,
+            // or the bound above is worth nothing across a lifecycle transition.
+            launch {
+              try {
+                sendIntent(mySeq)
+              } finally {
+                heartbeatsInFlight -= 1
+              }
+            }
+          }
+          // Measured from the tick's start, so the period is the period.
+          val elapsed = SystemClock.elapsedRealtime() - tickStartedMs
+          delay((SkContract.PERIODIC_REFRESH_MS - elapsed).coerceAtLeast(0L))
         }
       }
   }
@@ -863,5 +939,14 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     stopHeartbeat()
     tickerJob?.cancel()
     stream.close()
+    // This ViewModel BUILT the client and nothing outside it holds one -- the
+    // stream, the intent poster and the access-request client are all handed
+    // this instance and all die with it. Its dispatcher threads and pooled
+    // connections do not: OkHttp keeps idle threads for a minute and sockets in
+    // the pool for five, which on a station that is opened and closed repeatedly
+    // is a leak in everything but name. `shutdown()` rather than
+    // `shutdownNow()`, so a release POST already on the wire still lands.
+    httpClient.dispatcher.executorService.shutdown()
+    httpClient.connectionPool.evictAll()
   }
 }

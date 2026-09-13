@@ -7,42 +7,31 @@
 #include "heading/angle_math.h"  // control_core::WrapDeg180
 #include "config.h"
 #include "sensesp/system/lambda_consumer.h"
-
-namespace {
-
-// MEASUREMENTS.md Item 3: the UM982's Signal K plugin (signalk-um982-plugin,
-// uniheadingAParser) already judges RTK quality at the source -- it sets
-// navigation.headingTrue to JSON null whenever solutionStatus != SOL_COMPUTED
-// or positionType == NONE, rather than publishing an untrustworthy heading.
-// SKValueListener<float>'s default parse_value does json["value"].as<float>(),
-// and ArduinoJson coerces a null JsonVariant to 0.0f -- silently turning the
-// plugin's explicit "don't trust this" into a fake, VALID 0-degree heading
-// that would then be treated as fresh and (on the first fix) seeded directly
-// into HeadingFilter. Override parse_value to drop null deltas instead of
-// emitting a bogus 0.
-class HeadingTrueListener : public sensesp::SKValueListener<float> {
- public:
-  using sensesp::SKValueListener<float>::SKValueListener;
-
-  void parse_value(const JsonObject& json) override {
-    auto value = json["value"];
-    if (value.isNull()) {
-      return;
-    }
-    this->emit(value.as<float>());
-  }
-};
-
-}  // namespace
+#include "strict_sk_listeners.h"
 
 void SkHeadingIn::begin() {
   mutex_ = xSemaphoreCreateMutex();
 
-  listener_ = std::make_shared<HeadingTrueListener>(
+  // StrictFloatListener, not the stock SKValueListener<float>: its default
+  // parse_value does json["value"].as<float>(), and ArduinoJson COERCES --
+  // null becomes 0.0f, a string becomes 0.0f, `true` becomes 1.0f. All three
+  // then arrive as a perfectly plausible, VALID heading (0 rad is due north)
+  // that is treated as fresh and, on the first fix, seeded straight into
+  // HeadingFilter.
+  //
+  // The null case is not hypothetical: MEASUREMENTS.md Item 3 -- the UM982's
+  // Signal K plugin (signalk-um982-plugin, uniheadingAParser) judges RTK
+  // quality at the source and publishes navigation.headingTrue as JSON null
+  // whenever solutionStatus != SOL_COMPUTED or positionType == NONE, rather
+  // than publishing an untrustworthy heading. Coercion turns that explicit
+  // "do not trust this" into a confident 0. Non-numeric deltas are dropped
+  // instead; the heading then simply ages out and the arm gate refuses.
+  // See include/strict_sk_listeners.h.
+  listener_ = std::make_shared<StrictFloatListener>(
       config::kSkHeadingTruePath, config::kSkHeadingListenDelayMs);
   // Signal K serves navigation.headingTrue in RADIANS (per the SK spec).
-  // The pure control core works in DEGREES throughout (CLAUDE.md coding
-  // convention: convert to radians only at the SK boundary). This inbound
+  // The pure control core works in DEGREES throughout (ARCHITECTURE.md §7:
+  // convert to radians only at the SK boundary). This inbound
   // WS callback IS that boundary -- convert rad->deg here and wrap to the
   // canonical (-180, 180]. Skipping this made the fused heading track the
   // radian number (~1.5 "deg") instead of the real ~86 deg -- caught once

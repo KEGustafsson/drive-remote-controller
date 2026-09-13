@@ -5,6 +5,8 @@ import { StatusPanel } from './components/StatusPanel';
 import { ThrusterControl } from './components/ThrusterControl';
 import {
   PERIODIC_REFRESH_MS,
+  SK_HH_ARMED_PATH,
+  SK_HH_MODE_PATH,
   SK_HH_REVERSAL_PENDING_PATH,
   SK_HH_SETPOINT_PATH,
   SK_HH_SOURCE_PATH,
@@ -189,6 +191,18 @@ export function App({
   const heldRaw = values[SK_HH_SETPOINT_PATH];
   const heldDeg = isPlausibleHeading(heldRaw) ? heldRaw : null;
 
+  // Is HH ACTUALLY holding, by its own report? Never a local guess: HH mirrors
+  // hh.setpointDeg to the fused heading whenever it is not holding
+  // (ARCHITECTURE.md §9), so the number alone reads the same either way and
+  // may not be labelled "holding" unconditionally. hh.armed + hh.mode is the
+  // pair that distinguishes "holding this" from "would hold this" -- and both
+  // are VALUES, which Signal K retains forever, so the liveness check is what
+  // stops a switched-off HH from reporting a hold it can no longer be running.
+  const holdEngaged =
+    values[SK_HH_ARMED_PATH] === true &&
+    values[SK_HH_MODE_PATH] === 'hold' &&
+    rxReadyToArm(hhLiveness);
+
   // The intent payload minus `seq` (which is stamped at send time so every
   // heartbeat is a distinct message).
   const intentBody = useMemo(
@@ -238,17 +252,30 @@ export function App({
   const seqRef = useRef(0);
   const bodyRef = useRef(intentBody);
   bodyRef.current = intentBody;
+  // EVERY POST still waiting for an answer. Tracked so the heartbeat can
+  // COALESCE -- see sendHeartbeat below. A set rather than the latest promise:
+  // an operator action sends regardless of what is in flight, and if that
+  // newer request settles while an older one is still hanging, remembering
+  // only the newest would read as "nothing pending" and let the heartbeat
+  // rebuild exactly the backlog this exists to prevent.
+  const inFlightRef = useRef(new Set<Promise<void>>());
   const sendIntent = useCallback(() => {
     seqRef.current += 1;
     const intent: ClientIntent = { seq: seqRef.current, ...bodyRef.current };
-    postIntent(intent).then(
+    const settled = postIntent(intent).then(
       () => reportIntentStatus('ok'),
       (err: unknown) => reportIntentStatus(classifyIntentFailure(err)),
     );
+    inFlightRef.current.add(settled);
+    void settled.finally(() => {
+      inFlightRef.current.delete(settled);
+    });
   }, [postIntent, reportIntentStatus]);
 
   // Send the instant anything changes -- no polling delay (SAFETY.md drive
-  // invariant 2: react as fast as the loop runs).
+  // invariant 2: react as fast as the loop runs). Deliberately NOT coalesced:
+  // a change is an operator action (a contact pressed, STOP tapped) and must go
+  // out now, whatever is still in flight.
   useEffect(() => {
     sendIntent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -258,10 +285,25 @@ export function App({
   // cadence -- keeps the arbiter's per-client liveness fresh during a long
   // steady press. Stable interval (fed via refs) so rapid taps don't tear it
   // down and rebuild it.
-  useEffect(() => {
-    const id = setInterval(sendIntent, PERIODIC_REFRESH_MS);
-    return () => clearInterval(id);
+  //
+  // NO HEARTBEAT WHILE ANYTHING IS IN FLIGHT. The tick used to fire a fetch every
+  // 250 ms regardless, so a server answering slowly (or not at all -- the
+  // 2000 ms abort is the only backstop) stacked up to eight requests, past the
+  // browser's per-host connection limit. An urgent STOP then queued BEHIND
+  // heartbeats whose content was already obsolete, which is the one thing this
+  // transport must never do. Skipping a tick costs nothing: the skipped
+  // heartbeat carried the same body as the one already on the wire, and the
+  // arbiter reads liveness from arrivals, so it either hears the in-flight
+  // request or evicts us and fails safe -- exactly what it should do while the
+  // link is that sick.
+  const sendHeartbeat = useCallback(() => {
+    if (inFlightRef.current.size !== 0) return;
+    sendIntent();
   }, [sendIntent]);
+  useEffect(() => {
+    const id = setInterval(sendHeartbeat, PERIODIC_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [sendHeartbeat]);
 
   // Arm-first, then trim: force the trim back to 0 whenever the thruster is not
   // commandable (disarmed, offline, or HH not live). Arming therefore always
@@ -381,6 +423,9 @@ export function App({
         // the thruster right now, and only the first is fixed by arming --
         // see the prop's doc.
         holdsControl={armed}
+        // What HH itself says, not what this app asked for -- the heading is
+        // only labelled "holding" when the unit reports the hold is running.
+        holdEngaged={holdEngaged}
         overriddenBy={thrusterOverride}
         reversalPending={values[SK_HH_REVERSAL_PENDING_PATH] === true}
       />

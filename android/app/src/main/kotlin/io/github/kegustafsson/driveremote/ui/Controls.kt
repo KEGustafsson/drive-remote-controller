@@ -461,7 +461,22 @@ fun ThrusterControl(
           color = if (enabled) DriveColors.ink else DriveColors.inkMuted,
         )
         Text(
-          if (enabled) "°  HOLDING · TRIM ${formatTrim(trimDeg)}°" else "°  CURRENT HEADING",
+          // "HOLDING" is HH's word, never this station's guess. `enabled` says
+          // only that WE could command the thruster -- token held, socket up, HH
+          // answering -- and none of that means the unit engaged. It may have
+          // refused the heading, faulted, had the thruster taken by its own
+          // ENGAGE input, or be refusing a station whose disarm it has not seen
+          // yet; in every one of those the number above is the same live
+          // plausible heading, because HH mirrors its setpoint to the fused
+          // heading whenever it is NOT holding (ARCHITECTURE.md §9). So the word
+          // comes from view.holdEngaged -- hh.armed + hh.mode, the pair §9 names
+          // -- and until the unit agrees this says what is actually known: the
+          // hold has been REQUESTED.
+          when {
+            enabled && view.holdEngaged -> "°  HOLDING · TRIM ${formatTrim(trimDeg)}°"
+            enabled -> "°  HOLD REQUESTED · UNIT NOT HOLDING"
+            else -> "°  CURRENT HEADING"
+          },
           fontSize = helm.text(13.sp),
           color = DriveColors.inkMuted,
           modifier = Modifier.padding(start = helm.size(6.dp)),
@@ -506,6 +521,19 @@ fun ThrusterControl(
         else "HOLD selected — starts holding when you arm",
         fontSize = helm.text(12.sp),
         color = DriveColors.inkMuted,
+        modifier = Modifier.padding(top = helm.size(6.dp)),
+      )
+    }
+
+    // Armed, in HOLD, and HH has not said it engaged. The caption above names
+    // the state; this names what is being waited for, in the same shape as the
+    // reversal note below -- the operator's move in both cases is to wait, and a
+    // panel that says only "not holding" invites them to go looking for a fault.
+    if (mode == ThrusterMode.HOLD && enabled && !view.holdEngaged) {
+      Text(
+        "hold requested — waiting for the thruster unit to engage",
+        fontSize = helm.text(12.sp),
+        color = DriveColors.warn,
         modifier = Modifier.padding(top = helm.size(6.dp)),
       )
     }

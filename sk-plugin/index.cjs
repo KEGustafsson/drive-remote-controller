@@ -32,7 +32,7 @@
 
 'use strict';
 
-const { ArmArbiter } = require('./arbiter.cjs');
+const { ArmArbiter, isWellFormedIntent } = require('./arbiter.cjs');
 const { SuspendAwareClock } = require('./suspendClock.cjs');
 
 // ---- SK path contract (mirror of src/config.ts and include/config.h) ----
@@ -190,11 +190,16 @@ module.exports = function (app) {
     const missing = [];
     if (!s.rxLive) missing.push('drive unit');
     if (!s.hhLive) missing.push('thruster unit');
+    // "in HOLD", not "holding heading": this is the mode the arbiter PUBLISHED,
+    // and the server never reads hh.armed, so it has no way to know whether HH
+    // actually engaged (ARCHITECTURE.md §9 -- "holding this" vs "would hold
+    // this" takes hh.armed + hh.mode). Naming the request rather than the
+    // outcome keeps the status line true when HH is faulted or absent.
     const next = s.enabled
       ? `ARMED by ${s.activeClient} — drives ${s.port}/${s.stbd}` +
         (s.thrusterMode === 'manual'
           ? `, thruster ${s.thruster}`
-          : `, thruster holding heading`) +
+          : `, thruster in HOLD`) +
         (missing.length ? ` (${missing.join(' + ')} not responding)` : '')
       : missing.length === 2
         ? 'Disarmed — neither unit responding; arming is blocked.'
@@ -278,7 +283,10 @@ module.exports = function (app) {
     registerWithRouter: function (router) {
       // The body IS the intent object {clientId, seq, armReq, disarmReq,
       // port, stbd, thruster, thrusterMode, trimDeg}; the arbiter validates it
-      // (bad/blank clientId, garbage positions, etc. are handled there).
+      // (garbage positions, modes and trims are screened field by field there).
+      // A body that is not an intent AT ALL is answered 400 below -- the one
+      // thing the arbiter cannot report back through its "state changed"
+      // return value.
       // Fire-and-forget: a station learns who holds the token from the
       // `activeClient` SK path it already subscribes to, so we only need to
       // acknowledge receipt here.
@@ -304,6 +312,22 @@ module.exports = function (app) {
         // this makes it safe by construction.
         if (!running) {
           res.status(503).json({ ok: false, error: 'plugin not running' });
+          return;
+        }
+        // A BODY THE ARBITER CANNOT READ IS NOT AN ACCEPTED COMMAND. onIntent
+        // reports "the published state changed", so a body that is not an
+        // object, or whose clientId is missing, blank or oversized, looks
+        // exactly like a heartbeat that changed nothing -- and used to be
+        // answered 200 {ok:true}. A station would then show its commands as
+        // reaching the boat while every packet it sent was being dropped, which
+        // is the false-confidence failure this project refuses everywhere else.
+        //
+        // Only the STRUCTURAL verdict earns a 400. Ordering and session
+        // discards keep their 200: a replayed or superseded packet is a
+        // legitimate consequence of a lossy LAN, not a client that is speaking
+        // the wrong protocol, and there is nothing for the station to fix.
+        if (!isWellFormedIntent(req.body)) {
+          res.status(400).json({ ok: false, error: 'malformed intent' });
           return;
         }
         if (arbiter.onIntent(req.body, runtimeNowMs())) {

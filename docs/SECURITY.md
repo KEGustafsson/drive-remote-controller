@@ -87,22 +87,24 @@ thruster contactor.** It is one static shared secret, the same on all three unit
 no rate limiting and no second factor. Anyone on the boat's LAN who has it can put
 arbitrary firmware on a unit wired to machinery.
 
-**The firmware is not signed, and the boards have no secure boot.** A release now signs
-the Android APK with a release key, attaches a SHA-256 and a CycloneDX SBOM to every
-artifact, and signs a build-provenance attestation over the set
-([BUILDING.md §10](BUILDING.md#10-releases)). None of that reaches the firmware images
-themselves: an ESP32 here will run whatever is flashed to it, and the only thing gating a
-flash is the OTA password above. Signed firmware and secure boot would be the fix, and
-neither exists.
+**The firmware is not signed, and the boards have no secure boot.** A release signs the
+Android APK with a release key, attaches a SHA-256 and a CycloneDX SBOM, and attempts a
+build-provenance attestation over the set — attempts, because attestations need a public
+repository or an organisation plan, and the release publishes without one when the step
+fails, saying so in its notes ([BUILDING.md §10](BUILDING.md#10-releases)).
+The firmware is not released at all: an ESP32 here runs whatever is flashed to it from a
+working tree, and the only thing gating a flash is the OTA password above. Signed
+firmware and secure boot would be the fix, and neither exists.
 
 **One dependency is tracked by a moving branch ref.** All three firmwares build against
 `KEGustafsson/SensESP#fix_analog_input`, which can change under any build with no diff in
 this repository. A build is therefore not reproducible from `platformio.ini` alone, and a
 compromise of that branch reaches a board at the next flash. `ESP32Servo` is pinned to an
-exact commit; SensESP deliberately is not. Each release's firmware SBOM records the
-versions that were actually resolved, which is the only place a given binary's
-dependencies are written down — but nothing watches that branch between releases, because
-Dependabot has no PlatformIO ecosystem.
+exact commit; SensESP deliberately is not. `esp32/scripts/sbom.py` can record the
+versions a build actually resolved, and since firmware is no longer released nothing
+does so automatically: a flashed binary's dependencies are written down only if the
+person flashing it runs that script — and nothing watches the branch between builds,
+because Dependabot has no PlatformIO ecosystem.
 
 **The Gradle build has no dependency verification.** There is no
 `gradle/verification-metadata.xml`, so a dependency update is accepted on the strength of
@@ -127,10 +129,11 @@ found **all five** values in it — the OTA password, both WiFi passwords and bo
 and again in the merged factory image. That is what a binary you build yourself still
 looks like; it is only the *published* ones that are built from the template.
 
-The release pipeline builds from `secrets.example.h` and then verifies the result:
-`esp32/scripts/check_no_secrets.py` reads the real values out of git and fails the release
-if any appears in a published image. **A binary built by hand and passed to somebody has
-had no such check.**
+No firmware is published, so today no image leaves this repository through any
+pipeline. `esp32/scripts/check_no_secrets.py` is the guard that would refuse one carrying
+a committed credential, and CI self-tests it on every push so it is ready the day firmware
+is released again. **A binary built by hand and passed to somebody has had no such
+check.**
 
 **Most of this has never run on a boat.** As of 2026-07-26 the drive and heading-hold
 units have run on the bench and the Android station has commanded both machines against
@@ -187,14 +190,14 @@ commands machinery, so this is where the system stands against each. Rows are ma
 | (1) Appropriate level of cybersecurity based on the risks | **Yes.** Threat model in §2; the risk is authority over machinery on a shared LAN, not data disclosure. Every safety decision lives in a pure, host-tested core reproduced in three languages with shared test vectors. |
 | (2)(a) No known exploitable vulnerabilities at release | **Partial.** Dependabot proposes grouped weekly updates for Gradle, npm and the Actions, and is live. CodeQL is configured for five languages — including the firmware's pure control core, through its native build — and verified to analyse, but **is switched off**: code scanning has not been enabled on the repository, so its jobs are gated behind a repository variable and a status job reports that on every run. It is free to enable now that the repository is public. Two further gaps are structural: no scanning follows the firmware's branch-tracked SensESP dependency, and there is no Gradle dependency verification. |
 | (2)(b) Secure by default configuration | **Yes.** The plugin installs **disabled**; no station comes armed; arming is edge-triggered and requires a live unit; the drive unit refuses control unless both levers are proven neutral; the app opens in MANUAL with trim 0. Every default is the inert one. |
-| (2)(c) Security updates | **Partial.** There is now a release channel: a manually triggered pipeline builds every artifact, signs the APK, and publishes it with a checksum, an SBOM and a provenance attestation. The firmware half is still weak — OTA is manual, the image is unsigned, the boards have no secure boot, and one shared static password authorises a flash. There is no automatic update anywhere, by design: nothing here calls out to a server. |
+| (2)(c) Security updates | **Partial.** There is a release channel for the Android station: a manually triggered pipeline builds and signs the APK and publishes it with a checksum, an SBOM and, when the repository is entitled to one, a provenance attestation (the release notes say when it is not). The firmware and the plugin are not released at all, and the firmware half is still weak — OTA is manual, the image is unsigned, the boards have no secure boot, and one shared static password authorises a flash. There is no automatic update anywhere, by design: nothing here calls out to a server. |
 | (2)(d) Protection from unauthorised access | **Partial.** Commanding requires authentication through `signalk-server`, and the intent route is registered at `readwrite` so it admits token stations rather than only admin sessions. It rests entirely on server security being enabled (§4), and on an OTA password that is a single static secret shared by all three units, the boat's WiFi and a sibling project. |
 | (2)(e) Confidentiality of data | **Partial.** Tokens at rest are encrypted with AES-256-GCM under an Android Keystore key, with cloud backup disabled, and the Android station refuses cleartext off private networks. Encryption failing drops the write rather than storing plaintext, and that is counted rather than silent. On the boat's own LAN everything is plain HTTP by construction. |
 | (2)(f) Integrity of data, commands and configuration | **Yes, at the application layer.** Per-client monotonic `seq`, monotonic-clamped arm/disarm edge baselines, strict validation at every boundary with unrecognised values degrading to the safe one, and a single server-side authority as the sole intended writer of the command paths. No transport-layer integrity: the LAN is cleartext, so this is replay and ordering resistance, not authentication of the wire. |
 | (2)(g) Data minimisation | **Yes.** The system carries switch positions, commands, headings and liveness. Nothing is recorded, nothing is stored beyond each station's own settings and token, and nothing leaves the boat. |
 | (2)(h) Availability of essential functions, resilience to DoS | **Yes, and it is the design centre.** Every unit falls to neutral or off on loss of link, liveness is arrival-based so a silent unit is detected rather than assumed live, the arm token auto-releases when its holder stops heart-beating, the arbiter bounds tracked clients at 32, and the disarm path is never gated on anything — including on the health of the transport that carries the telemetry. |
 | (2)(i) Minimising impact on other services | **Yes.** Small periodic messages at 250 ms on the boat's own LAN, one WebSocket subscription per station, mDNS discovery that is optional by design because boat access points not uncommonly block multicast. |
-| (2)(j) Limited attack surface | **Yes.** No cloud service, no account, no inbound service on any unit beyond what SensESP's configuration portal and OTA expose, three plain permissions on the Android app (`INTERNET`, `ACCESS_NETWORK_STATE`, `CHANGE_WIFI_MULTICAST_STATE`), and no third-party networking, crypto or analytics libraries in the app beyond AndroidX, Compose and OkHttp. |
+| (2)(j) Limited attack surface | **Yes.** No cloud service, no account, no inbound service on any unit beyond what SensESP's configuration portal and OTA expose, two plain permissions on the Android app (`INTERNET`, `CHANGE_WIFI_MULTICAST_STATE`), and no third-party networking, crypto or analytics libraries in the app beyond AndroidX, Compose and OkHttp. |
 | (2)(k) Reduced impact of incidents | **Partial.** A compromised token is revoked in the Signal K admin UI and the station returns to asking for authorisation. A compromised OTA or WiFi password requires rotating and reflashing every board (BUILDING.md §8). Underneath both, the local controls and each unit's fail-safes are unaffected by anything on the network. |
 | (2)(l) Security-relevant logging | **Partial.** Each unit logs to serial and over `/api/log`; the stations display link, authority and per-unit liveness, and the arbiter's verdicts are published as `plugin.activeClient`, `plugin.rxLive` and `plugin.hhLive`. Nothing is retained, and there is no audit record of who armed when. |
 | (2)(m) Secure deletion | **Yes.** Uninstalling the app removes its private storage including the encrypted token; a unit's stored configuration is erased by reflashing. |
@@ -203,7 +206,7 @@ commands machinery, so this is where the system stands against each. Rows are ma
 
 | Requirement | Status |
 |---|---|
-| (1) Identify and document components (SBOM) | **Yes.** Every release carries a CycloneDX 1.5 SBOM per artifact: the Android classpath with a SHA-256 per component, the plugin's whole npm tree, and each firmware's resolved PlatformIO packages. The firmware SBOM is the only record of what a branch-tracked dependency resolved to for that build. |
+| (1) Identify and document components (SBOM) | **Partial.** Every release carries a CycloneDX 1.5 SBOM for the Android classpath, with a SHA-256 per component. The plugin and the firmwares are not released; `esp32/scripts/sbom.py` can produce a firmware SBOM by hand, and that is the only record of what the branch-tracked SensESP dependency resolved to for a given build. |
 | (2) Address vulnerabilities without delay | Fixes land on `main` through CI; deployment is a manual OTA or a manual plugin reinstall. |
 | (3) Regular testing and review | CI runs the three pure suites, the three firmware builds with a size report, the plugin's full suite and the Android layout floors on every push and pull request. CodeQL would add `security-and-quality` over C++, Kotlin, TypeScript, Python and the workflows, but cannot upload findings until code scanning is enabled on the repository. |
 | (4) Public disclosure of fixed vulnerabilities | Would be through the repository's advisories; nothing has been published. |

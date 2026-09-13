@@ -1,6 +1,5 @@
 package io.github.kegustafsson.driveremote.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -13,8 +12,10 @@ import androidx.compose.ui.graphics.Color
  * Deliberately a single high-contrast dark theme rather than following the
  * system light/dark setting: this is a helm display used in bright sun and at
  * night, and the colours carry meaning (forward/reverse, good/warn/bad) that a
- * light variant would have to re-derive. [isSystemInDarkTheme] is therefore not
- * consulted at all -- that is a decision, not an omission.
+ * light variant would have to re-derive.
+ * [androidx.compose.foundation.isSystemInDarkTheme] is therefore not consulted
+ * at all -- that is a decision, not an omission. Named in full here because it
+ * is only mentioned: importing it would look like a caller.
  */
 object DriveColors {
   val surface = Color(0xFF0B0B0B)

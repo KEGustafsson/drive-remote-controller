@@ -161,18 +161,21 @@ android {
 
   buildTypes {
     release {
-      // R8 shrinks and obfuscates the release build: 8,239,654 -> 1,947,599
-      // bytes, a 76% reduction. It was OFF here until 2026-09-10, on the
-      // argument that shrinking an unverified codebase adds a failure mode that
-      // only appears on a boat. What changed is that it stopped being
-      // unverified: the shrunk APK was fresh-installed on a phone, granted a
-      // new Signal K access request, armed against the live server and used to
-      // command a drive and the thruster. See docs/BUILDING.md section 6.3.1.
+      // R8 shrinks and obfuscates the release build: 8,239,654 -> 2,470,571
+      // bytes, 70% smaller, with 863 entries kept. It was OFF here until
+      // 2026-09-10, on the argument that shrinking an unverified codebase adds a
+      // failure mode that only appears on a boat. What changed is that it
+      // stopped being unverified: the shrunk APK was fresh-installed on a phone,
+      // granted a new Signal K access request, armed against the live server and
+      // used to command a drive and the thruster. See docs/BUILDING.md 6.3.1.
       //
-      // The specific risk that test cleared is in proguard-rules.pro: Tink,
-      // behind EncryptedSharedPreferences, is where the stored token lives, and
-      // a key manager stripped by R8 reads as a server-side auth failure rather
-      // than as a build problem.
+      // The path that test cleared is the stored token: a shrinker that broke it
+      // would read as a server-side auth failure rather than as a build problem.
+      // Nothing is kept by hand for it any more -- proguard-rules.pro carries no
+      // rules at all, only the note explaining why, since the token store moved
+      // to the platform's own Keystore AES-GCM and reflects on nothing. The file
+      // must still EXIST: a config naming a rules file that is not there fails
+      // deep inside R8.
       //
       // Still not covered: :app:testDebugUnitTest measures the DEBUG variant, so
       // the layout floors -- a safety property on the control screen -- never see
@@ -217,7 +220,6 @@ android {
 dependencies {
   implementation(project(":core"))
 
-  implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.runtime.compose)
@@ -230,8 +232,6 @@ dependencies {
   implementation(libs.compose.ui)
   implementation(libs.compose.foundation)
   implementation(libs.compose.material3)
-  implementation(libs.compose.ui.tooling.preview)
-  debugImplementation(libs.compose.ui.tooling)
 
   testImplementation(libs.junit.jupiter)
   testRuntimeOnly(libs.junit.platform.launcher)

@@ -134,6 +134,37 @@ class TokenHealthTest {
     }
   }
 
+  /**
+   * A read-only token is a DIFFERENT failure from a revoked one, and the notice
+   * is the only place the operator can learn which they have. Told to request a
+   * new token, the operator of a read-only one approves the new request exactly
+   * as they approved the last, and arrives back at the same 403.
+   */
+  @Test
+  fun `a 403 says the token lacks write permission, not that it was revoked`() {
+    val notice = tokenRefusedNotice("boat.local:3000", 403)
+
+    assertTrue(notice.contains("boat.local:3000"), "the operator must be told which server")
+    assertTrue(notice.contains("403"))
+    assertTrue(
+      notice.contains("READ/WRITE"),
+      "the remedy is the PERMISSION on the next approval; without it the operator loops",
+    )
+    assertFalse(
+      notice.contains("revoked"),
+      "a read-only token was not revoked, and saying so sends the operator round again",
+    )
+  }
+
+  @Test
+  fun `a 401 still reads as a revoked or expired token`() {
+    val notice = tokenRefusedNotice("boat.local:3000", 401)
+
+    assertTrue(notice.contains("401"))
+    assertTrue(notice.contains("revoked or expired"))
+    assertFalse(notice.contains("READ/WRITE"))
+  }
+
   @Test
   fun `the verdict lands within a second at the heartbeat rate`() {
     // Sequencing lives in the ViewModel, but the constant that decides how long

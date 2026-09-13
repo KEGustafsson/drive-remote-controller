@@ -34,20 +34,10 @@ name: Release
 # to the `on:` block below. Nothing else needs changing: `publish` is guarded on
 # `!inputs.dry_run`, and on a push trigger `inputs.dry_run` is null, so it runs.
 #
-# THE FIRMWARE IS BUILT FROM secrets.example.h. `secrets.h` is not tracked in
-# this repository, so a checkout carries no real WiFi or OTA password -- the
-# mains fall back to the template when the file is absent. That absence is
-# asserted rather than assumed: the build job fails if a secrets.h somehow
-# reaches the runner, because every value in one is compiled into the binary by
-# set_wifi_clients() and enable_ota(), and a published .bin built from it would
-# hand out the password that authorises reflashing a board wired to machinery.
-#
-# No real credential is committed any more: platformio.ini used to carry the OTA
-# password a second time as `upload_flags = --auth=...`, and scripts/ota_auth.py
-# now injects it from the untracked secrets.h at upload time instead. So the
-# absence check above is the guarantee, and check_no_secrets.py is the backstop:
-# it searches each image for whatever credentials the committed tree does hold,
-# which is currently none, and goes red the day that stops being true.
+# NO FIRMWARE CREDENTIAL CAN REACH THIS WORKFLOW. The firmware guards -- asserting that no
+# secrets.h reached the runner, and check_no_secrets.py searching each image --
+# left with the firmware jobs; ci.yml still self-tests the guard on every push
+# so it is ready the day firmware is published again (docs/BUILDING.md 10).
 #
 # Secrets used, all on the `android` job only:
 #   DRIVEREMOTE_KEYSTORE_BASE64    the release .keystore, base64
@@ -59,8 +49,8 @@ name: Release
 #                                  hex without colons, checked before publishing
 # Without them the job fails; it never publishes an unsigned APK.
 #
-# Jobs are split so that no job holds both a secret and a write token: the three
-# build jobs have read-only tokens, `attest` can only sign attestations, and
+# Jobs are split so that no job holds both a secret and a write token: the
+# build job has a read-only token, `attest` can only sign attestations, and
 # `publish` has the only `contents: write` token and runs no repository code at
 # all -- no checkout, no Gradle, no npm, no PlatformIO.
 #

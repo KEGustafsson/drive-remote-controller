@@ -108,7 +108,43 @@ class ThrusterModeSelectionTest {
     compose.showControlScreen(mode = ThrusterMode.HOLD, view = holding)
 
     compose.onNodeWithText("96", substring = true).assertExists()
-    compose.onNodeWithText("HOLDING", substring = true).assertExists()
+    compose.onNodeWithText(EngagedCaption, substring = true).assertExists()
+  }
+
+  /**
+   * The caption is HH's report, not this station's request.
+   *
+   * HH mirrors `hh.setpointDeg` to the fused heading in every state except
+   * holding, so 96 is on screen either way -- the word beside it is the only
+   * thing that can tell the operator whether anything is holding it. Before
+   * this, "HOLDING" appeared as soon as this station could command the thruster,
+   * which is true while HH has refused the hold, faulted, been taken by its own
+   * ENGAGE input, or is waiting to see a returning station disarm.
+   */
+  @Test
+  fun `a hold this station only asked for is not labelled as holding`() {
+    compose.showControlScreen(mode = ThrusterMode.HOLD, view = holdRequested)
+
+    compose.onNodeWithText("96", substring = true).assertExists()
+    compose.onNodeWithText("HOLD REQUESTED · UNIT NOT HOLDING", substring = true).assertExists()
+    // The engaged caption, not the bare word: "UNIT NOT HOLDING" contains
+    // "HOLDING", so only the whole phrase can tell the two readings apart.
+    compose.onAllNodesWithText(EngagedCaption, substring = true).fetchSemanticsNodes().let {
+      assertEquals("the panel claimed a hold HH has not reported", 0, it.size)
+    }
+    compose.onNodeWithText(WaitingNote).assertExists()
+  }
+
+  /** And the reverse: with the unit reporting the hold, nothing says "requested". */
+  @Test
+  fun `once HH reports the hold, the panel stops saying it was requested`() {
+    compose.showControlScreen(mode = ThrusterMode.HOLD, view = holding)
+
+    compose.onNodeWithText(EngagedCaption, substring = true).assertExists()
+    compose.onAllNodesWithText("HOLD REQUESTED", substring = true).fetchSemanticsNodes().let {
+      assertEquals("a running hold must not still read as requested", 0, it.size)
+    }
+    compose.onNodeWithText(WaitingNote).assertDoesNotExist()
   }
 
   /**
@@ -212,6 +248,16 @@ class ThrusterModeSelectionTest {
   }
 }
 
+/**
+ * The caption shown only when HH reports the hold running, with this suite's
+ * trim of 0. Written out rather than built from the composable's string so a
+ * reworded panel fails here rather than silently passing.
+ */
+private const val EngagedCaption = "HOLDING · TRIM 0°"
+
+/** The note that names what is being waited for while HH has not engaged. */
+private const val WaitingNote = "hold requested — waiting for the thruster unit to engage"
+
 /** Same reference device as LayoutFloorsTest: a Galaxy S25, 360 x 780 dp. */
 private const val ModeReferencePhone = "w360dp-h780dp-xxhdpi"
 
@@ -277,15 +323,34 @@ private val disarmed =
     rxLinkOk = true,
     rxMasterEnable = true,
     hhArmed = false,
+    // What HH reports about ITSELF. Disarmed and in manual, so nothing is being
+    // held -- which is why the setpoint above is a mirror of the fused heading.
+    hhMode = "manual",
     thrusterState = "off",
   )
 
-/** The same station, but armed and commanding the thruster. */
+/**
+ * Armed and commanding the thruster, with HH reporting the hold RUNNING.
+ *
+ * `hhArmed` + `hhMode` is the pair that makes this the holding station rather
+ * than merely the station that asked (ARCHITECTURE.md §9, StationView
+ * .holdEngaged). Without them this fixture was "armed and hoping".
+ */
 private val holding =
   disarmed.copy(
     controlState = ControlState.YOU,
     thrusterCommandable = true,
+    hhArmed = true,
+    hhMode = "hold",
   )
+
+/**
+ * The same station, with the hold asked for and HH not holding it: refused on an
+ * untrustworthy heading, faulted, taken by its own ENGAGE input, or -- since the
+ * firmware refuses a hold a returning station would re-engage -- waiting to see
+ * this station disarm. The heading readout is identical in all of them.
+ */
+private val holdRequested = holding.copy(hhArmed = false)
 
 /** Holding the token, but the thruster unit has stopped answering. */
 private val armedWithoutThruster =

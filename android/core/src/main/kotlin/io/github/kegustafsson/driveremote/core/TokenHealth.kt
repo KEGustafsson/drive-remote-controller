@@ -90,3 +90,32 @@ data class TokenHealth(
     val REJECTIONS_BEFORE_DEAD: Int = AuthScheme.TRY_ORDER.size + 1
   }
 }
+
+/**
+ * What to tell the operator when [server] has finished refusing this station's
+ * token, and what to do about it.
+ *
+ * **401 and 403 are not the same failure and must not read as the same one.**
+ * A 401 is a token the server no longer knows: revoked in the admin UI, or
+ * expired without having said when. A 403 is a token it knows perfectly well
+ * and will not let write -- the plugin's intent route is registered
+ * `readwrite`, so a request approved at READ-ONLY is refused on every single
+ * intent this station will ever send.
+ *
+ * Told "most likely revoked or expired", the operator of a read-only token does
+ * the reasonable thing: requests access again, approves it the same way, and
+ * arrives back here. The loop closes and nothing in it says which step was
+ * wrong. The token is discarded in both cases -- permission is decided when the
+ * request is approved, so a fresh request really is the remedy -- but the
+ * approval is where this one has to be done differently, and that is the part
+ * worth spending words on.
+ */
+fun tokenRefusedNotice(server: String, code: Int): String =
+  if (code == 403) {
+    "$server accepted this device's access token but refused it permission to command " +
+      "(HTTP 403) -- it was issued read-only. Choose the server again to request access, and " +
+      "approve the new request with READ/WRITE permission."
+  } else {
+    "$server rejected this device's access token (HTTP $code). It was most likely revoked or " +
+      "expired. Choose the server again to request a new one."
+  }

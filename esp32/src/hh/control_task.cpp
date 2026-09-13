@@ -36,6 +36,8 @@ control_core::ControlStep::Cfg ControlTask::MakeStepCfg() {
   return cfg;
 }
 
+void ControlTask::DriveOutputsSafeEarly() { Outputs::safeLevelsEarly(); }
+
 const char* ControlTask::StateName(control_core::FsmState s) {
   switch (s) {
     case control_core::FsmState::kDisarmed:
@@ -129,7 +131,7 @@ void ControlTask::begin(SkHeadingIn* sk_heading_in, SkThrusterIn* tx_thruster,
           "(MEASUREMENTS.md Item 6)")
       ->set_sort_order(102);
 
-  // ARCHITECTURE.md §11 sea-trial tuning knobs. reversal_dwell_s is NOT here -- it
+  // ARCHITECTURE.md §12 sea-trial tuning knobs. reversal_dwell_s is NOT here -- it
   // stays fixed at the measured MEASUREMENTS.md Item 2 value
   // (config::kReversalDwellS), never live-editable (see
   // Switcher::SetTunables).
@@ -152,7 +154,7 @@ void ControlTask::begin(SkHeadingIn* sk_heading_in, SkThrusterIn* tx_thruster,
 
   ConfigItem(switch_on_thr_deg_)
       ->set_title("Switcher On Threshold (deg)")
-      ->set_description("Lead-variable magnitude that engages a direction (ARCHITECTURE.md §11)")
+      ->set_description("Lead-variable magnitude that engages a direction (ARCHITECTURE.md §12)")
       ->set_sort_order(110);
   ConfigItem(switch_off_thr_deg_)
       ->set_title("Switcher Off Threshold (deg)")
@@ -195,14 +197,35 @@ void ControlTask::begin(SkHeadingIn* sk_heading_in, SkThrusterIn* tx_thruster,
   failoff_args.dispatch_method = ESP_TIMER_TASK;
   failoff_args.name = "output_failoff";
   failoff_args.skip_unhandled_events = true;
-  ESP_ERROR_CHECK(esp_timer_create(&failoff_args, &failoff_timer_));
-  ESP_ERROR_CHECK(esp_timer_start_periodic(
-      failoff_timer_, config::kOutputFailoffCheckPeriodMs * 1000ULL));
+  // Logged, not ESP_ERROR_CHECK'd: ESP_ERROR_CHECK aborts, and a boot loop is
+  // strictly worse than a logged degradation here. Losing this timer costs the
+  // extra layer; the TWDT still reboots a wedged control task, and the FSM
+  // still drops the outputs on every fault it can see.
+  esp_err_t timer_err = esp_timer_create(&failoff_args, &failoff_timer_);
+  if (timer_err == ESP_OK) {
+    timer_err = esp_timer_start_periodic(
+        failoff_timer_, config::kOutputFailoffCheckPeriodMs * 1000ULL);
+  }
+  if (timer_err != ESP_OK) {
+    ESP_LOGE("control",
+             "fail-off watchdog not started (err=%d) -- outputs are protected "
+             "by the task watchdog only",
+             static_cast<int>(timer_err));
+  }
 
-  xTaskCreatePinnedToCore(&ControlTask::TaskTrampoline, "control_task",
-                           config::kControlTaskStackBytes, this,
-                           config::kControlTaskPriority, nullptr,
-                           config::kControlTaskCore);
+  BaseType_t rc = xTaskCreatePinnedToCore(
+      &ControlTask::TaskTrampoline, "control_task",
+      config::kControlTaskStackBytes, this, config::kControlTaskPriority,
+      nullptr, config::kControlTaskCore);
+  if (rc != pdPASS) {
+    // The safe core never came up. Outputs::begin() has already driven
+    // ENABLE/PORT/STBD to their inactive levels and nothing else ever writes
+    // them, so the thruster stays dead -- fail-safe, but silent otherwise, so
+    // say so. Same posture as RX's control task.
+    ESP_LOGE("control",
+             "control task create failed (rc=%d) -- thruster outputs held off",
+             static_cast<int>(rc));
+  }
 }
 
 void ControlTask::TaskTrampoline(void* arg) {
@@ -309,7 +332,13 @@ void ControlTask::Tick(uint32_t now_ms, float dt_s) {
   in.deadman_ok =
       config::kDeadmanWired ? digitalRead(config::kDeadmanPin) == HIGH : true;
 
-  sk_heading_in_->latest(&cached_gnss_);
+  // Null-checked like the two thruster sources below: a caller that passed no
+  // heading source leaves the cached sample as-is, which is not-valid until a
+  // real one ever arrives -- the arm gate then refuses HOLD, exactly as it
+  // does for a heading that has aged out.
+  if (sk_heading_in_ != nullptr) {
+    sk_heading_in_->latest(&cached_gnss_);
+  }
   in.gnss = cached_gnss_;
 
   // Remote thruster command sources (ARCHITECTURE.md §6). Both snapshots are
@@ -342,7 +371,7 @@ void ControlTask::Tick(uint32_t now_ms, float dt_s) {
   // live-but-disarmed station, and kLocal with no remote at all).
   const bool link_up = cached_tx_.live || cached_plugin_.live;
 
-  // ARCHITECTURE.md §11 sea-trial tuning: push the live/persisted, web-UI-editable
+  // ARCHITECTURE.md §12 sea-trial tuning: push the live/persisted, web-UI-editable
   // knobs into the Switcher every tick (cheap field copies, no
   // allocation); Switcher::SetTunables validates/clamps every value at
   // this untrusted boundary. reversal_dwell_s/duty_window_s are untouched
@@ -354,6 +383,20 @@ void ControlTask::Tick(uint32_t now_ms, float dt_s) {
       switch_duty_warn_->get(), switch_duty_max_->get());
 
   last_step_ = control_step_.Step(in);
+
+  // One line the first time a present station is latched out, not one per
+  // tick: HH is refusing a station that still shows ARMED, and without this the
+  // operator sees only a station that says ARMED commanding nothing
+  // (control_step.h, "RE-ENGAGE LATCH"). Two causes, one remedy: that
+  // station's link dropped while it was holding, or HH itself restarted under
+  // a station that was already armed.
+  if (last_step_.reengage_blocked && !prev_reengage_blocked_) {
+    ESP_LOGW("control",
+             "re-engage BLOCKED: a station is publishing ARMED that HH has not "
+             "seen disarm -- disarm and re-arm that station before it can "
+             "command the thruster");
+  }
+  prev_reengage_blocked_ = last_step_.reengage_blocked;
 
   // Single atomic output write (SAFETY.md thruster invariants 1-3): armed and
   // direction land together, no intermediate state between two calls.
