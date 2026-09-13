@@ -121,12 +121,16 @@ running on a fixed period. It owns the outputs and never touches the network.
 | RX | 20 ms (`kRxControlPeriodMs`) | local switches → cached remote commands → arbitration → drive mapping → servo write |
 | HH | 10 ms (`kHhControlPeriodMs`, matching the IMU's 100 Hz frame rate) | IMU frame → yaw rate → heading fusion → arbitration → mode gate → FSM → output write |
 
-HH additionally runs an **independent fail-off watchdog**: an `esp_timer`
-callback dispatched from the high-priority timer service task on core 0
-refreshes from a heartbeat the control task updates after each completed tick.
-If the control task stalls or crashes, the watchdog forces ENABLE/PORT/STBD off
-within roughly `kOutputFailoffTimeoutMs + kOutputFailoffCheckPeriodMs` instead
-of leaving a direction latched until reboot.
+Both units additionally run an **independent fail-off watchdog**: an
+`esp_timer` callback dispatched from the high-priority timer service task on
+core 0 reads a heartbeat the control task refreshes after each completed tick.
+If the control task stalls or crashes, HH's watchdog forces ENABLE/PORT/STBD
+off within roughly `kOutputFailoffTimeoutMs + kOutputFailoffCheckPeriodMs`, and
+RX's releases the actuator-engage relay within `kRxOutputFailoffTimeoutMs +
+kOutputFailoffCheckPeriodMs`, instead of leaving a direction or a clutch latched
+until the task watchdog reboots the board. RX's servos are deliberately not
+written from the timer task (the servo library is not safe across tasks); with
+the relay released they hold their pulse into a disconnected linkage.
 
 ### Smart periphery
 
@@ -274,9 +278,11 @@ Three things about this are deliberate:
 
 Disarm is never gated on anything: master enable OFF releases the relay on the
 next tick regardless of lever position, matching the cross-cutting stop rule.
-Boot lands DISARMED, and `begin()` releases the relay as the firmware's very
-first hardware action — before the servos are even attached — so a servo left
-in gear cannot be transmitted to a lever at power-up.
+Boot lands DISARMED, and releasing the relay is `setup()`'s first statement —
+before SensESP is even constructed, and again in `begin()` before the servos are
+attached — so a servo left in gear cannot be transmitted to a lever at power-up.
+An `esp_timer` fail-off watchdog, the twin of HH's, releases the relay again
+from another task if the control task ever stops completing ticks.
 
 A refusal is never silent: `rx.armInhibit` names the one blocker to fix
 (`masterEnableOff`, `portLeverNotNeutral`, `stbdLeverNotNeutral`,
@@ -656,7 +662,7 @@ read-only WebSocket subscription. Its copy of the path names and timings is
 
 | Path | Type | Meaning |
 |---|---|---|
-| `hh.thruster.state` | string | Direction currently being driven |
+| `hh.thruster.state` | string | Direction currently being driven: `port`, `off` or `stbd`, lower-case like every other contract string |
 | `hh.mode` | string | `manual` or `hold` |
 | `hh.source` | string | `local`/`tx`/`plugin`/`none` |
 | `hh.setpointDeg` | number (deg) | Live setpoint — the heading being held, or (when not holding) the heading hold would take if it engaged now |

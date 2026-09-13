@@ -37,7 +37,7 @@ const LIVE_LOOKING_VALUES = {
   [SK_RX_STBD_STATE_PATH]: 'neutral',
   [SK_RX_PORT_SOURCE_PATH]: 'plugin',
   [SK_RX_STBD_SOURCE_PATH]: 'plugin',
-  [SK_HH_THRUSTER_STATE_PATH]: 'OFF',
+  [SK_HH_THRUSTER_STATE_PATH]: 'off',
   [SK_HH_MODE_PATH]: 'hold',
   [SK_HH_SOURCE_PATH]: 'plugin',
 };

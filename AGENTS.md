@@ -85,7 +85,7 @@ If a task would require breaking one of these, stop and flag it.
 ## Commands
 
 ```bash
-cd esp32 && pio test -e native                          # pure core, all three firmwares (268 cases)
+cd esp32 && pio test -e native                          # pure core, all three firmwares (276 cases)
 cd esp32 && pio run -e tx_shesp32|rx_shesp32|hh_shesp32 # build
 cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 276 cases

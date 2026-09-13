@@ -12,6 +12,17 @@
 
 class Outputs {
  public:
+  // Drives ENABLE/PORT/STBD to their INACTIVE levels and configures them as
+  // outputs, using nothing but config.h and the pure output map -- no instance
+  // state, so setup() can call it (through
+  // ControlTask::DriveOutputsSafeEarly) as its very first statement, ahead of
+  // the SensESP builder. That matters because the builder mounts a filesystem
+  // and brings up WiFi first, and until something drives these pins they are
+  // floating inputs held safe only by the output stage's own pull-downs
+  // (SAFETY.md's thruster checklist). begin() repeats all of this; both are
+  // idempotent.
+  static void safeLevelsEarly();
+
   // Configures the three pins as outputs and drives the fully-safe state
   // (disarmed, all off) immediately -- call once from setup().
   void begin();

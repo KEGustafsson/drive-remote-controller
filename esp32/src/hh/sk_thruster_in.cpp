@@ -4,6 +4,7 @@
 
 #include "heading/setpoint.h"  // control_core::ClampTrimDeg
 #include "sensesp/system/lambda_consumer.h"
+#include "strict_sk_listeners.h"
 
 void SkThrusterIn::begin(const char* command_path, const char* mode_path,
                          const char* trim_path, const char* enabled_path,
@@ -60,7 +61,14 @@ void SkThrusterIn::begin(const char* command_path, const char* mode_path,
         xSemaphoreGive(mutex_);
       }));
 
-  enabled_listener_ = std::make_shared<sensesp::SKValueListener<bool>>(
+  // StrictBoolListener, not the stock SKValueListener<bool>: ArduinoJson's
+  // as<bool>() reads any string/object/array as true, so `"false"` or `{}` on
+  // this path would read as a station reporting itself ARMED -- the unsafe
+  // direction, for the flag that decides whether a remote may command the
+  // thruster at all. A wrong-typed delta is dropped, which withholds the
+  // watchdog feed below too, so the source goes stale and the FSM disarms.
+  // See include/strict_sk_listeners.h.
+  enabled_listener_ = std::make_shared<StrictBoolListener>(
       enabled_path, listen_delay_ms);
   enabled_listener_->connect_to(
       new sensesp::LambdaConsumer<bool>([this](bool value) {

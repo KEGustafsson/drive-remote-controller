@@ -5,24 +5,25 @@
 // pinned FreeRTOS safe-core task (control_task.{h,cpp}) that owns the
 // local switches, RX master enable switch, the lever-neutral sensors, the
 // actuator-engage (ARM) output and the servo outputs -- see
-// CLAUDE.md "Architecture." Also starts the two Signal K command-in
+// ARCHITECTURE.md §3. Also starts the two Signal K command-in
 // subscriptions (TX-via-SK, plugin-via-SK -- ARCHITECTURE.md §9 path contract)
 // that feed the control task's arbitration.
 
 #include <memory>
 #include <vector>
 
-// WiFi/OTA credentials live in include/secrets.h (committed in this private
-// repo by explicit owner decision -- see the note in secrets.h itself). On a
-// machine without secrets.h this falls back to include/secrets.example.h's
-// placeholders -- the firmware still builds, it just won't join WiFi until
-// you create secrets.h or configure WiFi via the setup portal.
+// WiFi/OTA credentials live in include/secrets.h, which is GITIGNORED and
+// never committed -- create it from include/secrets.example.h (AGENTS.md). On
+// a machine without secrets.h this falls back to the example's placeholders --
+// the firmware still builds, it just won't join WiFi until you create
+// secrets.h or configure WiFi via the setup portal.
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
 #include "secrets.example.h"
 #endif
 
+#include "common/active_source.h"
 #include "config.h"
 #include "control_task.h"
 #include "drive/arm_gate.h"
@@ -30,7 +31,6 @@
 #include "sensesp.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp/signalk/signalk_output.h"
-#include "sensesp/system/lambda_consumer.h"
 #include "sensesp/system/observablevalue.h"
 #include "sensesp/ui/config_item.h"
 #include "sensesp_app_builder.h"
@@ -80,14 +80,25 @@ namespace {
 std::vector<std::shared_ptr<void>> retained_objects;
 
 // Fed by SensESP's WS client on the Arduino loop task; read by ControlTask
-// on its own pinned task through each instance's internal mutex (CLAUDE.md
-// invariant 7). One per remote source, per ARCHITECTURE.md §9.
+// on its own pinned task through each instance's internal mutex (SAFETY.md
+// drive invariant 6 -- the control task never blocks). One per remote source,
+// per ARCHITECTURE.md §9.
 SkCommandIn tx_command_in;
 SkCommandIn plugin_command_in;
 ControlTask control_task;
 }  // namespace
 
 void setup() {
+  // FIRST statement of the whole firmware, ahead of the SensESP builder below:
+  // release the actuator-engage relay. Everything in that builder chain --
+  // mounting the filesystem, bringing up WiFi, the setup portal's retries --
+  // takes time the relay would otherwise spend at whatever level the driver's
+  // own pull-down happens to give it, with the servos still at their
+  // last-flashed position. ControlTask::begin() writes it again (idempotent);
+  // this is only about doing it as early as code can (SAFETY.md drive
+  // invariant 7's boot rule).
+  ControlTask::DriveOutputsSafeEarly();
+
   SetupLogging(ESP_LOG_INFO);
 
   SensESPAppBuilder builder;
@@ -185,14 +196,21 @@ void setup() {
                            config::kSkPluginEnabledPath,
                            config::kSkCommandListenDelayMs);
 
-  control_task.begin(&tx_command_in, &plugin_command_in);
-
   // Live-tunable servo calibration (MEASUREMENTS.md Item 1).
-  // Each of the 3-per-side ConfigItems reads ALL THREE of its side's
-  // current values (not just the one that just changed) and pushes a
-  // complete ServoCalibration into the control task -- so it's correct
-  // regardless of which one the user edits, or the order they load from
-  // flash in.
+  // Each side's ServoCalibration is a THREE-value tuple, so every push reads
+  // all three of its side's current values rather than the one that changed --
+  // correct regardless of which one the user edits, or the order they load
+  // from flash in.
+  //
+  // Created and pushed BEFORE control_task.begin(), which is not cosmetic:
+  // PersistingObservableValue loads from flash synchronously in its
+  // constructor, so by the time these six exist they already hold the
+  // persisted numbers. begin() drives both servos to neutral as its first act,
+  // and it must use the calibrated neutral -- otherwise the very first pulse
+  // of every boot is the compiled 1500 us default, and on a linkage trimmed
+  // away from that, boot itself nudges a shift lever. SetPortCalibration only
+  // takes a spinlock (no task, no queue), so calling it before the control
+  // task exists is fine.
   auto port_forward =
       MakeServoConfigItem(config::kServoForwardUsDefault,
                            config::kPortForwardConfigPath,
@@ -231,17 +249,10 @@ void setup() {
                                      ClampServoUs(stbd_neutral->get()),
                                      ClampServoUs(stbd_reverse->get())});
   };
-  port_forward->connect_to(new LambdaConsumer<int>([=](int) { push_port_cal(); }));
-  port_neutral->connect_to(new LambdaConsumer<int>([=](int) { push_port_cal(); }));
-  port_reverse->connect_to(new LambdaConsumer<int>([=](int) { push_port_cal(); }));
-  stbd_forward->connect_to(new LambdaConsumer<int>([=](int) { push_stbd_cal(); }));
-  stbd_neutral->connect_to(new LambdaConsumer<int>([=](int) { push_stbd_cal(); }));
-  stbd_reverse->connect_to(new LambdaConsumer<int>([=](int) { push_stbd_cal(); }));
-  // Also push once immediately with whatever was loaded from flash (or the
-  // compiled defaults on first boot), rather than waiting for the
-  // PersistingObservableValues' deferred onDelay(0, ...) emit.
   push_port_cal();
   push_stbd_cal();
+
+  control_task.begin(&tx_command_in, &plugin_command_in);
 
   // Telemetry (ARCHITECTURE.md §9): reads the control task's mutex-protected
   // snapshot non-blockingly. A momentary miss just skips this cycle's
@@ -276,13 +287,25 @@ void setup() {
       std::make_shared<SKOutputBool>(config::kSkRxLinkUpPath, "");
 
   event_loop()->onRepeat(config::kSkPeriodicRefreshMs, [=]() {
+    // Re-read the six calibration values every cycle, exactly as HH re-reads
+    // its Switcher tunables each tick. There is no callback to hang off: a
+    // web-UI save goes ConfigHandler -> from_json() -> save(), and SensESP's
+    // PersistingObservableValue::from_json assigns WITHOUT emit(), so a
+    // connect_to(LambdaConsumer) here would fire once at boot and then never
+    // again -- an edited calibration would sit in flash, visible in the web
+    // UI, and not reach the servos until the next reboot. Polling is six
+    // get()s and two short critical sections; ahead of the early return below
+    // so a contended telemetry read cannot also skip the calibration.
+    push_port_cal();
+    push_stbd_cal();
+
     ControlTask::TelemetrySnapshot snap;
     if (!control_task.latestTelemetry(&snap)) return;
 
     port_state_output->set(control_core::ToSkString(snap.port_command));
     stbd_state_output->set(control_core::ToSkString(snap.stbd_command));
-    port_source_output->set(ControlTask::SourceName(snap.port_source));
-    stbd_source_output->set(ControlTask::SourceName(snap.stbd_source));
+    port_source_output->set(control_core::ActiveSourceName(snap.port_source));
+    stbd_source_output->set(control_core::ActiveSourceName(snap.stbd_source));
     master_enable_output->set(snap.rx_master_enable);
     armed_output->set(snap.armed);
     port_lever_neutral_output->set(snap.port_lever_neutral);

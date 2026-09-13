@@ -36,7 +36,7 @@ namespace control_core {
 
 enum class FsmState { kDisarmed, kArmedIdle, kHolding, kFault };
 
-// ARCHITECTURE.md §11 defaults (T_coast_warn / T_coast_max).
+// FsmCfg defaults (T_coast_warn / T_coast_max), see ARCHITECTURE.md.
 struct FsmCfg {
   uint32_t coast_warn_ms = 10000;
   uint32_t coast_max_ms = 30000;

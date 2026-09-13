@@ -445,14 +445,14 @@ constexpr uint32_t kLinkReadyBlinkHalfPeriodMs = 500;
 // time -- these are only the starting defaults. Applied identically to
 // port and stbd by default; the web UI exposes each side's three positions
 // as independent ConfigItems so they can be trimmed apart if the real
-// linkage geometry differs side to side (ARCHITECTURE.md §11).
+// linkage geometry differs side to side (ARCHITECTURE.md §12).
 constexpr uint16_t kServoForwardUsDefault = 1000;
 constexpr uint16_t kServoNeutralUsDefault = 1500;
 constexpr uint16_t kServoReverseUsDefault = 2000;
 
 // Web-UI ConfigItem paths (flash-persisted PersistingObservableValue,
 // SensESP's ConfigItem system) -- one per position, per side, so port/stbd
-// can be trimmed apart in the field with no reflash (ARCHITECTURE.md §11).
+// can be trimmed apart in the field with no reflash (ARCHITECTURE.md §12).
 constexpr const char* kPortForwardConfigPath = "/remoteController/servo/port_forward_us";
 constexpr const char* kPortNeutralConfigPath = "/remoteController/servo/port_neutral_us";
 constexpr const char* kPortReverseConfigPath = "/remoteController/servo/port_reverse_us";
@@ -477,6 +477,22 @@ constexpr uint16_t kServoPeriodHz = 200;
 // no reason for RX's own local-switch/arbitration loop to run any slower
 // than the fastest input source it's reacting to.
 constexpr uint32_t kRxControlPeriodMs = 20;
+
+// ---- RX independent ARM fail-off watchdog ----
+// The same shape as HH's (see kOutputFailoffTimeoutMs below, which is where
+// the shared kOutputFailoffCheckPeriodMs also lives): the control task
+// refreshes a heartbeat after every completed tick, and a periodic esp_timer
+// callback on core 0 RELEASES THE ACTUATOR-ENGAGE RELAY if that heartbeat goes
+// stale. Without it RX's only backstop is the TWDT's 5 s panic reboot, and for
+// those 5 s a wedged task holds the last servo position with the clutch still
+// engaged -- fail to the last value, which SAFETY.md drive invariant 5
+// forbids. Releasing the relay disconnects the linkage, which is the stronger
+// stop; the servos are deliberately not touched from the timer task (see
+// ControlTask::CheckFailoff).
+// Timeout = 10 control periods, the same ratio HH uses: far above any real
+// scheduling jitter, far below a dangerous latch. Worst-case release is
+// roughly kRxOutputFailoffTimeoutMs + kOutputFailoffCheckPeriodMs.
+constexpr uint32_t kRxOutputFailoffTimeoutMs = 200;
 
 //////////////////////////////////////////////////////////////////////////
 // Heading Hold Controller -- HH (src/hh/)
@@ -593,10 +609,14 @@ constexpr uint32_t kEngageReleaseStableMs = 50;
 // roughly kOutputFailoffTimeoutMs + kOutputFailoffCheckPeriodMs, instead
 // of "until reboot." Timeout = 10 control periods: far above any real
 // scheduling jitter (measured avg is ~10 ms), far below a dangerous latch.
+// kOutputFailoffTimeoutMs is HH's own; the CHECK PERIOD below is shared with
+// RX's watchdog (kRxOutputFailoffTimeoutMs, RX section above) -- both units
+// poll their heartbeat at the same rate, only the staleness limits differ
+// because the two control loops run at different periods.
 // NOTE (review follow-up): this is still firmware. A true hardware
 // fail-off -- an external enable-heartbeat circuit that drops ENABLE when
 // the MCU stops toggling a safety line -- is strongly recommended for the
-// physical interface build (ARCHITECTURE.md §12, user-provided); firmware
+// physical interface build (ARCHITECTURE.md §13, user-provided); firmware
 // cannot protect against its own total lockup with interrupts disabled.
 constexpr uint32_t kOutputFailoffTimeoutMs = 100;
 constexpr uint32_t kOutputFailoffCheckPeriodMs = 25;
@@ -707,8 +727,8 @@ static_assert(kReversalDwellS >= 1.75f,
               "automatic HOLD loop would command a contactor into a "
               "still-spinning motor with nobody watching the tunnel.");
 
-// Live, web-UI-tunable, flash-persisted Switcher knobs (ARCHITECTURE.md §11
-// sea-trial playbook). Defaults are the control law's "typical start"
+// Live, web-UI-tunable, flash-persisted Switcher knobs (ARCHITECTURE.md §12,
+// "Runtime -- the web UI"). Defaults are the control law's "typical start"
 // values; they are duplicated here (rather than read from SwitchCfg) because
 // ConfigItem needs a named default+path per value. The engage/release pair
 // deliberately DIVERGES from SwitchCfg's in-class 3.0/1.0. Both halves were

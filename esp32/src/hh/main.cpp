@@ -3,16 +3,16 @@
 // Boots SensESP v3 (WiFi/SK/OTA/web config -- "smart periphery," may jitter,
 // never touches outputs or the fast loop) and starts the pinned FreeRTOS
 // safe-core task (control_task.{h,cpp}) that owns the BNO UART, ENGAGE
-// input, and thruster outputs -- see CLAUDE.md "Architecture."
+// input, and thruster outputs -- see ARCHITECTURE.md §3.
 
 #include <memory>
 #include <vector>
 
-// WiFi/OTA credentials live in include/secrets.h (committed in this private
-// repo by explicit owner decision -- see the note in secrets.h itself). On a
-// machine without secrets.h this falls back to include/secrets.example.h's
-// placeholders -- the firmware still builds, it just won't join WiFi until you
-// create secrets.h or configure WiFi via the setup portal.
+// WiFi/OTA credentials live in include/secrets.h, which is GITIGNORED and
+// never committed -- create it from include/secrets.example.h (AGENTS.md). On
+// a machine without secrets.h this falls back to the example's placeholders --
+// the firmware still builds, it just won't join WiFi until you create
+// secrets.h or configure WiFi via the setup portal.
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -21,6 +21,7 @@
 
 #include "config.h"
 #include "control_task.h"
+#include "heading/thruster_arbitration.h"  // control_core::ThrusterCmdToSkString
 #include "sensesp.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp/signalk/signalk_output.h"
@@ -52,6 +53,16 @@ std::vector<std::shared_ptr<void>> retained_objects;
 }  // namespace
 
 void setup() {
+  // FIRST statement of the whole firmware, ahead of the SensESP builder below:
+  // drive ENABLE/PORT/STBD to their inactive levels. The builder mounts a
+  // filesystem and brings up WiFi before returning, and until these pins are
+  // driven they are floating inputs held safe only by the output stage's own
+  // pull-downs (SAFETY.md's thruster checklist -- firmware cannot cover the
+  // window from reset, but it can make it as short as code allows).
+  // Outputs::begin() repeats this inside control_task.begin(); both are
+  // idempotent.
+  ControlTask::DriveOutputsSafeEarly();
+
   SetupLogging(ESP_LOG_INFO);
 
   SensESPAppBuilder builder;
@@ -219,6 +230,13 @@ void setup() {
   auto hh_reversal_pending_output =
       std::make_shared<SKOutputBool>(config::kSkHhReversalPendingPath, "");
 
+  // BUDGET, before adding anything to this loop: SensESP's outbound delta
+  // queue is 20 deep and drops the OLDEST entry on overflow. This loop appends
+  // 18 deltas per cycle, so it already sits two short of that ceiling -- add a
+  // few paths and every cycle starts silently discarding whatever was queued
+  // first. hh.linkUp is therefore set LAST, deliberately: it is the survivor,
+  // and it is the one path whose ARRIVAL other units time to decide whether HH
+  // is alive at all. Add a path here only after deciding what it displaces.
   event_loop()->onRepeat(config::kTelemetryPublishPeriodMs, [=]() {
     ControlTask::TelemetrySnapshot snap;
     if (!control_task.latestTelemetry(&snap)) return;
@@ -236,7 +254,14 @@ void setup() {
     switch_cmd_sk_output->set(ControlTask::CmdName(snap.switch_cmd));
     duty_sk_output->set(snap.duty);
 
-    hh_thruster_state_output->set(ControlTask::CmdName(snap.switch_cmd));
+    // Lower-case ("off"/"port"/"stbd"), from the same pure helper TX publishes
+    // with and HH parses with -- every other string in the SK contract is
+    // lower-case, and a consumer switching on this one should not have to know
+    // that HH's log spelling leaked into a path value. CmdName's upper-case
+    // form stays for the logs and for sensors.headingHold.switchCmd, which is
+    // a human-facing tuning signal rather than part of the command contract.
+    hh_thruster_state_output->set(
+        control_core::ThrusterCmdToSkString(snap.switch_cmd));
     hh_mode_output->set(ControlTask::ModeName(snap.mode));
     hh_source_output->set(ControlTask::SourceName(snap.source));
     hh_setpoint_deg_output->set(snap.setpoint_deg);

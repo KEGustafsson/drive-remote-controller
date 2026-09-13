@@ -4,6 +4,22 @@
 #include "heading/setpoint.h"
 
 namespace control_core {
+namespace {
+
+// Applies one source's re-engage latch to the copy of it that arbitration
+// will see (control_step.h, "RE-ENGAGE LATCH"). Seeing the station live and
+// DISARMED is the one thing that clears it -- that is the proof a human has
+// the station in hand, which a retained `enabled=true` can never be.
+void ApplyReengageLatch(bool& blocked, ThrusterRemote& r) {
+  if (!blocked) return;
+  if (r.live && !r.enabled) {
+    blocked = false;
+    return;
+  }
+  r.enabled = false;
+}
+
+}  // namespace
 
 ControlStep::ControlStep(const Cfg& cfg)
     : cfg_(cfg),
@@ -72,8 +88,37 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   // Local always wins and always means hold (SAFETY.md thruster invariant 6); otherwise TX
   // outranks the plugin by fixed precedence. See thruster_arbitration.h.
   bool local_engage = engage_debounce_.Update(in.engage_raw, in.now_ms);
+  // A source latched out by the re-engage rule (control_step.h) is presented
+  // to arbitration as not-enabled, so it cannot qualify and cannot manufacture
+  // the engage edge its retained SK values would otherwise supply. Done on
+  // LOCAL COPIES: Inputs is the caller's sampled hardware state and stays a
+  // faithful record of what the station actually published.
+  ThrusterRemote tx = in.tx;
+  ThrusterRemote plugin = in.plugin;
+  ApplyReengageLatch(tx_reengage_blocked_, tx);
+  ApplyReengageLatch(plugin_reengage_blocked_, plugin);
+
   ThrusterArbitrationResult cmd_in =
-      ArbitrateThruster(local_engage, in.tx, in.plugin);
+      ArbitrateThruster(local_engage, tx, plugin);
+
+  // Arm the latch for a source that was HOLDING the thruster on the previous
+  // tick and has now gone STALE -- a link that dropped, not a decision. A
+  // deliberate enabled=false is not latched (the station is present and said
+  // stop, so its next arm is already a fresh press), and neither is the local
+  // ENGAGE taking over, which is a human at the unit rather than a lost
+  // station. Read from the PREVIOUS tick's arbitration: by the time a source
+  // goes stale it is no longer in this tick's result.
+  if (prev_remote_source_ == ActiveSource::kTx &&
+      prev_remote_mode_ == ThrusterMode::kHold && !in.tx.live) {
+    tx_reengage_blocked_ = true;
+  }
+  if (prev_remote_source_ == ActiveSource::kPlugin &&
+      prev_remote_mode_ == ThrusterMode::kHold && !in.plugin.live) {
+    plugin_reengage_blocked_ = true;
+  }
+  prev_remote_source_ = cmd_in.source;
+  prev_remote_mode_ = cmd_in.mode;
+
   const bool manual_mode = cmd_in.mode == ThrusterMode::kManual;
 
   // 3b. Safety FSM -- fed the ARBITRATED engage request, so a remote command
@@ -244,6 +289,13 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   out.mode = cmd_in.mode;
   out.reversal_pending = manual_mode && manual_thrust_.reversal_pending();
   out.setpoint_commanded = setpoint_commanded;
+  // Only a source that is actually THERE counts as being refused: both latches
+  // start set (control_step.h), so an OR over the raw flags would report
+  // "blocked" on a unit that has simply never heard from a station. A latched
+  // source that is live necessarily published enabled=true this tick -- had it
+  // published enabled=false the latch would already have cleared above.
+  out.reengage_blocked = (tx_reengage_blocked_ && tx.live) ||
+                         (plugin_reengage_blocked_ && plugin.live);
   out.armed = armed;
   out.dir = dir;
   out.state = state;

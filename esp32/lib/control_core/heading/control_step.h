@@ -130,6 +130,13 @@ class ControlStep {
     // True while a NON-ZERO heading trim is being applied on top of the
     // on-engage captured heading (i.e. a station is actively trimming).
     bool setpoint_commanded = false;
+    // True while a remote source that is PRESENT (live) is being refused,
+    // because it is publishing itself armed and HH has not seen it disarm --
+    // see the re-engage latch below. A latched source that is not live sets
+    // nothing here: there is no one to refuse. Telemetry/logging only --
+    // nothing gates on it; it exists so an operator whose station says ARMED
+    // while the thruster does nothing is told WHY.
+    bool reengage_blocked = false;
   };
 
   explicit ControlStep(const Cfg& cfg);
@@ -139,7 +146,7 @@ class ControlStep {
   // to judge bno_ok/gnss freshness).
   Outputs Step(const Inputs& in);
 
-  // Live sea-trial tunables passthrough (ARCHITECTURE.md §11);
+  // Live sea-trial tunables passthrough (ARCHITECTURE.md §12);
   // validated/clamped by
   // Switcher::SetTunables -- see that header for the boundary rules.
   void SetSwitchTunables(float on_thr_deg, float off_thr_deg,
@@ -159,6 +166,66 @@ class ControlStep {
   // Mode in force on the previous tick, so entering kManual can reset the
   // manual gate (and leaving it can reset the switcher) exactly once.
   ThrusterMode prev_mode_ = ThrusterMode::kHold;
+
+  // RE-ENGAGE LATCH, one per remote source. SAFETY.md thruster invariant 9 --
+  // "leaving HOLDING requires a fresh engage edge to resume; thrust never
+  // restarts silently because a sensor recovered" -- and the cross-cutting
+  // rule that a returning unit or a reconnecting client never silently
+  // re-arms.
+  //
+  // The hole this closes: the FSM's engage edge is derived from
+  // engage_request, a LEVEL regenerated every tick from live && enabled. A TX
+  // armed in HOLD that goes stale (WiFi blip, handheld out of range) drops
+  // engage_request, so the FSM disarms and the outputs go off -- correct. But
+  // Signal K retains that station's last `enabled=true` and `mode=hold`
+  // forever, so the moment the deltas resume the level comes straight back,
+  // the FSM sees a rising edge, and HH captures a NEW base heading and starts
+  // thrusting with nobody having touched anything. The station never asked
+  // twice; the link merely healed.
+  //
+  // So a source that was the AUTHORITATIVE HOLD commander when its link
+  // dropped is latched out: its `enabled` is forced false before arbitration
+  // sees it, and the latch clears only when that station has been observed
+  // live and DISARMED -- proof a human took it out of arm, so its next
+  // `enabled=true` is a deliberate fresh arm rather than a retained value
+  // being replayed. A deliberate disarm (live, enabled=false) therefore never
+  // latches anything, and the local ENGAGE input is untouched: it is
+  // unconditional (thruster invariant 6) and cannot be blocked by a remote's
+  // history.
+  //
+  // MANUAL is deliberately EXCLUDED FROM THE *ARMING* HALF of this rule. A
+  // held PORT/STBD button that resumes after a blip is exactly what the drives
+  // do with a held shift switch: the command is momentary, the operator's
+  // finger is the edge, and they are watching the boat. Latching it would make
+  // the thruster go dead in the operator's hand mid-manoeuvre for no safety
+  // gain. HOLD is the opposite case -- an automatic loop with nobody at the
+  // button. So only a HOLD drop arms the latch.
+  //
+  // BOTH LATCHES START SET, which closes the same hole from the other side:
+  // HH power-cycled (or reflashed, or browned out) while a station sits armed.
+  // A freshly-booted HH has no history at all, so the first tuple it ever sees
+  // is that station's RETAINED enabled=true -- and without this it would read
+  // as a fresh arm and engage a hold, or hand a retained manual_cmd straight to
+  // the thruster, with nobody having pressed anything. SAFETY.md's
+  // cross-cutting rule names exactly this: a returning UNIT never silently
+  // re-arms, no more than a reconnecting client does.
+  //
+  // At boot the rule therefore applies in MANUAL as well as HOLD -- there is
+  // no held button to be interrupted, only a retained value HH has never seen
+  // a human touch, and the clearing rule is the same for both: HH must see
+  // that station live and DISARMED once before it may command anything.
+  //
+  // Normal use never notices. A station that starts after HH publishes its
+  // disarmed heartbeat long before anyone arms it, which clears the latch on
+  // the first tuple; only the station-armed-across-an-HH-restart case has to
+  // be re-armed, which is the case that must not be silent.
+  bool tx_reengage_blocked_ = true;
+  bool plugin_reengage_blocked_ = true;
+  // Which source was authoritative on the PREVIOUS tick, and in which mode.
+  // The latch is armed from these, not from this tick's arbitration: on the
+  // tick a source goes stale it is already gone from the result.
+  ActiveSource prev_remote_source_ = ActiveSource::kNone;
+  ThrusterMode prev_remote_mode_ = ThrusterMode::kHold;
 
   // The direction the THRUSTER was last actually driven in, and when that
   // thrust last stopped -- tracked from the emitted output, so it spans both
