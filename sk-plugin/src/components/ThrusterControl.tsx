@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { HEADING_TRIM_COARSE_DEG, HEADING_TRIM_FINE_DEG } from '../config';
 import { useMomentaryButton } from '../hooks/useMomentaryButton';
+import type { HoldPhase, HoldStall } from '../pure/holdPhase';
 import { formatHeading, formatTrim } from '../pure/trimOffset';
 import type { ThrusterDirection, ThrusterMode } from '../clientIntent';
 
@@ -51,8 +52,7 @@ interface ThrusterControlProps {
   holdsControl: boolean;
 
   /**
-   * True when the HH unit ITSELF reports it is holding: hh.armed AND
-   * hh.mode === 'hold', with hh telemetry still arriving.
+   * What has become of the hold this station asked for (pure/holdPhase.ts).
    *
    * Separate from [armed] because [armed] is only this app's own half of the
    * question -- token held, socket up, HH answering -- and none of that says
@@ -60,11 +60,19 @@ interface ThrusterControlProps {
    * yet, or its own ENGAGE input may have taken the thruster; hh.setpointDeg
    * reads as a live number in every one of those cases, because HH mirrors that
    * path to the fused heading whenever it is NOT holding (ARCHITECTURE.md
-   * §9). So the heading here must never be labelled "holding" off a local
-   * guess -- a consumer that needs "holding this" rather than "would hold this"
-   * has to read the unit's own report, which is this prop.
+   * §9). So the heading here is labelled "holding" only on 'engaged', which is
+   * the unit's own report and nothing else.
+   *
+   * The phase rather than a bare boolean because "not holding" has two very
+   * different readings: the few hundred milliseconds every arm spends waiting
+   * for HH to answer, and a hold the unit is not going to take. Drawing them
+   * alike put a warning on the panel on every single arm, which is how the one
+   * that matters stopped being read.
    */
-  holdEngaged: boolean;
+  holdPhase: HoldPhase;
+
+  /** Why, when [holdPhase] is 'not-engaging'. */
+  holdStall: HoldStall;
 
   /** Source label when a higher-precedence station owns the thruster. */
   overriddenBy?: string;
@@ -87,7 +95,8 @@ export function ThrusterControl({
   heldDeg,
   armed,
   holdsControl,
-  holdEngaged,
+  holdPhase,
+  holdStall,
   overriddenBy,
   reversalPending,
 }: ThrusterControlProps) {
@@ -234,11 +243,22 @@ export function ThrusterControl({
                   been REQUESTED. */}
               {disabled
                 ? 'current heading'
-                : holdEngaged
+                : holdPhase === 'engaged'
                   ? trimDeg !== 0
                     ? `holding · trim ${formatTrim(trimDeg)}°`
                     : 'holding'
-                  : 'hold requested · unit not holding'}
+                  : /* A hold the thruster's owner is not letting run is not a
+                       fault, and the "controlled by ..." note below already
+                       names it -- so 'other-source' reads exactly like a
+                       request in flight rather than adding a second, graver
+                       statement of the same thing. */
+                    holdPhase === 'not-engaging' && holdStall !== 'other-source'
+                    ? 'hold not engaged'
+                    : /* 'requested', and 'idle' too: commandable and in HOLD,
+                         the request is either in flight or one render old and
+                         not yet stamped. Neither may read as holding, and
+                         neither is a fault. */
+                      'hold requested'}
             </span>
           </div>
           <div
@@ -284,17 +304,29 @@ export function ThrusterControl({
             </button>
           </div>
           <div className="thruster-control__state" aria-live="polite">
-            {armed && !overriddenBy && holdEngaged && (
+            {armed && !overriddenBy && holdPhase === 'engaged' && (
               <span className="thruster-control__note">
                 holding heading — trim with the arrows
               </span>
             )}
-            {/* Armed and asking for the hold, but HH has not said it engaged.
-                An invitation to trim would be an instruction to steer a hold
-                that is not running; name the wait instead. */}
-            {armed && !overriddenBy && !holdEngaged && (
-              <span className="thruster-control__note" role="status">
-                hold requested — waiting for the thruster unit to engage
+            {/* Armed and asking, with HH not yet answering. No note at all: an
+                invitation to trim would be an instruction to steer a hold that
+                is not running, and a warning here would appear on every single
+                arm. The caption above already says the hold is requested and
+                still refuses to say "holding", so nothing is hidden -- what is
+                withheld is the ALARM, until there is one. */}
+            {armed && !overriddenBy && holdPhase === 'not-engaging' && (
+              <span className="thruster-control__alarm" role="alert">
+                {holdStall === 'unit-fault'
+                  ? 'not holding — thruster unit fault'
+                  : holdStall === 'no-reference'
+                    ? 'not holding — no heading fix'
+                    : holdStall === 'refused'
+                      ? 'not holding — disarm and re-arm to engage'
+                      : /* Including HH saying nothing at all: state the fact,
+                           and the one remedy safe to suggest whatever the
+                           cause. */
+                        'not holding — check the thruster unit'}
               </span>
             )}
             {preArm && (

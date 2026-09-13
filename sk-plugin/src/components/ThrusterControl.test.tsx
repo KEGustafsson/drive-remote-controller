@@ -7,6 +7,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ThrusterControl } from './ThrusterControl';
 import type { ThrusterMode } from '../clientIntent';
+import type { HoldPhase, HoldStall } from '../pure/holdPhase';
 
 function renderControl(
   props: Partial<Parameters<typeof ThrusterControl>[0]> = {},
@@ -27,11 +28,37 @@ function renderControl(
       // Default to the unit reporting the hold, so the tests below are about
       // the widget rather than about the not-holding wording; the tests that
       // care pass it explicitly.
-      holdEngaged={true}
+      holdPhase={'engaged' as HoldPhase}
+      holdStall={'none' as HoldStall}
       {...props}
     />,
   );
   return { onModeChange, onDirectionChange, onTrim };
+}
+
+/**
+ * A stalled hold, re-renderable with another reason.
+ *
+ * Its own helper because every prop but the reason is held fixed: what is under
+ * test is that each reason produces its own remedy, and nothing else moved.
+ */
+function renderControlFor(stall: HoldStall) {
+  const props = {
+    mode: 'hold' as ThrusterMode,
+    onModeChange: vi.fn(),
+    onDirectionChange: vi.fn(),
+    trimDeg: 0,
+    onTrim: vi.fn(),
+    heldDeg: 40,
+    armed: true,
+    holdsControl: true,
+    holdPhase: 'not-engaging' as HoldPhase,
+  };
+  const view = render(<ThrusterControl {...props} holdStall={stall} />);
+  return {
+    rerender: (next: HoldStall) =>
+      view.rerender(<ThrusterControl {...props} holdStall={next} />),
+  };
 }
 
 const press = (el: HTMLElement) =>
@@ -174,12 +201,14 @@ describe('ThrusterControl in HOLD mode', () => {
     // have taken the thruster -- and the setpoint reads as a live number in all
     // of those, because HH mirrors it to the fused heading when it is not
     // holding. Only the unit's own report may put "holding" on the screen.
-    renderControl({ mode: 'hold', heldDeg: 40, trimDeg: 0, holdEngaged: false });
-    expect(screen.getByText('hold requested · unit not holding')).toBeInTheDocument();
+    renderControl({
+      mode: 'hold',
+      heldDeg: 40,
+      trimDeg: 0,
+      holdPhase: 'requested' as HoldPhase,
+    });
+    expect(screen.getByText('hold requested')).toBeInTheDocument();
     expect(screen.queryByText('holding')).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/waiting for the thruster unit to engage/),
-    ).toBeInTheDocument();
     // The number stays -- it is the indication that degrades, not the data.
     expect(screen.getByText('040°')).toBeInTheDocument();
     // And an invitation to trim a hold that is not running would be worse than
@@ -187,13 +216,82 @@ describe('ThrusterControl in HOLD mode', () => {
     expect(screen.queryByText(/trim with the arrows/)).not.toBeInTheDocument();
   });
 
+  it('does not raise an alarm while the request is still in flight', () => {
+    // Every arm in HOLD passes through this state, so a warning here appears
+    // every single time -- and a warning that appears every time is one the
+    // operator learns to read past, including the time it means the thruster
+    // is not going to hold anything.
+    renderControl({
+      mode: 'hold',
+      heldDeg: 40,
+      trimDeg: 0,
+      holdPhase: 'requested' as HoldPhase,
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/not holding/)).not.toBeInTheDocument();
+  });
+
+  it('reports a hold the unit is refusing as a fault, with the remedy', () => {
+    // Past the window, this is the state the operator hit on the boat: HH
+    // refusing a station it has not seen disarm (SAFETY.md thruster invariant
+    // 9). Nothing will change until they disarm, so saying "waiting" is worse
+    // than saying nothing.
+    renderControl({
+      mode: 'hold',
+      heldDeg: 40,
+      trimDeg: 0,
+      holdPhase: 'not-engaging' as HoldPhase,
+      holdStall: 'refused' as HoldStall,
+    });
+    expect(screen.getByText('hold not engaged')).toBeInTheDocument();
+    expect(
+      screen.getByText('not holding — disarm and re-arm to engage'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('holding')).not.toBeInTheDocument();
+  });
+
+  it('does not report a thruster somebody else owns as a failed hold', () => {
+    // Precedence working as designed: the unit's own switch or TX has the
+    // thruster, the "controlled by ..." note says so, and a second and graver
+    // statement of the same thing would send the operator after a fault that is
+    // not happening.
+    renderControl({
+      mode: 'hold',
+      heldDeg: 40,
+      trimDeg: 0,
+      holdPhase: 'not-engaging' as HoldPhase,
+      holdStall: 'other-source' as HoldStall,
+      overriddenBy: 'TX remote',
+    });
+    expect(screen.getByText('controlled by TX remote')).toBeInTheDocument();
+    expect(screen.queryByText('hold not engaged')).not.toBeInTheDocument();
+    expect(screen.getByText('hold requested')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('names what HH says is wrong, because the remedies differ', () => {
+    const { rerender } = renderControlFor('unit-fault');
+    expect(screen.getByText('not holding — thruster unit fault')).toBeInTheDocument();
+
+    rerender('no-reference');
+    expect(screen.getByText('not holding — no heading fix')).toBeInTheDocument();
+
+    rerender('unknown');
+    expect(screen.getByText('not holding — check the thruster unit')).toBeInTheDocument();
+  });
+
   it('reports the unit, not the trim, while the hold has not engaged', () => {
     // A trim readout beside an unengaged hold would describe an offset that is
     // steering nothing; what the operator needs to know is that the unit has
     // not taken the hold. The trim itself is not lost -- the buttons still show
     // it back the moment HH reports it is holding.
-    renderControl({ mode: 'hold', heldDeg: 40, trimDeg: 11, holdEngaged: false });
-    expect(screen.getByText('hold requested · unit not holding')).toBeInTheDocument();
+    renderControl({
+      mode: 'hold',
+      heldDeg: 40,
+      trimDeg: 11,
+      holdPhase: 'requested' as HoldPhase,
+    });
+    expect(screen.getByText('hold requested')).toBeInTheDocument();
     expect(screen.queryByText(/trim \+11°/)).not.toBeInTheDocument();
   });
 
@@ -250,7 +348,8 @@ describe('ThrusterControl mode switch', () => {
       heldDeg: 40,
       armed: true,
       holdsControl: true,
-      holdEngaged: true,
+      holdPhase: 'engaged' as HoldPhase,
+      holdStall: 'none' as HoldStall,
     };
     const { rerender } = render(<ThrusterControl mode="manual" {...props} />);
     press(screen.getByLabelText('Thrust bow to port'));

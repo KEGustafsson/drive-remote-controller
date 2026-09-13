@@ -16,6 +16,8 @@ import io.github.kegustafsson.driveremote.core.ConnectionState
 import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DisplayDrivePosition
+import io.github.kegustafsson.driveremote.core.HoldPhase
+import io.github.kegustafsson.driveremote.core.SkContract
 import io.github.kegustafsson.driveremote.core.StationView
 import io.github.kegustafsson.driveremote.core.ThrusterDirection
 import io.github.kegustafsson.driveremote.core.ThrusterMode
@@ -285,9 +287,12 @@ private val armed =
     rxMasterEnable = true,
     hhArmed = true,
     // HH's own report, which is what the HOLD panel's "HOLDING" caption reads
-    // (StationView.holdEngaged). Armed AND in hold, so a HOLD-mode rendering
+    // (StationView.holdEngaged). Armed AND in hold AND its FSM in HOLDING -- the
+    // pair alone is also what ARMED_IDLE publishes -- so a HOLD-mode rendering
     // here is the engaged one.
     hhMode = "hold",
+    hhFsmState = SkContract.HH_FSM_HOLDING,
+    holdPhase = HoldPhase.ENGAGED,
     thrusterState = "off",
   )
 

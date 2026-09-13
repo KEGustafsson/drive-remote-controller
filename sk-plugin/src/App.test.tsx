@@ -500,17 +500,38 @@ describe('App: "holding" comes from the HH unit, never from being armed', () => 
     ]);
 
     await waitFor(() =>
-      expect(
-        screen.getByText('hold requested · unit not holding'),
-      ).toBeInTheDocument(),
+      expect(screen.getByText('hold requested')).toBeInTheDocument(),
     );
     expect(screen.queryByText('holding')).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/waiting for the thruster unit to engage/),
-    ).toBeInTheDocument();
+    // ...and no alarm, because this is the state every arm passes through and
+    // the request has had no time to fail yet. The window that separates a
+    // transition from a fault is pure/holdPhase.ts, exercised there and in
+    // hooks/useHoldPhase.test.tsx rather than by making this test wait 2 s.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     // The heading itself is still shown -- the INDICATION degrades, the data
     // does not disappear.
     expect(screen.getByText('040°')).toBeInTheDocument();
+  });
+
+  /**
+   * ARMED_IDLE publishes hh.armed exactly as HOLDING does: HH asserts ENABLE in
+   * both. Without its FSM state a hold that never started -- no trustworthy
+   * heading -- reads as a running one, which is the false confidence SAFETY.md
+   * rule 6 exists to prevent.
+   */
+  it('does not claim a hold when HH is armed but idle', async () => {
+    await armIntoHold();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.armed', value: true },
+      { path: 'control.remoteController.hh.mode', value: 'hold' },
+      { path: 'sensors.headingHold.fsmState', value: 'ARMED_IDLE' },
+      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+    ]);
+
+    await waitFor(() =>
+      expect(screen.getByText('hold requested')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('holding')).not.toBeInTheDocument();
   });
 
   it('says holding once HH reports armed and in HOLD', async () => {
@@ -523,9 +544,20 @@ describe('App: "holding" comes from the HH unit, never from being armed', () => 
 
     await waitFor(() => expect(screen.getByText('holding')).toBeInTheDocument());
     expect(screen.getByText(/trim with the arrows/)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/waiting for the thruster unit to engage/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  /** And with HH reporting its FSM in HOLDING, which is the whole test. */
+  it('says holding when HH reports its own FSM holding', async () => {
+    await armIntoHold();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.armed', value: true },
+      { path: 'control.remoteController.hh.mode', value: 'hold' },
+      { path: 'sensors.headingHold.fsmState', value: 'HOLDING' },
+      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+    ]);
+
+    await waitFor(() => expect(screen.getByText('holding')).toBeInTheDocument());
   });
 });
 

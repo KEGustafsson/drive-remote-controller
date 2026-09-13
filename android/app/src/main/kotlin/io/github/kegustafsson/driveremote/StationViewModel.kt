@@ -184,6 +184,14 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    */
   private var thruster = ThrusterCommand.SAFE
 
+  /**
+   * When the hold this station is currently asking for was first asked for, or
+   * null when it is not asking for one. Stamped and cleared in [refreshView] --
+   * see the comment there -- and additionally cleared by [updateThruster] the
+   * instant the MODE changes, which [refreshView]'s 4 Hz sampling cannot see.
+   */
+  private var holdRequestedSinceMs: Long? = null
+
   private var heartbeatJob: Job? = null
   private var tickerJob: Job? = null
   /**
@@ -591,8 +599,27 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     sendIntentNow(urgent = position == DrivePosition.NEUTRAL)
   }
 
+  /**
+   * The single place [thruster] is assigned, so that one rule holds however the
+   * command changes: **a mode change ends the hold request this station was
+   * making.**
+   *
+   * [refreshView] samples the mode at 4 Hz, which is enough to START a window
+   * but cannot see an excursion that begins and ends between two ticks: HOLD ->
+   * MANUAL -> HOLD in a quarter second (two taps on adjacent chips) would leave
+   * the expired window of the FIRST request standing over the second, and paint
+   * the fault band on a request HH has not even been told about yet. Clearing it
+   * here makes that impossible by construction rather than by adding a reset to
+   * each caller -- [setControlsSafe] changes the mode too, and so would the next
+   * writer to touch this field.
+   */
+  private fun updateThruster(next: ThrusterCommand) {
+    if (next.mode != thruster.mode) holdRequestedSinceMs = null
+    thruster = next
+  }
+
   fun setThrusterDirection(direction: ThrusterDirection) {
-    thruster = thruster.withDirection(direction)
+    updateThruster(thruster.withDirection(direction))
     sendIntentNow(urgent = direction == ThrusterDirection.OFF)
   }
 
@@ -612,16 +639,21 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     // publishing on every heartbeat with no finger on the glass, and would be
     // replayed as a live thrust the moment MANUAL came back -- which HH acts on
     // at once, MANUAL having no firmware dwell by design.
-    thruster = thruster.withMode(mode)
+    updateThruster(thruster.withMode(mode))
     _uiState.value =
       _uiState.value.copy(thrusterMode = thruster.mode, trimDeg = thruster.trimDeg)
+    // Re-derive now rather than on the next tick: the view still carries the
+    // phase of the request that just ended, and re-entering HOLD would show its
+    // verdict for up to one poll interval before the window it belongs to has
+    // been stamped. Cheap and pure -- it reads the store and a clock.
+    refreshView()
     // Urgent when the change released something: that send IS the release, and a
     // release must not wait out a stalled press in the lane.
     sendIntentNow(urgent = thruster.direction == ThrusterDirection.OFF)
   }
 
   fun trim(stepDeg: Double) {
-    thruster = thruster.trimmedBy(stepDeg)
+    updateThruster(thruster.trimmedBy(stepDeg))
     _uiState.value = _uiState.value.copy(trimDeg = thruster.trimDeg)
     sendIntentNow()
   }
@@ -658,7 +690,7 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
   private fun setControlsSafe() {
     portPosition = DrivePosition.NEUTRAL
     stbdPosition = DrivePosition.NEUTRAL
-    thruster = ThrusterCommand.SAFE
+    updateThruster(ThrusterCommand.SAFE)
     _uiState.value =
       _uiState.value.copy(thrusterMode = thruster.mode, trimDeg = thruster.trimDeg)
   }
@@ -912,22 +944,42 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
   }
 
   private fun refreshView() {
+    val nowMs = SystemClock.elapsedRealtime()
+
+    // When this station's current hold request began -- a fact about what we are
+    // SENDING, so the store cannot answer it and the pure view has to be told.
+    //
+    // "Asking for a hold" is HOLD selected while this station holds the arm
+    // token: in HOLD the arm IS the request, there is no further press. Read
+    // from the previous tick's view, which puts the start of the window up to
+    // one TELEMETRY_POLL_MS late and therefore any fault message up to 250 ms
+    // late -- out of a 2 s window, and always in the direction of patience.
+    //
+    // Cleared the moment either half stops being true, so a later arm starts a
+    // fresh window rather than inheriting an expired one.
+    val armed = _uiState.value.view?.armed == true
+    holdRequestedSinceMs =
+      if (armed && thruster.mode == ThrusterMode.HOLD) holdRequestedSinceMs ?: nowMs else null
+
     val view =
       deriveStationView(
         store = stream.store,
         connectionState = stream.connectionState.value,
         myClientId = clientId,
-        nowMs = SystemClock.elapsedRealtime(),
+        nowMs = nowMs,
         // So a launch that has not opened its socket yet reads as starting up
         // rather than as a boat that has gone away. See LinkPhase.
         everConnected = stream.everConnected,
         linkAttemptStartedMs = stream.targetSetAtMs,
+        holdRequestedSinceMs = holdRequestedSinceMs,
       )
 
     // Arm-first, then trim: force the trim back to 0 whenever the thruster is
     // not commandable, so arming always begins at "hold the captured heading"
     // and never swings the boat to an offset dialled in earlier.
     if (!view.thrusterCommandable) {
+      // Trim only -- the mode is untouched, so this one does not go through
+      // updateThruster's mode rule (and must not: it runs on every tick).
       thruster = thruster.untrimmed()
     }
 

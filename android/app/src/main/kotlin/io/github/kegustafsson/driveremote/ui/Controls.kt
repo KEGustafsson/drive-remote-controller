@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DrivePosition
+import io.github.kegustafsson.driveremote.core.HoldPhase
+import io.github.kegustafsson.driveremote.core.HoldStall
 import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.SkContract
 import io.github.kegustafsson.driveremote.core.StationView
@@ -469,16 +471,39 @@ fun ThrusterControl(
           // yet; in every one of those the number above is the same live
           // plausible heading, because HH mirrors its setpoint to the fused
           // heading whenever it is NOT holding (ARCHITECTURE.md §9). So the word
-          // comes from view.holdEngaged -- hh.armed + hh.mode, the pair §9 names
-          // -- and until the unit agrees this says what is actually known: the
-          // hold has been REQUESTED.
-          when {
-            enabled && view.holdEngaged -> "°  HOLDING · TRIM ${formatTrim(trimDeg)}°"
-            enabled -> "°  HOLD REQUESTED · UNIT NOT HOLDING"
-            else -> "°  CURRENT HEADING"
+          // comes from view.holdEngaged -- hh.armed + hh.mode plus HH's own FSM
+          // state, since ENABLE is asserted in ARMED_IDLE too -- and until the
+          // unit agrees this says what is actually known: the hold has been
+          // REQUESTED, and after long enough, that it is not being taken.
+          when (view.holdPhase) {
+            HoldPhase.ENGAGED -> "°  HOLDING · TRIM ${formatTrim(trimDeg)}°"
+            // Asked for and not yet confirmed. A statement of what was asked,
+            // not a warning: this is where every arm passes through.
+            HoldPhase.REQUESTED -> "°  HOLD REQUESTED"
+            // Asked for, and HH has had its window and not taken it. The line
+            // below says what to do about it -- except when the thruster simply
+            // belongs to a higher-precedence source, which is not a fault and is
+            // already named by the "controlled by ..." note. That case reads
+            // exactly like a request in flight: our hold is not running, we have
+            // asked for it, and nothing is broken.
+            HoldPhase.NOT_ENGAGING ->
+              if (view.holdStall == HoldStall.OTHER_SOURCE) "°  HOLD REQUESTED"
+              else "°  HOLD NOT ENGAGED"
+            // Not asking: either nothing is commandable here, or the request is
+            // one tick old and the window has not been stamped yet. Both read
+            // the number as the fused heading, so the caption follows `enabled`
+            // exactly as the number above does -- the two must not disagree.
+            HoldPhase.IDLE -> if (enabled) "°  HOLD REQUESTED" else "°  CURRENT HEADING"
           },
           fontSize = helm.text(13.sp),
-          color = DriveColors.inkMuted,
+          color =
+            if (view.holdPhase == HoldPhase.NOT_ENGAGING &&
+              view.holdStall != HoldStall.OTHER_SOURCE
+            ) {
+              DriveColors.bad
+            } else {
+              DriveColors.inkMuted
+            },
           modifier = Modifier.padding(start = helm.size(6.dp)),
         )
       }
@@ -525,16 +550,48 @@ fun ThrusterControl(
       )
     }
 
-    // Armed, in HOLD, and HH has not said it engaged. The caption above names
-    // the state; this names what is being waited for, in the same shape as the
-    // reversal note below -- the operator's move in both cases is to wait, and a
-    // panel that says only "not holding" invites them to go looking for a fault.
-    if (mode == ThrusterMode.HOLD && enabled && !view.holdEngaged) {
+    // Armed, in HOLD, and HH has had every chance to take the hold and has not.
+    //
+    // Deliberately NOT shown while the request is in flight. An unconfirmed hold
+    // is the normal state of the first moment after every arm, and drawing a
+    // warning there put one on the panel every single time -- which is how an
+    // operator learns to read the one that matters as the usual flicker. The
+    // caption above still refuses to say "HOLDING" throughout, so nothing is
+    // being hidden: what is withheld is the ALARM, until there is one.
+    //
+    // Loud when it does appear, and specific: the remedies differ, and a hold
+    // the unit is refusing (SAFETY.md thruster invariant 9 -- a station whose
+    // link went stale mid-hold must disarm before it can engage again) is fixed
+    // from this screen, while a faulted unit is not. OTHER_SOURCE is the one
+    // case drawn as nothing: the "controlled by ..." note below already says it,
+    // and it is not a fault.
+    if (mode == ThrusterMode.HOLD &&
+      view.holdPhase == HoldPhase.NOT_ENGAGING &&
+      view.holdStall != HoldStall.OTHER_SOURCE
+    ) {
       Text(
-        "hold requested — waiting for the thruster unit to engage",
-        fontSize = helm.text(12.sp),
-        color = DriveColors.warn,
-        modifier = Modifier.padding(top = helm.size(6.dp)),
+        when (view.holdStall) {
+          HoldStall.UNIT_FAULT -> "NOT HOLDING — UNIT FAULT"
+          HoldStall.NO_REFERENCE -> "NOT HOLDING — NO HEADING FIX"
+          HoldStall.REFUSED -> "NOT HOLDING — RE-ARM TO ENGAGE"
+          // Including HH saying nothing at all: state the fact, and the one
+          // remedy that is safe to suggest whatever the cause.
+          else -> "NOT HOLDING — CHECK THE UNIT"
+        },
+        fontSize = helm.text(13.sp),
+        fontWeight = FontWeight.Bold,
+        color = DriveColors.ink,
+        // Padding, then the band, then padding: the first is the gap above the
+        // band, the second is the space inside it. Chained the other way round
+        // the band would be drawn over the gap. One line, on purpose -- this
+        // panel sits in the screen's natural-height chrome, so anything that
+        // wraps here comes out of the drive bank's reservation.
+        modifier =
+          Modifier.padding(top = helm.size(6.dp))
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(DriveColors.bad)
+            .padding(horizontal = helm.size(8.dp), vertical = helm.size(4.dp)),
       )
     }
 

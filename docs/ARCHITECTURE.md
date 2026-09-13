@@ -678,9 +678,13 @@ of a stale number growing against a heading nobody is holding. The mirror is
 inert by construction: entering HOLDING re-captures the setpoint from the fused
 heading anyway, the switcher does not run outside HOLD, and there is no integral
 term to wind up. A consumer that needs to distinguish "holding this" from "would
-hold this" reads `hh.armed` + `hh.mode` (or `sensors.headingHold.fsmState`) —
-the value itself is live in both cases and must never be labelled "holding"
-unconditionally. Note what was deliberately NOT done: publishing a literal `0`
+hold this" reads `hh.armed` + `hh.mode`, and — where the difference matters —
+`sensors.headingHold.fsmState` as well: ENABLE is asserted in `ARMED_IDLE` as
+much as in `HOLDING`, so the pair alone cannot tell a running hold from one that
+never started for want of a trustworthy heading, or one given up after coasting
+past `coast_max`. The FSM state separates those three; the pair narrows it to
+them. The setpoint value itself is live in every case and must never be labelled
+"holding" unconditionally. Note what was deliberately NOT done: publishing a literal `0`
 for the error while disarmed would be indistinguishable from a perfect hold,
 which is the one reading nobody questions.
 

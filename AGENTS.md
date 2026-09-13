@@ -194,6 +194,15 @@ registration the whole token path depends on must actually be **deployed** on
 the server; an older plugin build returns 401 to every token station, TX/RX/HH
 included.
 
+**The hold-phase indication has run on the boat (2026-09-13).** The owner
+exercised it against real HH hardware with the Signal K plugin and the Android
+station connected and commanding, and reports it working: the panel no longer
+warns on the way into every hold. What that does NOT cover is the loud half. No
+refusal was provoked, so `NOT HOLDING — RE-ARM TO ENGAGE` and its three
+siblings have still only ever been rendered by a suite. The wording and the
+band's geometry on a real phone remain unseen, as does the `ARMED_IDLE` reading
+that `sensors.headingHold.fsmState` now separates from a running hold.
+
 **Resolved layout defect, now guarded by a suite, still awaiting phone
 remeasurement:** expanding Android telemetry formerly compressed each drive
 button from 131 dp to 4.7 dp. The drive bank now reserves 280 dp and is

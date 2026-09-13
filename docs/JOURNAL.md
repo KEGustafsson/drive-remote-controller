@@ -7032,3 +7032,98 @@ same defect and carries the same rule now, derived once in `StationView` as
   CodeRabbit read it as a re-engage. Making a source change a re-engage
   boundary would drop a hold the plugin operator deliberately armed for,
   so it is left as designed and raised here for the owner.
+
+## 2026-09-13 — A yellow line on every arm, and the refusal it was hiding
+
+Reported from the boat, and the second defect found by using the app rather
+than by a suite: the Android panel kept flashing *"hold requested — waiting for
+the thruster unit to engage"* on the way into every hold — and once, it stayed
+there. The owner's framing settled the design before any code was written: if
+the transition is gated then say nothing, and if it is a real error then
+highlight it.
+
+**Both halves were the same defect.** The whole-repository review two commits
+back made "HOLDING" HH's word rather than the station's, which was right, and
+then drew every moment before HH's first report as a warning. That moment is
+the intent heartbeat, the arbiter's republish, HH's control tick and its ~15 Hz
+telemetry coming back — a few hundred milliseconds on every single arm. A
+warning that appears every time is one the operator learns to read past, which
+is precisely why the time it stayed on screen said nothing useful.
+
+`StationView` now derives a `HoldPhase`: `REQUESTED` inside a 2 s window
+(`SkContract.HOLD_ENGAGE_GRACE_MS`, sized on that round trip, and the same
+shape as `LINK_STARTUP_GRACE_MS` — nothing is gated on it, it decides only what
+the operator is told), `ENGAGED` on HH's own report, `NOT_ENGAGING` once the
+unit has had its window and not taken the hold. In flight the caption reads
+`HOLD REQUESTED` in the ordinary muted grey; it still never says HOLDING, so
+what is withheld is the alarm, not the truth.
+
+**What it stayed on for.** The same review added the re-engage latch: HH
+refuses a remote source that was holding and went stale, and boots in that
+state, until it has seen that source live *and* disabled (SAFETY.md thruster
+invariant 9). A station left armed across an HH restart is therefore refused
+indefinitely, by design — nothing on the boat is broken and nothing will change
+until the operator disarms. The station cannot clear that for them: arming
+itself would manufacture the engage edge the latch exists to refuse. So it says
+so, in a red band, with the move that fixes it: `NOT HOLDING — RE-ARM TO
+ENGAGE`.
+
+**Which needed HH's FSM state, and that closed an older hole on the way.** The
+2026-09-10 entry above had already worked out that `hh.armed` + `hh.mode` cannot
+mean "holding": ENABLE is asserted in `ARMED_IDLE` as much as in `HOLDING`, so a
+hold that never started for want of a trustworthy heading — or one dropped after
+coasting past `coast_max` — publishes exactly the armed + hold pair of a running
+one. The review shipped that pair anyway as `holdEngaged`. The app now also
+subscribes to `sensors.headingHold.fsmState`, which HH has published every cycle
+all along, so nothing changes at the unit and no delta is displaced from its
+18-of-20 budget. `holdEngaged` requires `HOLDING` when the state is there and
+falls back to the pair when it is not; the stall reason reads the same value, so
+`ARMED_IDLE` says `NO HEADING FIX` and `FAULT` says `UNIT FAULT` rather than
+sending the operator to re-arm something re-arming cannot fix. A thruster the
+local switch or TX owns is drawn as nothing at all — the `controlled by …` note
+already says it, and it is not a fault.
+
+Geometry is a safety property on that screen, so the band is measured as well
+as asserted: `ThrusterModeSelectionTest` renders it on the 360×512 dp floor and
+checks the drive contacts still clear 88 dp under it.
+
+**And then the browser station, which had both defects in the same words.**
+Same rule, same window, same wording as far as its own idiom allows: the phase
+is pure (`src/pure/holdPhase.ts`, the twin of the Kotlin `HoldPhase`/`HoldStall`
+— the two stations must not disagree about what is worth alarming an operator
+over), the clock that expires the window is `useHoldPhase` (the same necessity
+as `useUnitLiveness`: a hold that never arrives produces no event, so React
+would never re-render to find out), and `holdEngagedFrom` requires `HOLDING`
+with the same fallback to the pair. The band is `.thruster-control__alarm`,
+`role="alert"` rather than the notes' `role="status"`, because this one
+interrupts.
+
+**One review round, and three of the four findings were the code disagreeing
+with its own comments.** A thruster owned by the local switch or TX had been
+written up, twice, as "not a fault, drawn as nothing" -- and then both stations
+drew it as one anyway: the band was suppressed but the caption still read HOLD
+NOT ENGAGED, in red on the phone, over a note saying TX had the thruster. It now
+reads exactly like a request in flight, which is what it is. The Android hold
+window was likewise documented as cleared "the moment either half stops being
+true", but `refreshView` samples the mode at 4 Hz: HOLD -> MANUAL -> HOLD inside
+a quarter second left the first request's expired window standing over the
+second, and painted the fault band on a request HH had not yet been told about.
+Every `thruster` assignment now goes through one `updateThruster`, which clears
+the window on any mode change -- structural rather than a reset per caller,
+since `setControlsSafe` changes the mode too. The fourth was a stale line in
+`android/README.md` claiming the browser still carried the older wording, and a
+subscription count the new path had moved.
+
+Suites: Android core 186 (was 178), app 82 (was 75), plugin 296 (was 277).
+
+**Run on the boat the same day.** The owner exercised it against real HH
+hardware with the plugin and the Android station connected and commanding, and
+reported it working -- the panel no longer warns on the way into every hold.
+That is the quiet half proven where it matters, on the water rather than in
+Robolectric.
+
+The loud half is still only rendered by a suite: no refusal was provoked, so no
+band has been seen on a real screen, and neither has the ARMED_IDLE reading that
+`sensors.headingHold.fsmState` now separates from a running hold. The next time
+HH is power-cycled with a station left armed will exercise it -- which is exactly
+how the owner met this in the first place.

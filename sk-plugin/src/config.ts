@@ -78,6 +78,28 @@ export const SK_HH_ARMED_PATH = 'control.remoteController.hh.armed';
 export const SK_HH_REVERSAL_PENDING_PATH =
   'control.remoteController.hh.reversalPending';
 
+// HH's own safety-FSM state: 'DISARMED', 'ARMED_IDLE', 'HOLDING' or 'FAULT'.
+//
+// Telemetry about the unit rather than part of the command contract -- hence
+// the sensors.* tree -- and published by HH on every telemetry cycle, so
+// subscribing costs nothing at the unit.
+//
+// It is read because hh.armed + hh.mode cannot tell "holding" from "armed and
+// not holding": ENABLE is asserted in BOTH ARMED_IDLE and HOLDING
+// (control_step.cpp), so a hold that never started for want of a trustworthy
+// heading, or one dropped when the heading went stale past coast_max, publishes
+// exactly the same pair as a running hold. This is the unit's own answer, and it
+// is also what lets this UI say WHY a hold is not running rather than only that
+// it is not.
+export const SK_HH_FSM_STATE_PATH = 'sensors.headingHold.fsmState';
+
+// The sensors.headingHold.fsmState values, as ControlTask::StateName spells
+// them (hh/control_task.cpp).
+export const HH_FSM_DISARMED = 'DISARMED';
+export const HH_FSM_ARMED_IDLE = 'ARMED_IDLE';
+export const HH_FSM_HOLDING = 'HOLDING';
+export const HH_FSM_FAULT = 'FAULT';
+
 // Largest heading-trim offset a station may command, in degrees. Mirrors
 // control_core::kMaxTrimDeg (setpoint.h). A relative trim needs no "not
 // commanding" sentinel: 0 is the well-defined rest, so the old
@@ -133,6 +155,7 @@ export const SUBSCRIBE_PATHS = [
   SK_HH_SETPOINT_PATH,
   SK_HH_ARMED_PATH,
   SK_HH_REVERSAL_PENDING_PATH,
+  SK_HH_FSM_STATE_PATH,
 ] as const;
 
 // config::kSkPeriodicRefreshMs. TX and RX publish on change plus this
@@ -165,6 +188,23 @@ export const RX_TELEMETRY_STALE_MS = 1500;
 // to be driven by a clock. Matches the publish cadence, so a link that dies
 // is noticed within one refresh of the timeout above.
 export const RX_TELEMETRY_POLL_MS = PERIODIC_REFRESH_MS;
+
+// How long a requested hold may go unconfirmed by HH before this UI calls it a
+// fault rather than a transition.
+//
+// Nothing is gated on it and no command changes when it expires -- it decides
+// only what the operator is TOLD. Before it expires an unconfirmed hold is a
+// request in flight, and a warning there would cry wolf on every single arm;
+// after it, the unit has had every chance to take the hold and has not, which is
+// a fault and is shown as one.
+//
+// Sized against the round trip it waits for: this station's intent cadence
+// (PERIODIC_REFRESH_MS, 250 ms), the arbiter's republish (another 250 ms), HH's
+// control tick, its ~15 Hz telemetry cycle (config::kTelemetryPublishPeriodMs,
+// 67 ms) and the delta coming back. Well under a second in total on a healthy
+// boat network, so 2 s leaves room for a busy link without letting a genuinely
+// refused hold sit unreported.
+export const HOLD_ENGAGE_GRACE_MS = 2000;
 
 // Heading-trim button steps, matching config::kHeadingNudge*Deg. On a phone
 // these are four discrete buttons rather than the handheld remote's

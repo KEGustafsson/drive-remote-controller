@@ -62,6 +62,128 @@ fun linkPhaseOf(
   }
 
 /**
+ * What has become of this station's request for a heading hold.
+ *
+ * The point of the type is the middle state. A hold is not instantaneous: the
+ * request leaves on the next intent, the arbiter republishes it, HH takes it on
+ * a control tick and reports back on its own telemetry cycle -- so for a few
+ * hundred milliseconds after every arm the honest answer is "asked, not
+ * confirmed". Before this existed that interval was drawn as a warning, which
+ * put a yellow line on the panel on every single arm and taught the operator to
+ * read the one that MATTERS -- a hold the unit is genuinely refusing -- as the
+ * same harmless flicker.
+ *
+ * Note what is NOT in here: "holding, probably". [ENGAGED] is HH's own report
+ * and nothing else. The grace window moves the boundary between [REQUESTED] and
+ * [NOT_ENGAGING]; it never lets an unconfirmed hold read as a running one.
+ */
+enum class HoldPhase {
+  /** This station is not asking for a hold, or cannot command the thruster. */
+  IDLE,
+
+  /**
+   * Asked for, not yet confirmed by HH, and still inside
+   * [SkContract.HOLD_ENGAGE_GRACE_MS]. A transition, shown as a plain statement
+   * of what was asked -- never as a warning.
+   */
+  REQUESTED,
+
+  /** HH reports the hold running. See [StationView.holdEngaged]. */
+  ENGAGED,
+
+  /**
+   * Asked for, and HH has had long enough to take it and has not. A fault, and
+   * shown as one: the operator is looking at a thruster that is not holding the
+   * heading they asked it to hold. [StationView.holdStall] names the reason.
+   */
+  NOT_ENGAGING,
+}
+
+/**
+ * Why a requested hold is not running, as far as this station can tell.
+ *
+ * Read from HH's own FSM state ([SkContract.HH_FSM_STATE]) rather than guessed,
+ * because the remedies differ: a refused hold needs a disarm and a fresh arm, a
+ * missing heading reference needs the fix to come back first, and a faulted unit
+ * needs someone to go and look at it. Only meaningful while the phase is
+ * [HoldPhase.NOT_ENGAGING].
+ */
+enum class HoldStall {
+  /** Not stalled. */
+  NONE,
+
+  /**
+   * HH is not armed at all: it is refusing the request. The usual cause is the
+   * re-engage latch (SAFETY.md thruster invariant 9) -- a station whose link
+   * went stale mid-hold is refused until HH has seen it live and DISARMED, so
+   * that a returning link cannot silently restart thrust. The operator's move is
+   * to disarm and arm again.
+   */
+  REFUSED,
+
+  /**
+   * HH is armed but idle, which in HOLD means it has no heading it trusts enough
+   * to steer against -- either it never had one, or it gave the hold up after
+   * coasting past `coast_max` on a stale fix. Either way it needs a fresh arm
+   * once the fix is back; nothing on the phone can shorten that.
+   */
+  NO_REFERENCE,
+
+  /** HH has faulted -- its motion sensor has gone silent. Thrust is refused. */
+  UNIT_FAULT,
+
+  /**
+   * Somebody else has the thruster (the unit's own ENGAGE input, or the
+   * handheld). Not a fault at all, and already explained by the
+   * "controlled by ..." note, which is why this one is drawn as nothing.
+   */
+  OTHER_SOURCE,
+
+  /**
+   * HH has not said, or said something this build does not recognise. The
+   * message falls back to the fact -- it is not holding -- and to the one remedy
+   * that is safe to suggest in every case.
+   */
+  UNKNOWN,
+}
+
+/**
+ * [HoldPhase] from the facts. Pure, and the whole rule in one place.
+ *
+ * [requestedForMs] is how long this station has been asking for a hold, or null
+ * when it is not asking for one at all -- so the null case is "no hold wanted"
+ * rather than "unknown", and a caller that never tracks it gets [HoldPhase.IDLE]
+ * and no hold diagnostics, never a false alarm.
+ */
+fun holdPhaseOf(
+  thrusterCommandable: Boolean,
+  holdEngaged: Boolean,
+  requestedForMs: Long?,
+): HoldPhase =
+  when {
+    requestedForMs == null || !thrusterCommandable -> HoldPhase.IDLE
+    holdEngaged -> HoldPhase.ENGAGED
+    requestedForMs < SkContract.HOLD_ENGAGE_GRACE_MS -> HoldPhase.REQUESTED
+    else -> HoldPhase.NOT_ENGAGING
+  }
+
+/**
+ * Why the hold is not running, from HH's FSM state.
+ *
+ * [thrusterOverridden] is checked first: a hold that is not running because the
+ * thruster belongs to a higher-precedence source is not this station's fault to
+ * report twice.
+ */
+fun holdStallOf(hhFsmState: String?, thrusterOverridden: Boolean): HoldStall =
+  when {
+    thrusterOverridden -> HoldStall.OTHER_SOURCE
+    hhFsmState == SkContract.HH_FSM_FAULT -> HoldStall.UNIT_FAULT
+    hhFsmState == SkContract.HH_FSM_ARMED_IDLE -> HoldStall.NO_REFERENCE
+    hhFsmState == SkContract.HH_FSM_DISARMED -> HoldStall.REFUSED
+    else -> HoldStall.UNKNOWN
+  }
+
+/**
  * Everything the UI needs to draw itself, derived in one pure place.
  *
  * The Compose layer renders this and nothing else -- it performs no liveness
@@ -147,6 +269,23 @@ data class StationView(
    */
   val hhMode: String?,
   val thrusterState: String?,
+
+  /**
+   * HH's own safety-FSM state ([SkContract.HH_FSM_STATE]), or null if it has not
+   * said. A VALUE, so it is only ever read through something that has already
+   * established HH is live -- [holdEngaged] and [holdPhase] both are.
+   */
+  val hhFsmState: String? = null,
+
+  /**
+   * What has become of this station's hold request. Defaults to the answer for a
+   * station that is not asking for one, so a caller that does not track the
+   * request gets no hold diagnostics rather than a wrong one.
+   */
+  val holdPhase: HoldPhase = HoldPhase.IDLE,
+
+  /** Why, when [holdPhase] is [HoldPhase.NOT_ENGAGING]. */
+  val holdStall: HoldStall = HoldStall.NONE,
 ) {
   val armed: Boolean
     get() = controlState == ControlState.YOU
@@ -186,7 +325,19 @@ data class StationView(
    * cannot drift apart.
    */
   val holdEngaged: Boolean
-    get() = hhArmed == true && hhMode == ThrusterMode.HOLD.wire && readyToArm(hhLiveness)
+    get() =
+      hhArmed == true &&
+        hhMode == ThrusterMode.HOLD.wire &&
+        readyToArm(hhLiveness) &&
+        // The pair above is necessary and not sufficient: HH asserts ENABLE --
+        // and so publishes hh.armed -- in ARMED_IDLE as well as HOLDING
+        // (control_step.cpp), and in HOLD mode ARMED_IDLE is precisely the state
+        // of a hold that never started, or that was given up when the heading
+        // went stale past coast_max. Both publish armed + hold and neither is
+        // holding anything. HH's own FSM state settles it when it is there;
+        // when it is not -- nothing has arrived yet, or a firmware that predates
+        // the path -- the pair stands on its own as before.
+        (hhFsmState == null || hhFsmState == SkContract.HH_FSM_HOLDING)
 }
 
 /**
@@ -210,6 +361,17 @@ fun deriveStationView(
    * for.
    */
   linkAttemptStartedMs: Long? = null,
+  /**
+   * When this station's CURRENT hold request began, on the same clock as
+   * [nowMs]; null when it is not asking for a hold (MANUAL selected, or not
+   * armed).
+   *
+   * Kept by the caller because it is a fact about what this station is sending,
+   * which nothing in [store] can answer -- the store holds what the boat says
+   * back. Defaults to null, the "no hold wanted" answer, so a caller that does
+   * not track it gets no hold diagnostics rather than a false alarm.
+   */
+  holdRequestedSinceMs: Long? = null,
 ): StationView {
   val rxLiveness =
     evaluateLiveness(
@@ -234,42 +396,64 @@ fun deriveStationView(
   val stbdSource = parseSource(store[SkContract.RX_STBD_SOURCE])
   val thrusterSource = parseSource(store[SkContract.HH_SOURCE])
 
-  return StationView(
-    connectionState = connectionState,
-    linkPhase =
-      linkPhaseOf(
-        connectionState = connectionState,
-        everConnected = everConnected,
-        connectingForMs = linkAttemptStartedMs?.let { nowMs - it } ?: Long.MAX_VALUE,
-      ),
-    controlState = controlState,
-    rxLiveness = rxLiveness,
-    hhLiveness = hhLiveness,
-    canArm = canArm(rxLiveness, hhLiveness),
-    driveCommandable = driveCommandable,
-    thrusterCommandable = thrusterCommandable,
-    portState = parseDisplayPosition(store[SkContract.RX_PORT_STATE]),
-    stbdState = parseDisplayPosition(store[SkContract.RX_STBD_STATE]),
-    portSource = portSource,
-    stbdSource = stbdSource,
-    thrusterSource = thrusterSource,
-    portOverriddenBy = overrideNote(driveCommandable, portSource),
-    stbdOverriddenBy = overrideNote(driveCommandable, stbdSource),
-    thrusterOverriddenBy = overrideNote(thrusterCommandable, thrusterSource),
-    heldDeg = plausibleHeadingOrNull(store[SkContract.HH_SETPOINT]),
-    currentHeadingDeg =
-      (store[SkContract.HH_FUSED_HEADING_RAD] as? Number)?.toDouble()?.let { rad ->
-        // Published in radians; every other angle here is degrees. Normalised to
-        // 0..360 because the fused value is free to run negative.
-        plausibleHeadingOrNull(((Math.toDegrees(rad) % 360.0) + 360.0) % 360.0)
+  // Everything except the hold phase, which is a function of this view's own
+  // holdEngaged -- derived from the half-built view rather than recomputed from
+  // the store, so there is exactly one definition of "HH reports the hold
+  // running" and no second copy of it to drift.
+  val view =
+    StationView(
+      connectionState = connectionState,
+      linkPhase =
+        linkPhaseOf(
+          connectionState = connectionState,
+          everConnected = everConnected,
+          connectingForMs = linkAttemptStartedMs?.let { nowMs - it } ?: Long.MAX_VALUE,
+        ),
+      controlState = controlState,
+      rxLiveness = rxLiveness,
+      hhLiveness = hhLiveness,
+      canArm = canArm(rxLiveness, hhLiveness),
+      driveCommandable = driveCommandable,
+      thrusterCommandable = thrusterCommandable,
+      portState = parseDisplayPosition(store[SkContract.RX_PORT_STATE]),
+      stbdState = parseDisplayPosition(store[SkContract.RX_STBD_STATE]),
+      portSource = portSource,
+      stbdSource = stbdSource,
+      thrusterSource = thrusterSource,
+      portOverriddenBy = overrideNote(driveCommandable, portSource),
+      stbdOverriddenBy = overrideNote(driveCommandable, stbdSource),
+      thrusterOverriddenBy = overrideNote(thrusterCommandable, thrusterSource),
+      heldDeg = plausibleHeadingOrNull(store[SkContract.HH_SETPOINT]),
+      currentHeadingDeg =
+        (store[SkContract.HH_FUSED_HEADING_RAD] as? Number)?.toDouble()?.let { rad ->
+          // Published in radians; every other angle here is degrees. Normalised to
+          // 0..360 because the fused value is free to run negative.
+          plausibleHeadingOrNull(((Math.toDegrees(rad) % 360.0) + 360.0) % 360.0)
+        },
+      reversalPending = store.boolOrNull(SkContract.HH_REVERSAL_PENDING) == true,
+      rxLinkUp = store.boolOrNull(SkContract.RX_LINK_UP),
+      rxLinkOk = store.boolOrNull(SkContract.RX_LINK_OK),
+      rxMasterEnable = store.boolOrNull(SkContract.RX_MASTER_ENABLE),
+      hhArmed = store.boolOrNull(SkContract.HH_ARMED),
+      hhMode = store.stringOrNull(SkContract.HH_MODE),
+      thrusterState = store.stringOrNull(SkContract.HH_THRUSTER_STATE),
+      hhFsmState = store.stringOrNull(SkContract.HH_FSM_STATE),
+    )
+
+  val holdPhase =
+    holdPhaseOf(
+      thrusterCommandable = view.thrusterCommandable,
+      holdEngaged = view.holdEngaged,
+      requestedForMs = holdRequestedSinceMs?.let { nowMs - it },
+    )
+  return view.copy(
+    holdPhase = holdPhase,
+    holdStall =
+      if (holdPhase == HoldPhase.NOT_ENGAGING) {
+        holdStallOf(view.hhFsmState, view.thrusterOverriddenBy != null)
+      } else {
+        HoldStall.NONE
       },
-    reversalPending = store.boolOrNull(SkContract.HH_REVERSAL_PENDING) == true,
-    rxLinkUp = store.boolOrNull(SkContract.RX_LINK_UP),
-    rxLinkOk = store.boolOrNull(SkContract.RX_LINK_OK),
-    rxMasterEnable = store.boolOrNull(SkContract.RX_MASTER_ENABLE),
-    hhArmed = store.boolOrNull(SkContract.HH_ARMED),
-    hhMode = store.stringOrNull(SkContract.HH_MODE),
-    thrusterState = store.stringOrNull(SkContract.HH_THRUSTER_STATE),
   )
 }
 
