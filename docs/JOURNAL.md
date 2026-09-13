@@ -7116,8 +7116,14 @@ subscription count the new path had moved.
 
 Suites: Android core 186 (was 178), app 82 (was 75), plugin 296 (was 277).
 
-Host-verified only, as ever: Robolectric lays the Android band out, jsdom the
-browser one, and both suites drive the window off a fake clock -- but neither
-station has shown a band on the boat and no refusal has been provoked at HH. The first real test is the next time the unit is
-power-cycled with a station left armed -- which is exactly how the owner met
-this in the first place.
+**Run on the boat the same day.** The owner exercised it against real HH
+hardware with the plugin and the Android station connected and commanding, and
+reported it working -- the panel no longer warns on the way into every hold.
+That is the quiet half proven where it matters, on the water rather than in
+Robolectric.
+
+The loud half is still only rendered by a suite: no refusal was provoked, so no
+band has been seen on a real screen, and neither has the ARMED_IDLE reading that
+`sensors.headingHold.fsmState` now separates from a running hold. The next time
+HH is power-cycled with a station left armed will exercise it -- which is exactly
+how the owner met this in the first place.
