@@ -27,6 +27,7 @@
 // listener callbacks is a torn read of a live source, not a dead one. See
 // SkThrusterIn::Snapshot.
 
+#include <atomic>
 #include <memory>
 
 #include "drive/link_watchdog.h"
@@ -60,6 +61,25 @@ class SkThrusterIn {
                 const control_core::ThrusterStaleness& staleness,
                 control_core::ThrusterRemote* out);
 
+  // Link diagnostics, shown on HH's web status page (/api/info) so the source
+  // liveness path can be judged over WiFi on a unit with no serial console.
+  // Lock-free reads of counters the control task writes; each value is
+  // individually current, not a coherent set.
+  //   future_stamps     -- snapshots that found an update stamped after the
+  //                        tick's clock (common/elapsed_ms.h). Harmless since
+  //                        ElapsedMs; counted to show how often the race runs.
+  //   stale_transitions -- live -> not-live verdicts taken by Snapshot().
+  //   last_stale_age_ms -- the oldest member's age at the latest of those. A
+  //                        genuine loss reads just over the timeout.
+  //   contended         -- ticks that found the mutex busy and aged the cache.
+  struct Diagnostics {
+    uint32_t future_stamps;
+    uint32_t stale_transitions;
+    uint32_t last_stale_age_ms;
+    uint32_t contended;
+  };
+  Diagnostics diagnostics() const;
+
  private:
   std::shared_ptr<sensesp::SKValueListener<String>> command_listener_;
   std::shared_ptr<sensesp::SKValueListener<String>> mode_listener_;
@@ -75,4 +95,10 @@ class SkThrusterIn {
   control_core::LinkWatchdog trim_watchdog_;
   control_core::LinkWatchdog enabled_watchdog_;
   SemaphoreHandle_t mutex_ = nullptr;
+
+  bool was_live_ = false;  // control task only, under mutex_
+  std::atomic<uint32_t> future_stamps_{0};
+  std::atomic<uint32_t> stale_transitions_{0};
+  std::atomic<uint32_t> last_stale_age_ms_{0};
+  std::atomic<uint32_t> contended_{0};
 };

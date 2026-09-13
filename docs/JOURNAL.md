@@ -7199,3 +7199,76 @@ a station cannot tell "HH is not hearing the commands" (`hh.linkUp` false) from
 and only the serial log separates them. `hh.linkUp`'s value is already
 subscribed by both stations and would answer it; publishing the latch flag would
 answer it outright. Neither is done here.
+
+## 2026-09-13 — It was never the link: a clock read that ran behind its own evidence
+
+The 2 s HOLD window above did not stop the drops. With HH flashed to it, the
+owner armed from the phone and holds still ended on their own, 41 s to 226 s
+in, each time the same way: `hh.linkUp` false for about 250 ms, `DISARMED`,
+source `none`, and the plugin still publishing `enabled=true` for the same
+client throughout. The previous entry's diagnosis — transport jitter pushing a
+source past its window — was wrong, and the evidence against it was
+measurable from the Signal K host:
+
+- **Plugin -> server:** all four thruster paths every 250 ms, worst gap 266 ms.
+- **Server -> HH:** a second client subscribed exactly as SensESP does (same
+  nine paths, `period: 50`, `sendMeta=all`) received every plugin path within
+  269 ms straight through a drop, at 5566 B/s — the byte rate on HH's own
+  socket.
+- **TCP/WiFi:** `ss` at 10 Hz showed `bytes_acked` to HH rising every 100 ms
+  across the two seconds before a drop, no retransmit backoff; ping 3–6 ms, no
+  loss. HH's lwIP window is 5760 B, about a second of that feed, so a
+  receive-side stall long enough to matter would have closed it. It did not.
+- **HH's loop:** its own telemetry kept arriving every ~100 ms.
+
+Nothing was silent for two seconds. And a *recovery* of one republish period is
+the signature of a latched stale verdict cleared by the path's next delta, not
+of a gap that ended.
+
+**The mechanism.** The control task reads `millis()` once at the top of a tick
+and judges every source against it. The SK listener callbacks stamp their own
+`millis()` when the loop task processes a delta. A callback that completes
+after the tick's clock read but before its `Snapshot()` records an update a
+millisecond or two later than `now_ms`, and `now_ms - last_update_ms` on
+`uint32_t` read that — the freshest evidence the unit holds — as ~49 days old.
+`LinkWatchdog` latched it stale until the path's next delta, and on HH the
+re-engage latch turned the blip into the end of the hold. Before `ce9c518` the
+same blip silently restarted the hold on a fresh heading capture instead, which
+is very likely what the 2026-09 "torn read" comment in `SkThrusterIn::Snapshot`
+was actually seeing.
+
+What lets the priority-1 loop task run inside a priority-2 tick on the same core
+was not identified. The 5 s jitter log sits in that gap and blocks on the UART,
+but the drop times do not fall on a 5 s grid. The fix does not depend on it.
+
+**The fix** is `common/elapsed_ms.h`: `ElapsedMs(now, then)` is the unsigned
+difference, rollover-safe as before, except that a difference in the upper half
+of the range is a timestamp from after `now` and reads as age 0. That cannot
+hide a real loss: every source is polled every tick and latched at its timeout,
+some 24.8 days before a true age could get there. `LinkWatchdog::IsLive`,
+`AgeCachedSnapshot`, and the age arithmetic in both `SkThrusterIn::Snapshot`
+(HH) and `SkCommandIn::Snapshot` (RX) use it. `HeadingFilter` still rejects a
+future-stamped fix, deliberately and harmlessly — the next one is 100 ms away.
+
+**And the board says so.** HH has no serial console on the boat, so
+`SkThrusterIn` now counts, for the plugin source, future-stamped updates,
+live->stale verdicts, the oldest member's age at the last of those, and
+contended snapshots, on the web status page (`/api/info`, group *Thruster link
+(plugin)*) rather than on Signal K, whose outbound queue is already two short.
+
+**On hardware, the same evening.** Flashed over OTA with the owner holding from
+the phone. Eleven minutes of continuous `HOLDING` (19:05–19:16 UTC), 0 of 9737
+`hh.linkUp` samples false, **9 future-stamped updates absorbed** — one every
+~73 s, the old drop interval — and **0 stale verdicts**. The race is real, it is
+this frequent, and every one of those nine would have ended the hold.
+
+A note on the evidence that almost misled: `gnssAge` showed 4294968 s in the
+history, exactly 2^32 ms. That is `HeadingFilter`'s no-fix-yet `UINT32_MAX`
+right after a boot, not this race. The counter above is what proves it.
+
+Not proven: RX carries the same fix but was only rebuilt, not flashed; its drive
+path has the same exposure (a healthy station read not-live for a refresh). The
+build host's `esp32/include/secrets.h` was created from the sibling project's
+copy plus the server and HH addresses observed live; the OTA password
+authenticated, so it matches what the boards were built with. Suites: native
+285 (was 280); all three firmwares build.

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include "common/elapsed_ms.h"
 #include "heading/setpoint.h"  // control_core::ClampTrimDeg
 #include "sensesp/system/lambda_consumer.h"
 #include "strict_sk_listeners.h"
@@ -89,7 +90,10 @@ bool SkThrusterIn::Snapshot(uint32_t now_ms,
                             const control_core::ThrusterStaleness& staleness,
                             control_core::ThrusterRemote* out) {
   if (mutex_ == nullptr) return false;
-  if (xSemaphoreTake(mutex_, 0) != pdTRUE) return false;
+  if (xSemaphoreTake(mutex_, 0) != pdTRUE) {
+    contended_.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
 
   // The window this source is judged on depends on the mode it is publishing,
   // and `mode_` is read here under the same acquisition as the watchdogs below
@@ -108,19 +112,43 @@ bool SkThrusterIn::Snapshot(uint32_t now_ms,
   // sees a torn read of a healthy publisher; treating that as a dead source
   // dropped HOLD for a tick and made the next complete tuple look like a fresh
   // engage, silently recapturing the heading and abandoning the setpoint.
+  //
+  // A callback that completed after this tick read its clock has stamped an
+  // update LATER than now_ms. That is fresh evidence, and every age below is
+  // taken with ElapsedMs so it reads as such (common/elapsed_ms.h) -- plain
+  // subtraction called it ~49 days old and ended engaged holds.
+  using control_core::ElapsedMs;
+  using control_core::IsFutureTimestamp;
+  if ((command_watchdog_.HasEverUpdated() &&
+       IsFutureTimestamp(now_ms, command_watchdog_.LastUpdateMs())) ||
+      (mode_watchdog_.HasEverUpdated() &&
+       IsFutureTimestamp(now_ms, mode_watchdog_.LastUpdateMs())) ||
+      (trim_watchdog_.HasEverUpdated() &&
+       IsFutureTimestamp(now_ms, trim_watchdog_.LastUpdateMs())) ||
+      (enabled_watchdog_.HasEverUpdated() &&
+       IsFutureTimestamp(now_ms, enabled_watchdog_.LastUpdateMs()))) {
+    future_stamps_.fetch_add(1, std::memory_order_relaxed);
+  }
+
   out->live = command_watchdog_.IsLive(now_ms, timeout_ms) &&
               mode_watchdog_.IsLive(now_ms, timeout_ms) &&
               trim_watchdog_.IsLive(now_ms, timeout_ms) &&
               enabled_watchdog_.IsLive(now_ms, timeout_ms);
+  const uint32_t command_age =
+      ElapsedMs(now_ms, command_watchdog_.LastUpdateMs());
+  const uint32_t mode_age = ElapsedMs(now_ms, mode_watchdog_.LastUpdateMs());
+  const uint32_t trim_age = ElapsedMs(now_ms, trim_watchdog_.LastUpdateMs());
+  const uint32_t enabled_age =
+      ElapsedMs(now_ms, enabled_watchdog_.LastUpdateMs());
+  const uint32_t oldest =
+      max(max(command_age, mode_age), max(trim_age, enabled_age));
   if (out->live) {
-    const uint32_t command_age = now_ms - command_watchdog_.LastUpdateMs();
-    const uint32_t mode_age = now_ms - mode_watchdog_.LastUpdateMs();
-    const uint32_t trim_age = now_ms - trim_watchdog_.LastUpdateMs();
-    const uint32_t enabled_age = now_ms - enabled_watchdog_.LastUpdateMs();
-    const uint32_t oldest =
-        max(max(command_age, mode_age), max(trim_age, enabled_age));
     out->last_update_ms = now_ms - oldest;
+  } else if (was_live_) {
+    stale_transitions_.fetch_add(1, std::memory_order_relaxed);
+    last_stale_age_ms_.store(oldest, std::memory_order_relaxed);
   }
+  was_live_ = out->live;
   out->enabled = enabled_;
   out->mode = mode_;
   out->manual_cmd = command_;
@@ -128,4 +156,11 @@ bool SkThrusterIn::Snapshot(uint32_t now_ms,
 
   xSemaphoreGive(mutex_);
   return true;
+}
+
+SkThrusterIn::Diagnostics SkThrusterIn::diagnostics() const {
+  return {future_stamps_.load(std::memory_order_relaxed),
+          stale_transitions_.load(std::memory_order_relaxed),
+          last_stale_age_ms_.load(std::memory_order_relaxed),
+          contended_.load(std::memory_order_relaxed)};
 }

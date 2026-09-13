@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include "common/elapsed_ms.h"
 #include "sensesp/system/lambda_consumer.h"
 #include "strict_sk_listeners.h"
 
@@ -86,10 +87,13 @@ bool SkCommandIn::Snapshot(uint32_t now_ms, uint32_t timeout_ms,
   const bool live = port_watchdog_.IsLive(now_ms, timeout_ms) &&
                     stbd_watchdog_.IsLive(now_ms, timeout_ms) &&
                     enabled_watchdog_.IsLive(now_ms, timeout_ms);
+  // ElapsedMs, not plain subtraction: a callback that stamped its update after
+  // this tick's clock read is age 0, not ~49 days (common/elapsed_ms.h).
+  using control_core::ElapsedMs;
   const uint32_t last_update_ms = now_ms -
-      max(now_ms - port_watchdog_.LastUpdateMs(),
-          max(now_ms - stbd_watchdog_.LastUpdateMs(),
-              now_ms - enabled_watchdog_.LastUpdateMs()));
+      max(ElapsedMs(now_ms, port_watchdog_.LastUpdateMs()),
+          max(ElapsedMs(now_ms, stbd_watchdog_.LastUpdateMs()),
+              ElapsedMs(now_ms, enabled_watchdog_.LastUpdateMs())));
 
   port_out->command = port_;
   port_out->enabled = enabled_;
