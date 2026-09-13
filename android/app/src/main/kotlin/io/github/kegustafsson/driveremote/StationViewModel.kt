@@ -713,14 +713,19 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    * already outstanding is skipped. Skipping costs nothing that matters -- the
    * intent it would have sent is the same one the outstanding sends carry.
    */
+  /**
+   * Heartbeat POSTs still on the wire, across every heartbeat loop this
+   * ViewModel has run. Touched only on the main dispatcher (viewModelScope is
+   * Dispatchers.Main.immediate, and a child's `finally` resumes there once its
+   * IO block returns, cancelled or not), so a plain Int is sufficient -- the
+   * same reasoning as nextSeq().
+   */
+  private var heartbeatsInFlight = 0
+
   private fun startHeartbeat() {
     if (heartbeatJob != null || !foreground) return
     heartbeatJob =
       viewModelScope.launch {
-        // Touched only from this dispatcher (viewModelScope is
-        // Dispatchers.Main.immediate, and so is every child launched below), so
-        // a plain Int is sufficient -- the same reasoning as nextSeq().
-        var inFlight = 0
         while (isActive) {
           val tickStartedMs = SystemClock.elapsedRealtime()
           // Checked before each tick rather than only at startup: a session can
@@ -731,15 +736,21 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
             onTokenExpired()
             return@launch
           }
-          if (inFlight < MaxHeartbeatsInFlight) {
+          if (heartbeatsInFlight < MaxHeartbeatsInFlight) {
             val mySeq = nextSeq()
-            inFlight += 1
-            // A child of this coroutine, so stopHeartbeat() cancels it too.
+            heartbeatsInFlight += 1
+            // A child of this coroutine, so stopHeartbeat() cancels it too --
+            // but cancellation cannot interrupt a blocking OkHttp call already
+            // on the IO thread, so the child (and its `finally`) outlives the
+            // loop that launched it. That is why the counter is a field of the
+            // ViewModel and not a local of this loop: a loop restarted by
+            // onForegrounded() must still count the previous loop's stragglers,
+            // or the bound above is worth nothing across a lifecycle transition.
             launch {
               try {
                 sendIntent(mySeq)
               } finally {
-                inFlight -= 1
+                heartbeatsInFlight -= 1
               }
             }
           }

@@ -252,9 +252,13 @@ export function App({
   const seqRef = useRef(0);
   const bodyRef = useRef(intentBody);
   bodyRef.current = intentBody;
-  // The POST still waiting for an answer, or null. Tracked so the heartbeat can
-  // COALESCE -- see sendHeartbeat below.
-  const inFlightRef = useRef<Promise<void> | null>(null);
+  // EVERY POST still waiting for an answer. Tracked so the heartbeat can
+  // COALESCE -- see sendHeartbeat below. A set rather than the latest promise:
+  // an operator action sends regardless of what is in flight, and if that
+  // newer request settles while an older one is still hanging, remembering
+  // only the newest would read as "nothing pending" and let the heartbeat
+  // rebuild exactly the backlog this exists to prevent.
+  const inFlightRef = useRef(new Set<Promise<void>>());
   const sendIntent = useCallback(() => {
     seqRef.current += 1;
     const intent: ClientIntent = { seq: seqRef.current, ...bodyRef.current };
@@ -262,10 +266,9 @@ export function App({
       () => reportIntentStatus('ok'),
       (err: unknown) => reportIntentStatus(classifyIntentFailure(err)),
     );
-    inFlightRef.current = settled;
+    inFlightRef.current.add(settled);
     void settled.finally(() => {
-      // Only clear our OWN request: a newer send may already have replaced it.
-      if (inFlightRef.current === settled) inFlightRef.current = null;
+      inFlightRef.current.delete(settled);
     });
   }, [postIntent, reportIntentStatus]);
 
@@ -283,7 +286,7 @@ export function App({
   // steady press. Stable interval (fed via refs) so rapid taps don't tear it
   // down and rebuild it.
   //
-  // ONE HEARTBEAT IN FLIGHT AT A TIME. The tick used to fire a fetch every
+  // NO HEARTBEAT WHILE ANYTHING IS IN FLIGHT. The tick used to fire a fetch every
   // 250 ms regardless, so a server answering slowly (or not at all -- the
   // 2000 ms abort is the only backstop) stacked up to eight requests, past the
   // browser's per-host connection limit. An urgent STOP then queued BEHIND
@@ -294,7 +297,7 @@ export function App({
   // request or evicts us and fails safe -- exactly what it should do while the
   // link is that sick.
   const sendHeartbeat = useCallback(() => {
-    if (inFlightRef.current !== null) return;
+    if (inFlightRef.current.size !== 0) return;
     sendIntent();
   }, [sendIntent]);
   useEffect(() => {

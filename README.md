@@ -138,11 +138,11 @@ It is run **by hand**, never on a merge: *Actions › Release › Run workflow*.
 [BUILDING.md §10](docs/BUILDING.md#10-releases) has the procedure and the
 one-time signing setup.
 
-**Released firmware carries no credentials.** It is built from
-`secrets.example.h` — the release job refuses to build at all if a `secrets.h`
-is present — and the pipeline then searches every published image for the one
-credential that is still committed and refuses to publish if it finds it. A
-locally built binary has had no such check.
+**No firmware is published, and none could carry a credential if it were.**
+`secrets.h` is gitignored, so a clean checkout builds from `secrets.example.h`;
+CI self-tests the guard (`esp32/scripts/check_no_secrets.py`) that would refuse
+an image carrying a committed credential, ready for the day firmware is
+released again. A locally built binary has had no such check.
 
 All three units are Hat Labs **SH-ESP32** boards. WiFi and OTA credentials live
 in `esp32/include/secrets.h` (template: `esp32/include/secrets.example.h`) and are never

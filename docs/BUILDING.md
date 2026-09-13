@@ -960,9 +960,11 @@ No job holds both a secret and a token that could write to the repository.
 | `attest` | read, plus attestation signing | nothing |
 | `publish` | **write** | nothing, and it runs no code from this repository — no checkout, no Gradle, no npm, no PlatformIO |
 
-So a compromised action in the build job can read this repository and nothing more, and the
-one job that can create a Release only downloads files that have already been built,
-checked and attested.
+So a compromised action in the build job holds a read-only repository token and nothing
+more of the repository — though for the length of that job it also holds the signing key,
+which is why the keystore is deleted the moment the build is done — and the one job that
+can create a Release only downloads files that have already been built, checked and
+attested.
 
 ### 10.6 Verifying a downloaded release
 

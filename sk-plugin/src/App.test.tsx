@@ -554,4 +554,29 @@ describe('App: the intent heartbeat', () => {
     fireEvent.click(screen.getByText('DISARMED'));
     await waitFor(() => expect(calls).toBe(2));
   });
+
+  it('keeps waiting while an OLDER request is still unanswered', async () => {
+    // Remembering only the newest request would let an operator action that
+    // settles quickly clear the marker while the mount request still hangs --
+    // and the heartbeat would then rebuild the very backlog it exists to
+    // prevent. Every unsettled request counts, not just the last one sent.
+    let calls = 0;
+    await renderApp({
+      postIntent: () => {
+        calls += 1;
+        return calls === 1
+          ? new Promise<void>(() => {}) // the mount send never settles...
+          : Promise.resolve(); // ...every later one settles at once
+      },
+    });
+    expect(calls).toBe(1);
+
+    fireEvent.click(screen.getByText('DISARMED'));
+    await waitFor(() => expect(calls).toBe(2)); // the operator action, settled
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, PERIODIC_REFRESH_MS * 5));
+    });
+    expect(calls).toBe(2); // no heartbeat: the mount request is still pending
+  });
 });

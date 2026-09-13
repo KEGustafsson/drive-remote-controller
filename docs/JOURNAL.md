@@ -6938,7 +6938,7 @@ attestation verify` to check." That sentence is the whole point of making
 Four parallel reviews (firmware glue, pure core, plugin, Android), each told
 to verify before reporting; the code changes were then implemented by a
 second model and re-verified here. Every suite is green: native 276 (was
-268), plugin 276 (was 268), Android core 178 (was 171) and app 75 (was 73),
+268), plugin 277 (was 268), Android core 178 (was 171) and app 75 (was 73),
 all three firmwares compile, `assembleDebug` builds. Nothing here has been on
 hardware.
 
@@ -7025,3 +7025,10 @@ same defect and carries the same rule now, derived once in `StationView` as
 - RX's relay pin has two writers without a mutex (the control task and the
   watchdog), unlike HH's spinlocked outputs; they only disagree during a
   trip, and the watchdog repeats every 25 ms.
+- A HOLD handed over between two stations — TX stale, plugin live and armed
+  in HOLD — continues without an FSM edge, under the plugin's authority and
+  TX's captured base heading. That is the fixed-precedence rule as
+  documented, and the same handover a deliberate TX disable produces today;
+  CodeRabbit read it as a re-engage. Making a source change a re-engage
+  boundary would drop a hold the plugin operator deliberately armed for,
+  so it is left as designed and raised here for the owner.
