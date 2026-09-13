@@ -7281,11 +7281,20 @@ is the right evidence and it was in the wrong place — a commit message is not
 something anyone reads before a sea trial, and the four counters it cites are on
 HH's status page precisely because the unit has no serial console on the boat.
 
-SAFETY.md's thruster checklist now carries the reading. The shape of the check
-matters more than the numbers: **future stamps climbing is the healthy state**,
-because the race is normal and `ElapsedMs` absorbs it, so a counter stuck at 0
-over a long hold means the diagnostic is not running rather than that the defect
-is gone. What must be 0 is *Live -> stale verdicts* with nothing interrupted.
+SAFETY.md's thruster checklist now carries the reading. What must be 0 is
+*Live -> stale verdicts* with nothing interrupted; that is the whole pass/fail.
+*Future-stamped updates* sits beside it as evidence rather than a requirement: a
+positive count says the race happened and `ElapsedMs` absorbed it, which is what
+9-in-11-minutes looked like when the defect was caught.
+
+**The first draft of that check had it backwards**, and CodeRabbit caught it on
+the PR: it demanded the future-stamp counter be climbing and called a zero proof
+that the diagnostic was not running. It is not. The race needs a callback to
+land inside one tick's clock-read-to-snapshot window, so a healthy board can
+simply never hit the ordering during a given hold — and a check written that way
+would fail a clean commissioning run and teach the operator to distrust a board
+that is working. A counter that only sometimes fires is evidence when it is
+positive and silence when it is not.
 The deliberate-interruption check above it gained the same route: on the boat,
 `re-engage BLOCKED` on the serial console is unreadable, and the same event
 shows as that counter stepping by one with *Age at last stale (ms)* just over
