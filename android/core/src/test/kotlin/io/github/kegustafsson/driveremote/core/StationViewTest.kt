@@ -40,6 +40,10 @@ class StationViewTest {
   private fun view(store: SkValueStore, nowMs: Long, state: ConnectionState = ConnectionState.OPEN) =
     deriveStationView(store, state, me, nowMs)
 
+  /** The same view, for a station that has been asking for a hold since [askedAtMs]. */
+  private fun holdView(store: SkValueStore, askedAtMs: Long, nowMs: Long) =
+    deriveStationView(store, ConnectionState.OPEN, me, nowMs, holdRequestedSinceMs = askedAtMs)
+
   @Test
   fun `a freshly opened station is disarmed and commands nothing`() {
     val v = view(healthyStore(), nowMs = 10_000)
@@ -220,6 +224,160 @@ class StationViewTest {
     assertEquals(UnitLiveness.STALE, v.hhLiveness)
     assertEquals(true, v.hhArmed, "the retained value still says armed")
     assertFalse(v.holdEngaged, "but nothing is holding on a board that stopped publishing")
+  }
+
+  /**
+   * The window exists so that the state EVERY arm passes through is not drawn as
+   * a fault.
+   *
+   * A hold is asked for on this station's next intent, republished by the
+   * arbiter, taken by HH on a control tick and reported back on its telemetry
+   * cycle. For those few hundred milliseconds "asked, not confirmed" is the
+   * truth and nothing is wrong -- and a warning shown every single time is one
+   * the operator stops reading, which is what made the one that matters
+   * invisible.
+   */
+  @Test
+  fun `a hold in flight is a transition until it has had long enough to be a fault`() {
+    // The units keep publishing throughout -- this is a hold that is not
+    // arriving, not a boat that has gone quiet, and those must not be confused.
+    // So the store is rebuilt at each instant rather than left to go stale.
+    fun asked(forMs: Long, atMs: Long = 10_000 + forMs) =
+      holdView(healthyStore(nowMs = atMs, activeClient = me), askedAtMs = atMs - forMs, nowMs = atMs)
+
+    // Just asked. HH has said nothing about itself yet.
+    assertEquals(HoldPhase.REQUESTED, asked(forMs = 0).holdPhase)
+    assertEquals(HoldPhase.REQUESTED, asked(forMs = SkContract.HOLD_ENGAGE_GRACE_MS - 1).holdPhase)
+
+    // Past the window with nothing back: the unit has had every chance.
+    val stalled = asked(forMs = SkContract.HOLD_ENGAGE_GRACE_MS)
+    assertEquals(HoldPhase.NOT_ENGAGING, stalled.holdPhase)
+    assertEquals(HoldStall.UNKNOWN, stalled.holdStall, "HH has not said why")
+  }
+
+  @Test
+  fun `a hold HH reports is engaged however long it took`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(
+      listOf(
+        SkContract.HH_ARMED to true,
+        SkContract.HH_MODE to "hold",
+        SkContract.HH_FSM_STATE to SkContract.HH_FSM_HOLDING,
+      ),
+      10_000,
+    )
+    val v = holdView(store, askedAtMs = 0, nowMs = 10_000)
+    assertEquals(HoldPhase.ENGAGED, v.holdPhase)
+    assertEquals(HoldStall.NONE, v.holdStall)
+  }
+
+  /**
+   * ARMED_IDLE publishes `hh.armed` exactly as HOLDING does.
+   *
+   * HH asserts ENABLE in both states (`control_step.cpp`), so the armed+hold
+   * pair alone reads a hold that never started -- no heading it trusts -- or one
+   * it gave up after coasting past `coast_max`, as a running hold. Its own FSM
+   * state is the only thing that separates them, and the remedy is different
+   * enough to be worth naming: a fresh arm, once the fix is back.
+   */
+  @Test
+  fun `a unit armed but idle is not holding, and says why`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(
+      listOf(
+        SkContract.HH_ARMED to true,
+        SkContract.HH_MODE to "hold",
+        SkContract.HH_FSM_STATE to SkContract.HH_FSM_ARMED_IDLE,
+      ),
+      10_000,
+    )
+    val v = holdView(store, askedAtMs = 0, nowMs = 10_000)
+    assertFalse(v.holdEngaged, "armed and idle is not a hold")
+    assertEquals(HoldPhase.NOT_ENGAGING, v.holdPhase)
+    assertEquals(HoldStall.NO_REFERENCE, v.holdStall)
+  }
+
+  /**
+   * The case that sent the operator looking for a fault that was not there: HH
+   * refusing a station it has not seen disarm (SAFETY.md thruster invariant 9).
+   * Nothing on the boat is broken and nothing will change until the operator
+   * disarms -- so the one thing the panel must not do is sit there saying
+   * "waiting".
+   */
+  @Test
+  fun `a refused hold is reported as refused, not as still waiting`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(
+      listOf(
+        SkContract.HH_ARMED to false,
+        SkContract.HH_MODE to "hold",
+        SkContract.HH_FSM_STATE to SkContract.HH_FSM_DISARMED,
+      ),
+      10_000,
+    )
+    val v = holdView(store, askedAtMs = 0, nowMs = 10_000)
+    assertEquals(HoldPhase.NOT_ENGAGING, v.holdPhase)
+    assertEquals(HoldStall.REFUSED, v.holdStall)
+  }
+
+  @Test
+  fun `a faulted unit is named as one rather than blamed on the station`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(listOf(SkContract.HH_FSM_STATE to SkContract.HH_FSM_FAULT), 10_000)
+    assertEquals(HoldStall.UNIT_FAULT, holdView(store, askedAtMs = 0, nowMs = 10_000).holdStall)
+  }
+
+  /**
+   * A hold that is not running because the thruster belongs to the local ENGAGE
+   * switch or to TX is not a fault and is already explained by the
+   * "controlled by ..." note. Saying it twice, once in red, would send the
+   * operator after a unit that is doing exactly what it was told.
+   */
+  @Test
+  fun `a thruster somebody else owns is not reported as a stalled hold`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(
+      listOf(
+        SkContract.HH_SOURCE to "tx",
+        SkContract.HH_FSM_STATE to SkContract.HH_FSM_DISARMED,
+      ),
+      10_000,
+    )
+    val v = holdView(store, askedAtMs = 0, nowMs = 10_000)
+    assertEquals(HoldPhase.NOT_ENGAGING, v.holdPhase)
+    assertEquals(HoldStall.OTHER_SOURCE, v.holdStall)
+  }
+
+  @Test
+  fun `a station asking for no hold has no hold diagnostics at all`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(listOf(SkContract.HH_FSM_STATE to SkContract.HH_FSM_DISARMED), 10_000)
+
+    // MANUAL selected, or simply not tracked by this caller.
+    val manual = view(store, 10_000)
+    assertEquals(HoldPhase.IDLE, manual.holdPhase)
+    assertEquals(HoldStall.NONE, manual.holdStall)
+
+    // Asking, but with the thruster not commandable -- nothing this station says
+    // is reaching HH, and the kill switch says so already.
+    val noToken = deriveStationView(healthyStore(nowMs = 10_000), ConnectionState.OPEN, me, 10_000,
+      holdRequestedSinceMs = 0)
+    assertEquals(HoldPhase.IDLE, noToken.holdPhase)
+  }
+
+  /**
+   * The FSM path is a refinement, not a dependency: a server that has not
+   * delivered it yet -- or an HH built before it was published -- still gets the
+   * ARCHITECTURE.md §9 pair, which is what this station used before.
+   */
+  @Test
+  fun `with no FSM state published the armed and hold pair still stands`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(listOf(SkContract.HH_ARMED to true, SkContract.HH_MODE to "hold"), 10_000)
+    val v = holdView(store, askedAtMs = 0, nowMs = 10_000)
+    assertNull(v.hhFsmState)
+    assertTrue(v.holdEngaged)
+    assertEquals(HoldPhase.ENGAGED, v.holdPhase)
   }
 
   @Test

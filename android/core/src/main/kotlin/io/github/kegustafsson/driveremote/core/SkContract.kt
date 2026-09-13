@@ -82,6 +82,29 @@ object SkContract {
    */
   const val HH_FUSED_HEADING_RAD = "sensors.headingHold.fusedHeading"
 
+  /**
+   * HH's own safety-FSM state: `DISARMED`, `ARMED_IDLE`, `HOLDING` or `FAULT`.
+   *
+   * Telemetry about the unit rather than part of the command contract, the same
+   * standing as [HH_FUSED_HEADING_RAD] -- and, like it, published by HH on every
+   * telemetry cycle, so subscribing costs nothing at the unit.
+   *
+   * It is here because `hh.armed` + `hh.mode` cannot tell "holding" from "armed
+   * and not holding": ENABLE is asserted in BOTH `ARMED_IDLE` and `HOLDING`
+   * (`control_step.cpp`), so a hold that never started for want of a trustworthy
+   * heading, or one the firmware dropped when the heading went stale past
+   * `coast_max`, publishes exactly the same pair as a running hold. This path is
+   * the unit's own answer, and it is also what lets this station tell the
+   * operator WHY a hold is not running instead of only that it is not.
+   */
+  const val HH_FSM_STATE = "sensors.headingHold.fsmState"
+
+  /** The `sensors.headingHold.fsmState` values, as `ControlTask::StateName` spells them. */
+  const val HH_FSM_DISARMED = "DISARMED"
+  const val HH_FSM_ARMED_IDLE = "ARMED_IDLE"
+  const val HH_FSM_HOLDING = "HOLDING"
+  const val HH_FSM_FAULT = "FAULT"
+
   /** Every path this station subscribes to, for the single subscribe message. */
   val SUBSCRIBE_PATHS: List<String> =
     listOf(
@@ -103,6 +126,7 @@ object SkContract {
       HH_ARMED,
       HH_REVERSAL_PENDING,
       HH_FUSED_HEADING_RAD,
+      HH_FSM_STATE,
     )
 
   // ---- Endpoints --------------------------------------------------------
@@ -173,6 +197,26 @@ object SkContract {
    * said out loud rather than dressed up as still-starting.
    */
   const val LINK_STARTUP_GRACE_MS = 4000L
+
+  /**
+   * How long a requested hold may go unconfirmed by HH before this station
+   * calls it a fault rather than a transition.
+   *
+   * The same kind of window as [LINK_STARTUP_GRACE_MS], for the same reason:
+   * nothing is gated on it and no command changes when it expires -- it decides
+   * only what the operator is TOLD. Before it expires an unconfirmed hold is a
+   * request in flight, and a warning there would cry wolf on every single arm;
+   * after it, the unit has had every chance to take the hold and has not, which
+   * is a fault and is shown as one.
+   *
+   * Sized against the round trip it waits for: this station's intent cadence
+   * ([PERIODIC_REFRESH_MS], 250 ms), the arbiter's republish (another 250 ms),
+   * HH's control tick, its ~15 Hz telemetry cycle (`config::
+   * kTelemetryPublishPeriodMs`, 67 ms) and the stream delivery back. Well under
+   * a second in total on a healthy boat network, so 2 s leaves room for a busy
+   * link without letting a genuinely refused hold sit unreported.
+   */
+  const val HOLD_ENGAGE_GRACE_MS = 2000L
 }
 
 /** Mirrors `ConnectionState` in `sk-plugin/src/skClient.ts`. */

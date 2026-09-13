@@ -184,6 +184,13 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    */
   private var thruster = ThrusterCommand.SAFE
 
+  /**
+   * When the hold this station is currently asking for was first asked for, or
+   * null when it is not asking for one. Maintained in [refreshView], which is
+   * also the only reader; see the comment there for why it is kept at all.
+   */
+  private var holdRequestedSinceMs: Long? = null
+
   private var heartbeatJob: Job? = null
   private var tickerJob: Job? = null
   /**
@@ -912,16 +919,34 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
   }
 
   private fun refreshView() {
+    val nowMs = SystemClock.elapsedRealtime()
+
+    // When this station's current hold request began -- a fact about what we are
+    // SENDING, so the store cannot answer it and the pure view has to be told.
+    //
+    // "Asking for a hold" is HOLD selected while this station holds the arm
+    // token: in HOLD the arm IS the request, there is no further press. Read
+    // from the previous tick's view, which puts the start of the window up to
+    // one TELEMETRY_POLL_MS late and therefore any fault message up to 250 ms
+    // late -- out of a 2 s window, and always in the direction of patience.
+    //
+    // Cleared the moment either half stops being true, so a later arm starts a
+    // fresh window rather than inheriting an expired one.
+    val armed = _uiState.value.view?.armed == true
+    holdRequestedSinceMs =
+      if (armed && thruster.mode == ThrusterMode.HOLD) holdRequestedSinceMs ?: nowMs else null
+
     val view =
       deriveStationView(
         store = stream.store,
         connectionState = stream.connectionState.value,
         myClientId = clientId,
-        nowMs = SystemClock.elapsedRealtime(),
+        nowMs = nowMs,
         // So a launch that has not opened its socket yet reads as starting up
         // rather than as a boat that has gone away. See LinkPhase.
         everConnected = stream.everConnected,
         linkAttemptStartedMs = stream.targetSetAtMs,
+        holdRequestedSinceMs = holdRequestedSinceMs,
       )
 
     // Arm-first, then trim: force the trim back to 0 whenever the thruster is

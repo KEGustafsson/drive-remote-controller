@@ -602,16 +602,37 @@ not.
 
 **"HOLDING" is HH's word, not this station's.** Armed, the caption beside the
 heading reads `HOLDING · TRIM ±N°` only when the unit itself reports the hold is
-running — `hh.armed` and `hh.mode == "hold"`, with HH's telemetry still arriving
-(`StationView.holdEngaged`). Until then it reads `HOLD REQUESTED · UNIT NOT
-HOLDING`, with a note naming what is being waited for. The number cannot be used
-to tell the two apart: HH mirrors `hh.setpointDeg` to its fused heading in every
-state *except* holding
+running — `hh.armed`, `hh.mode == "hold"` and `sensors.headingHold.fsmState ==
+"HOLDING"`, with HH's telemetry still arriving (`StationView.holdEngaged`). The
+FSM state is part of the test because HH asserts ENABLE, and so publishes
+`hh.armed`, in `ARMED_IDLE` as well as in `HOLDING`: a hold that never started
+for want of a trustworthy heading, and one given up after coasting past
+`coast_max`, both publish the armed + hold pair and neither is holding anything.
+Where HH has not published a state at all, the pair stands on its own as before.
+
+The number cannot be used to tell any of this apart: HH mirrors `hh.setpointDeg`
+to its fused heading in every state *except* holding
 ([ARCHITECTURE.md §9](../docs/ARCHITECTURE.md#9-signal-k-contract)), so
 it is the same live plausible heading whether the unit engaged, refused because
 the heading was not trustworthy, faulted, had the thruster taken by its own
-ENGAGE input, or is waiting to see a returning station disarm. The browser UI
-carries the same rule, in the same words.
+ENGAGE input, or is waiting to see a returning station disarm.
+
+**A hold in flight is not a fault, and is not drawn as one.** Between the arm
+and HH's first report the caption reads `HOLD REQUESTED` — truthful, and quiet.
+Only when the request outlives `SkContract.HOLD_ENGAGE_GRACE_MS` (2 s, sized on
+the intent → arbiter → HH → telemetry round trip) does the panel call it a
+fault: the caption turns red to `HOLD NOT ENGAGED` and a red band names the
+reason from HH's own FSM state and the move that fixes it — `RE-ARM TO ENGAGE`
+for a unit refusing a station it has not seen disarm (SAFETY.md thruster
+invariant 9, the one case the operator can clear from this screen), `NO HEADING
+FIX` for `ARMED_IDLE`, `UNIT FAULT` for `FAULT`, and `CHECK THE UNIT` when HH
+has said nothing. A thruster the local switch or TX owns is not reported here at
+all — the `controlled by …` note already says it, and it is not a fault. The
+station never re-arms itself to clear a refusal: manufacturing that engage edge
+is exactly what the firmware's re-engage latch exists to prevent.
+`ui/ThrusterModeSelectionTest.kt` pins the quiet case, each loud one, and that
+the band cannot push the drive contacts below their floor on the smallest
+supported window. The browser UI carries the older wording for now.
 
 ### Scaling to the screen it is on
 
