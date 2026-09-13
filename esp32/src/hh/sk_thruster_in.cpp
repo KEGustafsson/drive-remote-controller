@@ -85,10 +85,21 @@ void SkThrusterIn::begin(const char* command_path, const char* mode_path,
       }));
 }
 
-bool SkThrusterIn::Snapshot(uint32_t now_ms, uint32_t timeout_ms,
+bool SkThrusterIn::Snapshot(uint32_t now_ms,
+                            const control_core::ThrusterStaleness& staleness,
                             control_core::ThrusterRemote* out) {
   if (mutex_ == nullptr) return false;
   if (xSemaphoreTake(mutex_, 0) != pdTRUE) return false;
+
+  // The window this source is judged on depends on the mode it is publishing,
+  // and `mode_` is read here under the same acquisition as the watchdogs below
+  // -- the tuple and the rule applied to it are the same coherent read. A mode
+  // delta that arrives between two ticks therefore tightens or loosens the
+  // window on the very next one, never a tick late, and a stale kManual value
+  // (the listener stopped updating it) keeps the SHORTER window rather than
+  // inheriting HOLD's.
+  const uint32_t timeout_ms =
+      control_core::ThrusterStalenessMsFor(mode_, staleness);
 
   // Every member of the tuple must be current in its own right -- see
   // SkCommandIn::Snapshot for why that is the entire rule and why there is no

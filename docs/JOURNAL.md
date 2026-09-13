@@ -7127,3 +7127,75 @@ band has been seen on a real screen, and neither has the ARMED_IDLE reading that
 `sensors.headingHold.fsmState` now separates from a running hold. The next time
 HH is power-cycled with a station left armed will exercise it -- which is exactly
 how the owner met this in the first place.
+
+## 2026-09-13 — The loud half arrived, and it was the window, not the latch
+
+Hours after the fault band shipped, the owner reported seeing `NOT HOLDING —
+RE-ARM TO ENGAGE` *frequently*, and asked the right question: what changed so
+much, and why is the link so weak that it breaks?
+
+**Nothing about the link changed. The consequence of a blip did.** The message
+is drawn only when the plugin still publishes this station as the token holder,
+HH's telemetry is arriving, and HH reports `fsmState == disarmed` for longer
+than the 2 s grace. That combination rules out the phone's own connection and
+the arbiter's eviction — both of those take the token away and show a different
+screen — so it says HH is refusing a request still being published to it. With
+the deadman hard-wired true and BNO silence going to FAULT, that leaves the
+re-engage latch, which the review two commits back had just added. Before it, a
+station whose deltas stopped for a second and came back regenerated the engage
+level, HH read a rising edge, captured a fresh heading and thrust again with
+nobody having touched anything. The hold *appeared* to survive blips by silently
+restarting. Invariant 9 closed that, correctly. What it also did was turn a
+transport hiccup into the end of the hold.
+
+**How little it took.** The plugin republishes all nine paths every 250 ms, and
+HH judged a source live only while all four of its thruster paths were under
+`kThrusterSourceStalenessMs` = 1000 ms — the drives' number, adopted here
+because it looked like the same rule. Three missed republishes anywhere in HH's
+own inbound path — a WiFi fade, an SK server hiccup, the SensESP loop blocked by
+the config UI — dropped the commanding station to not-live. That arms the latch,
+and the latch clears only when HH sees that station live and *disabled*, which
+never happens while the operator is still armed. So a sub-second glitch ended
+the hold until a human disarmed and re-armed.
+
+**The fix is one window per mode, which is the shape the two gates always had.**
+`kThrusterHoldSourceStalenessMs` = 2000, `kThrusterManualSourceStalenessMs` =
+1000, chosen by `ThrusterStalenessMsFor` from the mode in the *same coherent
+read* of that source's tuple — so a source begins being judged on MANUAL's
+shorter window from the first tick it publishes `manual` and can never carry
+HOLD's tolerance into a manual command. The owner asked for 2 s on both first,
+then for the split, which is the better answer: the two gates are paying for
+different things. MANUAL's window stops thrust promptly when the station holding
+the button vanishes, and a false trip there costs one 250 ms gap in a command
+somebody is watching. HOLD's window decides how much transport jitter it takes
+to destroy an autonomous hold nobody is watching.
+
+**What the extra second does not extend.** A station that has actually gone is
+stale-evicted by the arbiter at its own 1000 ms, after which the plugin
+publishes `enabled=false` — a deliberate disarm, which HH obeys on its next tick
+and which latches nothing. The loosening is only reachable when HH's own inbound
+stream stalls, which is exactly the case where no other party could stop the
+thrust either. Unchanged: the local ENGAGE input still outranks both remotes,
+BNO silence still faults, and the independent fail-off watchdog still drops the
+outputs if the control task stops running.
+
+Two `static_assert`s hold the pair honest — MANUAL may not fall under four
+periodic refreshes, and HOLD may never be tightened below MANUAL — and four new
+Unity cases pin the selection rule, the unparseable-mode default, the
+equal-windows case, and the contended-tick ageing path, which had to learn the
+same rule or it would re-impose one window on both gates every time it ran.
+Suites: native 280 (was 276); all three firmwares build.
+
+**Not proven, and worth stating plainly.** Nothing here has been on hardware.
+The new bench checks in SAFETY.md are the ones that matter: interrupt HH's own
+link for ~1.5 s in HOLD and the hold must survive; interrupt it for over 2 s and
+it must still drop, latch, and demand a re-arm; hold a MANUAL button through the
+same interruption and thrust must stop within ~1 s, not 2. The first is the
+defect this fixes. The other two are the properties it must not have broken.
+
+**One diagnostic gap this left open.** `reengage_blocked` is still log-only, so
+a station cannot tell "HH is not hearing the commands" (`hh.linkUp` false) from
+"HH hears you and is refusing" (the latch) — both render as the same red band,
+and only the serial log separates them. `hh.linkUp`'s value is already
+subscribed by both stations and would answer it; publishing the latch flag would
+answer it outright. Neither is done here.

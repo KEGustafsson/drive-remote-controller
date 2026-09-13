@@ -103,6 +103,40 @@ inline Cmd ThrusterCmdFromSkString(const char* s) {
   return Cmd::kOff;
 }
 
+// How long a remote thruster source may go unheard before it stops counting as
+// live -- ONE WINDOW PER MODE, and the two numbers are deliberately different.
+// Do not harmonise them, and do not harmonise either with the drives' single
+// kSkStalenessTimeoutMs.
+//
+// The two gates pay completely different prices for a source wrongly judged
+// gone. MANUAL is a momentary button with the operator's finger on it and their
+// eyes on the boat: the shorter window is the whole safety property there --
+// a station that vanishes mid-press must stop the thrust, promptly, and a false
+// trip costs one 250 ms gap in a command the operator is already watching.
+// HOLD is the opposite: an autonomous loop against a setpoint HH captured for
+// itself, with nobody at a button. Dropping it costs the whole hold, because a
+// source that goes stale while it was the authoritative HOLD commander arms the
+// re-engage latch (control_step.h, SAFETY.md thruster invariant 9) -- permanent
+// until that station is seen live and DISARMED. So HOLD buys headroom against
+// transport jitter and MANUAL buys promptness, and neither number is the other
+// one's default.
+//
+// The MODE that picks the window is the one in the same coherent read of the
+// source's tuple, so the stricter window applies from the first tick the source
+// reads kManual. That ordering is what keeps the loosening from leaking into
+// manual control: a source cannot carry HOLD's tolerance into a manual command.
+struct ThrusterStaleness {
+  uint32_t hold_ms = 0;
+  uint32_t manual_ms = 0;
+};
+
+// The window in force for `mode`. kHold is the fallback for anything that is
+// not explicitly manual, matching ThrusterModeFromSkString's defensive default.
+inline uint32_t ThrusterStalenessMsFor(ThrusterMode mode,
+                                       const ThrusterStaleness& windows) {
+  return mode == ThrusterMode::kManual ? windows.manual_ms : windows.hold_ms;
+}
+
 // One remote command source (TX, or the plugin) as evaluated by the caller
 // immediately before calling ArbitrateThruster().
 struct ThrusterRemote {

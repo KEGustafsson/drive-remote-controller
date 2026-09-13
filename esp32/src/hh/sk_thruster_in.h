@@ -45,10 +45,19 @@ class SkThrusterIn {
              const char* trim_path, const char* enabled_path,
              int listen_delay_ms);
 
-  // Non-blocking; see the header note. now_ms/timeout_ms go straight to the
-  // internal LinkWatchdog::IsLive(), which latches a stale source (so the
-  // millis() wrap cannot revive it) -- hence not const.
-  bool Snapshot(uint32_t now_ms, uint32_t timeout_ms,
+  // Non-blocking; see the header note. now_ms and the window selected from
+  // `staleness` go straight to the internal LinkWatchdog::IsLive(), which
+  // latches a stale source (so the millis() wrap cannot revive it) -- hence not
+  // const.
+  //
+  // WHICH window is chosen by the MODE this source is currently publishing
+  // (control_core::ThrusterStalenessMsFor). The choice is made inside the same
+  // mutex acquisition as the read, so it is the mode of the coherent tuple
+  // being judged and not a mode sampled a tick earlier: a source that has begun
+  // publishing kManual is judged on MANUAL's shorter window from that first
+  // tick, and can never carry HOLD's tolerance into a manual command.
+  bool Snapshot(uint32_t now_ms,
+                const control_core::ThrusterStaleness& staleness,
                 control_core::ThrusterRemote* out);
 
  private:

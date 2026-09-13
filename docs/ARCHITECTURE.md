@@ -339,12 +339,18 @@ the same path as a locally engaged hold and passes every gate on it — IMU
 timeout, deadman, the ENABLE master gate, the never-both-directions rule, and
 the independent fail-off watchdog.
 
-Two HOLD-specific preconditions are adapted in MANUAL mode, and only these two:
+Three things are adapted per mode, and only these three:
 
 | Precondition | HOLD | MANUAL | Reason |
 |---|---|---|---|
 | Good-heading arm gate | required | not required | The gate exists so the loop never steers against a heading it cannot trust. Manual consults no heading — the operator's eyes are the reference. |
 | GNSS coast timers | active | inert | Nothing is being held, so there is nothing to coast. |
+| Source staleness window | 2000 ms | 1000 ms | What a false "source gone" costs. A manual command is a momentary button with the operator watching: it must stop promptly when a station vanishes, and a false trip costs one 250 ms gap. A hold is autonomous, and losing it arms the re-engage latch (SAFETY.md thruster invariant 9) — permanent until someone disarms and re-arms. So HOLD buys headroom against transport jitter. `kThrusterHoldSourceStalenessMs` / `kThrusterManualSourceStalenessMs`. |
+
+The window is selected from the mode in the **same coherent read** of that
+source's tuple (`ThrusterStalenessMsFor`), so the shorter one applies from the
+first tick a source publishes `manual`: HOLD's tolerance can never be carried
+into a manual command.
 
 ### 6.3 The manual gate
 
@@ -536,11 +542,12 @@ retains a path's last value indefinitely, so a value published by a unit stands
 at its last reading forever once that unit loses power — reading it can never
 reveal the unit's absence. Only the deltas stopping can.
 
-This rule is implemented in four places, deliberately identically:
+This rule is implemented in five places. The MECHANISM is deliberately identical everywhere; the windows are not, and §6.2 says why HH's thruster sources get two of their own:
 
 | Consumer | Mechanism | Window |
 |---|---|---|
 | RX, per remote source | `LinkWatchdog` fed by each accepted command update | `kSkStalenessTimeoutMs` (1000 ms) |
+| HH, per remote thruster source | Four `LinkWatchdog`s (one per path in the tuple), all required | `kThrusterManualSourceStalenessMs` (1000 ms) in MANUAL, `kThrusterHoldSourceStalenessMs` (2000 ms) in HOLD — §6.2 |
 | TX, per unit | `LinkWatchdog` fed by `rx.linkUp` / `hh.linkUp` arrivals | `kRxTelemetryStaleMs` / `kHhTelemetryStaleMs` (1500 ms) |
 | Plugin server, per unit | Arrival timestamps in `arbiter.cjs` | 1500 ms |
 | Plugin UI, per unit | `getReceivedAt()` plus a timer | `RX_TELEMETRY_STALE_MS` (1500 ms) |
