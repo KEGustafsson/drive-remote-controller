@@ -6938,8 +6938,9 @@ attestation verify` to check." That sentence is the whole point of making
 Four parallel reviews (firmware glue, pure core, plugin, Android), each told
 to verify before reporting; the code changes were then implemented by a
 second model and re-verified here. Every suite is green: native 276 (was
-268), plugin 276 (was 268), Android core 176 (was 171) and app 73, all three
-firmwares compile, `assembleDebug` builds. Nothing here has been on hardware.
+268), plugin 276 (was 268), Android core 178 (was 171) and app 75 (was 73),
+all three firmwares compile, `assembleDebug` builds. Nothing here has been on
+hardware.
 
 ### Three findings that mattered
 
@@ -6978,8 +6979,9 @@ fused heading whenever it is *not* holding, so the number reads the same
 whether the unit engaged, refused on a bad heading, faulted, or was taken by
 its own ENGAGE input. The browser panel now says "holding" only on the unit's
 own report and "hold requested · unit not holding" otherwise, which is also
-what the new latch above surfaces to the operator. (The Android panel has
-the same defect and is not yet fixed — noted below.)
+what the new latch above surfaces to the operator. The Android panel had the
+same defect and carries the same rule now, derived once in `StationView` as
+`holdEngaged` and pinned by both the core and the layout suites.
 
 ### The rest, briefly
 
@@ -7013,9 +7015,6 @@ the same defect and is not yet fixed — noted below.)
 
 ### Open, deliberately not changed
 
-- The Android HOLD panel labels "HOLDING · TRIM" off its own commandability,
-  the same defect fixed in the browser; it needs `hhArmed` plus the mode from
-  `StationView`, and the layout suite re-run.
 - TX's thruster mode switch fails open to HOLD (`INPUT_PULLDOWN`, HIGH =
   MANUAL): a broken wire plus enable ON publishes `mode=hold`, and arming
   with HOLD selected engages the hold with no further press. Reversing the

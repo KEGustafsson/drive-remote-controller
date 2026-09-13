@@ -164,6 +164,64 @@ class StationViewTest {
     assertEquals(41.0, view(store, 10_000).heldDeg)
   }
 
+  /**
+   * "Holding" is HH's word, not this station's.
+   *
+   * The number cannot be used to tell: HH mirrors `hh.setpointDeg` to the fused
+   * heading in every state except holding (ARCHITECTURE.md §9), so it is a live
+   * plausible heading whether the unit engaged, refused on an untrustworthy
+   * heading, faulted, was taken by its own ENGAGE input, or is refusing a
+   * station whose disarm it has not seen yet.
+   */
+  @Test
+  fun `hold is only engaged when HH itself says armed and in hold`() {
+    val nowMs = 10_000L
+
+    // Asking for it is not being in it: armed here is OUR arm token, and HH has
+    // not reported its own state at all yet.
+    val requested = healthyStore(nowMs = nowMs, activeClient = me)
+    assertFalse(view(requested, nowMs).holdEngaged, "HH has said nothing")
+
+    // HH in hold but not armed -- refused, faulted, or not yet engaged.
+    requested.apply(
+      listOf(SkContract.HH_ARMED to false, SkContract.HH_MODE to "hold"),
+      nowMs,
+    )
+    assertFalse(view(requested, nowMs).holdEngaged, "hh.armed false is not holding")
+
+    // Armed but still in manual: its own ENGAGE input, or a mode this station
+    // did not ask for.
+    requested.apply(
+      listOf(SkContract.HH_ARMED to true, SkContract.HH_MODE to "manual"),
+      nowMs,
+    )
+    assertFalse(view(requested, nowMs).holdEngaged, "manual is not holding")
+
+    // Both, and the unit answering: the only case that may say HOLDING.
+    requested.apply(
+      listOf(SkContract.HH_ARMED to true, SkContract.HH_MODE to "hold"),
+      nowMs,
+    )
+    assertTrue(view(requested, nowMs).holdEngaged)
+  }
+
+  @Test
+  fun `a switched-off HH cannot report a hold it is no longer running`() {
+    // Both halves of the pair are VALUES, and Signal K retains those forever, so
+    // without the liveness test a board that has been off for an hour still
+    // claims to be holding.
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(listOf(SkContract.HH_ARMED to true, SkContract.HH_MODE to "hold"), 10_000)
+    assertTrue(view(store, 10_000).holdEngaged)
+
+    val later = 10_000 + SkContract.TELEMETRY_STALE_MS + 1
+    store.apply(listOf(SkContract.RX_LINK_UP to true), later)
+    val v = view(store, later)
+    assertEquals(UnitLiveness.STALE, v.hhLiveness)
+    assertEquals(true, v.hhArmed, "the retained value still says armed")
+    assertFalse(v.holdEngaged, "but nothing is holding on a board that stopped publishing")
+  }
+
   @Test
   fun `reversal interlock is surfaced so a dead-looking thruster is explained`() {
     val store = healthyStore(nowMs = 10_000, activeClient = me)

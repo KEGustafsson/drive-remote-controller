@@ -137,6 +137,15 @@ data class StationView(
   val rxLinkOk: Boolean?,
   val rxMasterEnable: Boolean?,
   val hhArmed: Boolean?,
+
+  /**
+   * HH's own mode -- `manual` or `hold`, or null if it has not said.
+   *
+   * Read together with [hhArmed] and never alone: the pair is what
+   * ARCHITECTURE.md §9 names as the only way to tell "holding this" from "would
+   * hold this". See [holdEngaged].
+   */
+  val hhMode: String?,
   val thrusterState: String?,
 ) {
   val armed: Boolean
@@ -156,6 +165,28 @@ data class StationView(
       if (!readyToArm(rxLiveness)) add("drive unit")
       if (!readyToArm(hhLiveness)) add("thruster unit")
     }
+
+  /**
+   * Is HH ACTUALLY holding, by its own report?
+   *
+   * Never a local guess, and this is the one place in the view where that
+   * distinction changes a word on the screen. HH mirrors `hh.setpointDeg` to the
+   * fused heading in every state EXCEPT holding (ARCHITECTURE.md §9), so the
+   * number is a live, plausible heading whether the unit engaged, refused
+   * because the heading was not trustworthy, faulted, had the thruster taken by
+   * its own ENGAGE input, or is refusing a station whose disarm it has not seen
+   * yet. "This station can command the thruster" -- [thrusterCommandable] --
+   * answers none of that: it is only our own half, the arm token and a live
+   * unit.
+   *
+   * [hhArmed] and [hhMode] are the pair §9 names, and the liveness test is what
+   * stops a switched-off HH from reporting a hold it cannot still be running:
+   * both are VALUES, and Signal K retains those forever. Same predicate as
+   * [canCommand] uses, so "live enough to hold" and "live enough to command"
+   * cannot drift apart.
+   */
+  val holdEngaged: Boolean
+    get() = hhArmed == true && hhMode == ThrusterMode.HOLD.wire && readyToArm(hhLiveness)
 }
 
 /**
@@ -237,6 +268,7 @@ fun deriveStationView(
     rxLinkOk = store.boolOrNull(SkContract.RX_LINK_OK),
     rxMasterEnable = store.boolOrNull(SkContract.RX_MASTER_ENABLE),
     hhArmed = store.boolOrNull(SkContract.HH_ARMED),
+    hhMode = store.stringOrNull(SkContract.HH_MODE),
     thrusterState = store.stringOrNull(SkContract.HH_THRUSTER_STATE),
   )
 }
