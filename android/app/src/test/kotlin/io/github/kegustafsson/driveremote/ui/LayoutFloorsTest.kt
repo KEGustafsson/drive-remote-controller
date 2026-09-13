@@ -49,11 +49,12 @@ import org.robolectric.annotation.Config
  * a `uiautomator dump`.
  *
  * **The drag.** The first fix put the controls inside a `verticalScroll`. A
- * momentary contact claims the pointer on touch down, so dragging to reach
- * telemetry pressed a drive or thruster contact for the whole drag, while
- * armed. The layout was the mistake, so the layout is what changed: nothing
- * that can command a machine has a scrolling ancestor now, and there is a test
- * below that walks the tree to keep it that way.
+ * momentary contact commands from touch down and does not consume the pointer,
+ * so dragging to reach telemetry both scrolled and pressed a drive or thruster
+ * contact for the whole drag, while armed. The layout was the mistake, so the
+ * layout is what changed: nothing that can command a machine has a scrolling
+ * ancestor now, and there is a test below that walks the tree to keep it that
+ * way.
  *
  * Assertions are deliberately written against the *requirement* — literal 88 dp
  * and 280 dp — and not against [DriveBankMinHeight] or the private contact
@@ -390,10 +391,11 @@ class LayoutFloorsTest {
    * The invariant that matters most here, asserted structurally rather than by
    * its symptoms.
    *
-   * A momentary contact claims the pointer on touch **down**, so a drag that
-   * begins on one is a press. If a scrolling ancestor then claims that gesture
-   * as a drag, the operator gets a scroll *and* a live command for the whole
-   * drag, while armed — `momentaryPress` releases on `isConsumed` as a
+   * A momentary contact commands from touch **down**, so a drag that begins on
+   * one is a press from its first frame — and it does not consume the pointer,
+   * so a scrolling ancestor is free to claim the same gesture as a drag and give
+   * the operator a scroll *and* a live command for the whole of it, while armed.
+   * `momentaryPress` watches for the pointer being consumed and releases as a
    * backstop, but this layout is the primary defence and it is the one that
    * can be checked here.
    *

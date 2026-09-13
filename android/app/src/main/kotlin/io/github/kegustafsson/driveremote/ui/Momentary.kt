@@ -29,13 +29,19 @@ import androidx.compose.ui.input.pointer.pointerInput
  *
  * ## Release is forced on more than a clean lift
  *
- * The `finally` block runs when the gesture ends for ANY reason -- a normal
- * lift, a cancellation, the pointer being consumed by a parent, or the whole
- * gesture loop being torn down. Tearing down is also how the [enabled]
- * force-release works: [enabled] is a `pointerInput` key, so flipping it to
- * false restarts the block and the `finally` fires, releasing a press that was
- * already in flight when authority was withdrawn (disarm, or the unit going
- * offline). A button that is visually dead must never still be commanding.
+ * The `finally` block runs when the loop below stops watching the pointer for
+ * ANY reason -- a normal lift, a cancellation, the pointer disappearing from the
+ * event stream, this loop noticing that an ancestor has consumed the gesture, or
+ * the whole gesture loop being torn down. Note the third of those is something
+ * this code has to LOOK FOR: nothing here consumes the pointer and nothing
+ * cancels the loop when a parent does, so the check is in the loop rather than
+ * in the framework (see the `isConsumed` comment below).
+ *
+ * Tearing down is also how the [enabled] force-release works: [enabled] is a
+ * `pointerInput` key, so flipping it to false restarts the block and the
+ * `finally` fires, releasing a press that was already in flight when authority
+ * was withdrawn (disarm, or the unit going offline). A button that is visually
+ * dead must never still be commanding.
  *
  * The remaining case -- the app leaving the foreground mid-press -- cannot be
  * seen from here and is handled by the lifecycle observer in MainActivity,

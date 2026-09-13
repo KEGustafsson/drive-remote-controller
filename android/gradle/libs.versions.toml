@@ -12,15 +12,9 @@ kotlinxSerialization = "1.11.0"
 agp = "8.13.2"
 composeBom = "2024.12.01"
 okhttp = "4.12.0"
-androidxCore = "1.16.0"
 androidxActivity = "1.9.3"
 androidxLifecycle = "2.8.7"
 androidxDatastore = "1.1.1"
-# 1.1.0 leaves alpha, and deprecates MasterKey and EncryptedSharedPreferences --
-# which is where SettingsStore keeps the Signal K token. Still functional, and
-# still what proguard-rules.pro's Tink keeps protect; the replacement is a
-# separate piece of work. Warnings, not errors, at compile time.
-androidxSecurity = "1.1.0"
 # Robolectric's sandbox level is tied to compileSdk: 4.14 was the first release
 # with an API 35 sandbox, which is what :app compiles against and what the three
 # @Config(sdk = [35]) suites ask for. Do not drop below 4.14, and when compileSdk
@@ -42,18 +36,14 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 
-androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "androidxLifecycle" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidxLifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "androidxDatastore" }
-androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidxSecurity" }
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }

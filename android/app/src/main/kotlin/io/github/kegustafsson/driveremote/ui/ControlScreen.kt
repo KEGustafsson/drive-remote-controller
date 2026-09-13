@@ -56,13 +56,14 @@ const val ClippedWarningTag = "clippedWarning"
  * defects.
  *
  * **Nothing that can command a machine has a scrolling ancestor.** A momentary
- * contact claims the pointer on touch down ([momentaryPress]), so a drag that
- * begins on one is a press. If a scrolling ancestor then claims that gesture as
- * a drag, the operator gets a scroll *and* a live command for the length of the
- * drag — while armed. The kill switch, the thruster contacts and the drive bank
- * are therefore all fixed, and only the telemetry panel scrolls. `momentaryPress`
- * also releases on `isConsumed`, but that is the backstop; this layout is the
- * primary defence.
+ * contact commands from touch **down** ([momentaryPress]), so a drag that begins
+ * on one is a press from its first frame — and it does not consume the pointer,
+ * so a scrolling ancestor is free to claim the same gesture as a drag and give
+ * the operator a scroll *and* a live command for the length of it, while armed.
+ * The kill switch, the thruster contacts and the drive bank are therefore all
+ * fixed, and only the telemetry panel scrolls. `momentaryPress` does watch for
+ * the pointer being consumed and releases when it is, but that is the backstop;
+ * keeping live controls out of the scrolling region is the primary defence.
  *
  * **The live controls take their space first.** The drive bank has a floor no
  * sibling can negotiate down — that is what the old `weight(1f)` allowed, and it

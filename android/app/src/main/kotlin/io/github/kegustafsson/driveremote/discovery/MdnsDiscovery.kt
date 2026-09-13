@@ -68,6 +68,13 @@ class MdnsDiscovery(context: Context) {
       val next = pending.poll()
       if (next == null) {
         resolving.set(false)
+        // Re-check after releasing, or an entry queued between the poll and the
+        // release is never resolved: the thread that added it called
+        // resolveNext(), found the flag still taken and returned, and this one
+        // had already decided there was nothing to do. That service then simply
+        // never appears in the list, which looks exactly like a server that is
+        // not on the network.
+        if (pending.isNotEmpty()) resolveNext()
         return
       }
       nsdManager.resolveService(

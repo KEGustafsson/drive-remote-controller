@@ -117,6 +117,13 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
   fun connect(address: ServerAddress, token: String?) {
     closedByCaller = false
     if (target == address && this.token == token && webSocket != null) return
+    // Past the guard above this really is a new session, so the previous one's
+    // last-known values must not be read as this one's. See SkValueStore.clear():
+    // a retained `activeClient` naming this station would paint the new session
+    // ARMED before a single delta had arrived. A RECONNECT does not come through
+    // here -- it goes straight to openSocket() -- so last-known values still
+    // survive a dropped socket, which is what they are for.
+    store.clear()
     reconnectJob?.cancel()
     reconnectJob = null
     target = address
@@ -136,6 +143,11 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
     webSocket?.close(NORMAL_CLOSURE, null)
     webSocket = null
     _connectionState.value = ConnectionState.CLOSED
+    // A caller-initiated close ends the SESSION, which a dropped socket does
+    // not. Nothing that follows may be derived from what this session last saw
+    // -- least of all `activeClient`, which would still name this station and
+    // read as ARMED with nothing holding the arm token.
+    store.clear()
   }
 
   private fun openSocket() {

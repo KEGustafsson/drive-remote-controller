@@ -89,7 +89,20 @@ private fun isPrivateIpv6(h: String): Boolean {
 private fun isLocalName(h: String): Boolean {
   // mDNS, which is what discovery returns.
   if (h == "local" || h.endsWith(".local")) return true
+  // The two suffixes reserved for private use by standards bodies, so neither
+  // can ever be delegated in public DNS: home.arpa (RFC 8375, the name HNCP
+  // gives a home network) and internal (ICANN-reserved in 2024 for exactly this
+  // purpose). A boat network that names its server through a real resolver
+  // rather than mDNS uses one of these, and it is as unroutable as .local.
+  //
+  // Matched as a whole name or a true suffix, never as a substring: the check
+  // is the same shape as the .local one above, so "home.arpa.example.com" is a
+  // public name and is refused.
+  if (h == "home.arpa" || h.endsWith(".home.arpa")) return true
+  if (h == "internal" || h.endsWith(".internal")) return true
   // A single-label name has no public DNS meaning -- there is no TLD to
-  // delegate it -- so it can only resolve on the local network.
+  // delegate it -- so it can only resolve on the local network. Anything else
+  // is a name that public DNS could answer, and falls through to false: an
+  // address this function does not recognise as private is not thereby trusted.
   return !h.contains('.')
 }

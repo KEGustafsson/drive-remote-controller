@@ -30,9 +30,9 @@ That last screenshot records the pre-fix layout defect. The kill switch, the
 thruster contacts and the drive bank are now all fixed, and **only the
 telemetry panel scrolls** — so expanding telemetry cannot collapse live
 buttons. Nothing that can command a machine sits inside a scrolling gesture
-region: a momentary contact claims the pointer on touch down, so a drag that
-begins on one is a press, and a scrolling ancestor would hand the operator a
-scroll *and* a live command for the length of the drag.
+region: a momentary contact commands from touch down and does not consume the
+pointer, so a scrolling ancestor would claim the same gesture as a drag and hand
+the operator a scroll *and* a live command for the length of it.
 
 The two-handed manoeuvre — port FWD and starboard REV held by two fingers at
 once, which is the whole reason `ui/Momentary.kt` exists — is **not pictured**.
@@ -51,7 +51,9 @@ disarm, edge-triggered requests, stale eviction, fail-to-safe. This app is a new
 boat is two things:
 
 - **read** — one WebSocket to `/signalk/v1/stream`, one subscribe message,
-  17 paths
+  18 paths: the browser UI's 17, plus `sensors.headingHold.fusedHeading`, which
+  a station that is not the one holding needs because `hh.setpointDeg` shows the
+  held target rather than the boat's current heading
 - **write** — `POST /plugins/signalk-drive-remote-controller/intent`, a flat
   JSON object, on change plus a 250 ms heartbeat
 
@@ -186,7 +188,7 @@ when you set it will not see it.
 ```
 
 On Windows use `.\gradlew.bat`. `:core:test` prints its own total
-(`core: 171 tests, 171 passed, 0 failed, 0 skipped`) so a run can be quoted in
+(`core: 176 tests, 176 passed, 0 failed, 0 skipped`) so a run can be quoted in
 the journal the same way `pio test` and `npm test` are. Gradle caches an
 unchanged suite; add `--rerun-tasks` when you want the count printed again.
 
@@ -814,8 +816,8 @@ That is a real milestone and still a long way short of "it works".
 
 | | |
 |---|---|
-| `core/` | **Verified.** 147 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 6 Robolectric layout tests. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry — lifecycle, intent ordering, teardown — is still untested. |
+| `core/` | **Verified.** 176 tests, `./gradlew :core:test`, no warnings. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 73 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |
