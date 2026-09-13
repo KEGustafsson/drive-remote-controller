@@ -481,8 +481,14 @@ fun ThrusterControl(
             // not a warning: this is where every arm passes through.
             HoldPhase.REQUESTED -> "°  HOLD REQUESTED"
             // Asked for, and HH has had its window and not taken it. The line
-            // below says what to do about it.
-            HoldPhase.NOT_ENGAGING -> "°  HOLD NOT ENGAGED"
+            // below says what to do about it -- except when the thruster simply
+            // belongs to a higher-precedence source, which is not a fault and is
+            // already named by the "controlled by ..." note. That case reads
+            // exactly like a request in flight: our hold is not running, we have
+            // asked for it, and nothing is broken.
+            HoldPhase.NOT_ENGAGING ->
+              if (view.holdStall == HoldStall.OTHER_SOURCE) "°  HOLD REQUESTED"
+              else "°  HOLD NOT ENGAGED"
             // Not asking: either nothing is commandable here, or the request is
             // one tick old and the window has not been stamped yet. Both read
             // the number as the fused heading, so the caption follows `enabled`
@@ -491,8 +497,13 @@ fun ThrusterControl(
           },
           fontSize = helm.text(13.sp),
           color =
-            if (view.holdPhase == HoldPhase.NOT_ENGAGING) DriveColors.bad
-            else DriveColors.inkMuted,
+            if (view.holdPhase == HoldPhase.NOT_ENGAGING &&
+              view.holdStall != HoldStall.OTHER_SOURCE
+            ) {
+              DriveColors.bad
+            } else {
+              DriveColors.inkMuted
+            },
           modifier = Modifier.padding(start = helm.size(6.dp)),
         )
       }

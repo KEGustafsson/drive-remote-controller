@@ -250,6 +250,25 @@ describe('ThrusterControl in HOLD mode', () => {
     expect(screen.queryByText('holding')).not.toBeInTheDocument();
   });
 
+  it('does not report a thruster somebody else owns as a failed hold', () => {
+    // Precedence working as designed: the unit's own switch or TX has the
+    // thruster, the "controlled by ..." note says so, and a second and graver
+    // statement of the same thing would send the operator after a fault that is
+    // not happening.
+    renderControl({
+      mode: 'hold',
+      heldDeg: 40,
+      trimDeg: 0,
+      holdPhase: 'not-engaging' as HoldPhase,
+      holdStall: 'other-source' as HoldStall,
+      overriddenBy: 'TX remote',
+    });
+    expect(screen.getByText('controlled by TX remote')).toBeInTheDocument();
+    expect(screen.queryByText('hold not engaged')).not.toBeInTheDocument();
+    expect(screen.getByText('hold requested')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('names what HH says is wrong, because the remedies differ', () => {
     const { rerender } = renderControlFor('unit-fault');
     expect(screen.getByText('not holding — thruster unit fault')).toBeInTheDocument();

@@ -241,6 +241,13 @@ class ThrusterModeSelectionTest {
     compose.onAllNodesWithText("NOT HOLDING", substring = true).fetchSemanticsNodes().let {
       assertEquals("an overridden thruster was also reported as a stalled hold", 0, it.size)
     }
+    // The caption too, not just the band: a red "HOLD NOT ENGAGED" over a note
+    // saying the thruster is being worked by TX describes a fault that is not
+    // happening. It reads as a request in flight, which is what it is.
+    compose.onAllNodesWithText(StalledCaption, substring = true).fetchSemanticsNodes().let {
+      assertEquals("precedence working as designed was drawn as a fault", 0, it.size)
+    }
+    compose.onNodeWithText(RequestedCaption, substring = true).assertExists()
   }
 
   /** And the reverse: with the unit reporting the hold, nothing says "requested". */

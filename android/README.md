@@ -51,9 +51,11 @@ disarm, edge-triggered requests, stale eviction, fail-to-safe. This app is a new
 boat is two things:
 
 - **read** — one WebSocket to `/signalk/v1/stream`, one subscribe message,
-  18 paths: the browser UI's 17, plus `sensors.headingHold.fusedHeading`, which
+  19 paths: the browser UI's 18, plus `sensors.headingHold.fusedHeading`, which
   a station that is not the one holding needs because `hh.setpointDeg` shows the
-  held target rather than the boat's current heading
+  held target rather than the boat's current heading. (Both stations subscribe
+  to `sensors.headingHold.fsmState`, which is the only thing that separates a
+  running hold from an armed-and-idle one.)
 - **write** — `POST /plugins/signalk-drive-remote-controller/intent`, a flat
   JSON object, on change plus a 250 ms heartbeat
 
@@ -632,7 +634,8 @@ station never re-arms itself to clear a refusal: manufacturing that engage edge
 is exactly what the firmware's re-engage latch exists to prevent.
 `ui/ThrusterModeSelectionTest.kt` pins the quiet case, each loud one, and that
 the band cannot push the drive contacts below their floor on the smallest
-supported window. The browser UI carries the older wording for now.
+supported window. The browser UI carries the same rule, in the same words
+(`sk-plugin/src/pure/holdPhase.ts`).
 
 ### Scaling to the screen it is on
 

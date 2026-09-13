@@ -7098,7 +7098,23 @@ with the same fallback to the pair. The band is `.thruster-control__alarm`,
 `role="alert"` rather than the notes' `role="status"`, because this one
 interrupts.
 
-Suites: Android core 186 (was 178), app 82 (was 75), plugin 295 (was 277).
+**One review round, and three of the four findings were the code disagreeing
+with its own comments.** A thruster owned by the local switch or TX had been
+written up, twice, as "not a fault, drawn as nothing" -- and then both stations
+drew it as one anyway: the band was suppressed but the caption still read HOLD
+NOT ENGAGED, in red on the phone, over a note saying TX had the thruster. It now
+reads exactly like a request in flight, which is what it is. The Android hold
+window was likewise documented as cleared "the moment either half stops being
+true", but `refreshView` samples the mode at 4 Hz: HOLD -> MANUAL -> HOLD inside
+a quarter second left the first request's expired window standing over the
+second, and painted the fault band on a request HH had not yet been told about.
+Every `thruster` assignment now goes through one `updateThruster`, which clears
+the window on any mode change -- structural rather than a reset per caller,
+since `setControlsSafe` changes the mode too. The fourth was a stale line in
+`android/README.md` claiming the browser still carried the older wording, and a
+subscription count the new path had moved.
+
+Suites: Android core 186 (was 178), app 82 (was 75), plugin 296 (was 277).
 
 Host-verified only, as ever: Robolectric lays the Android band out, jsdom the
 browser one, and both suites drive the window off a fake clock -- but neither

@@ -186,8 +186,9 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
 
   /**
    * When the hold this station is currently asking for was first asked for, or
-   * null when it is not asking for one. Maintained in [refreshView], which is
-   * also the only reader; see the comment there for why it is kept at all.
+   * null when it is not asking for one. Stamped and cleared in [refreshView] --
+   * see the comment there -- and additionally cleared by [updateThruster] the
+   * instant the MODE changes, which [refreshView]'s 4 Hz sampling cannot see.
    */
   private var holdRequestedSinceMs: Long? = null
 
@@ -598,8 +599,27 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     sendIntentNow(urgent = position == DrivePosition.NEUTRAL)
   }
 
+  /**
+   * The single place [thruster] is assigned, so that one rule holds however the
+   * command changes: **a mode change ends the hold request this station was
+   * making.**
+   *
+   * [refreshView] samples the mode at 4 Hz, which is enough to START a window
+   * but cannot see an excursion that begins and ends between two ticks: HOLD ->
+   * MANUAL -> HOLD in a quarter second (two taps on adjacent chips) would leave
+   * the expired window of the FIRST request standing over the second, and paint
+   * the fault band on a request HH has not even been told about yet. Clearing it
+   * here makes that impossible by construction rather than by adding a reset to
+   * each caller -- [setControlsSafe] changes the mode too, and so would the next
+   * writer to touch this field.
+   */
+  private fun updateThruster(next: ThrusterCommand) {
+    if (next.mode != thruster.mode) holdRequestedSinceMs = null
+    thruster = next
+  }
+
   fun setThrusterDirection(direction: ThrusterDirection) {
-    thruster = thruster.withDirection(direction)
+    updateThruster(thruster.withDirection(direction))
     sendIntentNow(urgent = direction == ThrusterDirection.OFF)
   }
 
@@ -619,16 +639,21 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     // publishing on every heartbeat with no finger on the glass, and would be
     // replayed as a live thrust the moment MANUAL came back -- which HH acts on
     // at once, MANUAL having no firmware dwell by design.
-    thruster = thruster.withMode(mode)
+    updateThruster(thruster.withMode(mode))
     _uiState.value =
       _uiState.value.copy(thrusterMode = thruster.mode, trimDeg = thruster.trimDeg)
+    // Re-derive now rather than on the next tick: the view still carries the
+    // phase of the request that just ended, and re-entering HOLD would show its
+    // verdict for up to one poll interval before the window it belongs to has
+    // been stamped. Cheap and pure -- it reads the store and a clock.
+    refreshView()
     // Urgent when the change released something: that send IS the release, and a
     // release must not wait out a stalled press in the lane.
     sendIntentNow(urgent = thruster.direction == ThrusterDirection.OFF)
   }
 
   fun trim(stepDeg: Double) {
-    thruster = thruster.trimmedBy(stepDeg)
+    updateThruster(thruster.trimmedBy(stepDeg))
     _uiState.value = _uiState.value.copy(trimDeg = thruster.trimDeg)
     sendIntentNow()
   }
@@ -665,7 +690,7 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
   private fun setControlsSafe() {
     portPosition = DrivePosition.NEUTRAL
     stbdPosition = DrivePosition.NEUTRAL
-    thruster = ThrusterCommand.SAFE
+    updateThruster(ThrusterCommand.SAFE)
     _uiState.value =
       _uiState.value.copy(thrusterMode = thruster.mode, trimDeg = thruster.trimDeg)
   }
@@ -953,6 +978,8 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     // not commandable, so arming always begins at "hold the captured heading"
     // and never swings the boat to an offset dialled in earlier.
     if (!view.thrusterCommandable) {
+      // Trim only -- the mode is untouched, so this one does not go through
+      // updateThruster's mode rule (and must not: it runs on every tick).
       thruster = thruster.untrimmed()
     }
 

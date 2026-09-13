@@ -247,7 +247,12 @@ export function ThrusterControl({
                   ? trimDeg !== 0
                     ? `holding · trim ${formatTrim(trimDeg)}°`
                     : 'holding'
-                  : holdPhase === 'not-engaging'
+                  : /* A hold the thruster's owner is not letting run is not a
+                       fault, and the "controlled by ..." note below already
+                       names it -- so 'other-source' reads exactly like a
+                       request in flight rather than adding a second, graver
+                       statement of the same thing. */
+                    holdPhase === 'not-engaging' && holdStall !== 'other-source'
                     ? 'hold not engaged'
                     : /* 'requested', and 'idle' too: commandable and in HOLD,
                          the request is either in flight or one render old and
