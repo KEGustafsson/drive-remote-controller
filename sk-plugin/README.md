@@ -256,10 +256,29 @@ on the widget rather than left to be discovered: **with HOLD selected, arming
 alone starts the hold** — the unit captures the heading and works the thruster
 with no further press. The big number is labelled by what the unit itself
 reports, never by what this app asked for: "current heading" while disarmed,
-"holding" only once `hh.armed` and `hh.mode` say the hold is running, and
-"hold requested · unit not holding" in between — HH mirrors its setpoint to
-the live heading whenever it is not holding, so the number alone cannot tell
-the two apart.
+"holding" only once `hh.armed`, `hh.mode` **and** `sensors.headingHold.fsmState`
+say the hold is running, and "hold requested" in between — HH mirrors its
+setpoint to the live heading whenever it is not holding, so the number alone
+cannot tell the two apart. The FSM state is part of that test because HH asserts
+ENABLE, and so publishes `hh.armed`, in `ARMED_IDLE` as well as in `HOLDING`: a
+hold that never started for want of a trustworthy heading, and one given up
+after coasting past `coast_max`, both publish the armed + hold pair and neither
+is holding anything.
+
+**A hold in flight is not a fault, and is not drawn as one.** Between the arm
+and HH's first report there is no warning — that state is where every arm
+passes, and a warning shown every time is one the operator learns to read past.
+Only when the request outlives `HOLD_ENGAGE_GRACE_MS` (2 s, sized on the
+intent → arbiter → HH → telemetry round trip) does the panel call it a fault:
+the label becomes "hold not engaged" and a red band names the reason from HH's
+own FSM state and the move that fixes it — "disarm and re-arm to engage" for a
+unit refusing a station it has not seen disarm (SAFETY.md thruster invariant 9,
+the one case the operator can clear from this screen), "no heading fix" for
+`ARMED_IDLE`, "thruster unit fault" for `FAULT`, and "check the thruster unit"
+when HH has said nothing. A thruster the local switch or TX owns is not reported
+here at all — the "controlled by …" note already says it, and it is not a fault.
+The rule is pure (`src/pure/holdPhase.ts`), the clock is `useHoldPhase`, and the
+Android station carries the same one in the same words.
 
 Authority is the same rule as the drives: the unit's own engage switch wins
 unconditionally, then TX, then this app — and the app says "controlled by TX

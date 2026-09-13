@@ -6,6 +6,7 @@ import { ThrusterControl } from './components/ThrusterControl';
 import {
   PERIODIC_REFRESH_MS,
   SK_HH_ARMED_PATH,
+  SK_HH_FSM_STATE_PATH,
   SK_HH_MODE_PATH,
   SK_HH_REVERSAL_PENDING_PATH,
   SK_HH_SETPOINT_PATH,
@@ -23,7 +24,9 @@ import {
   type ThrusterMode,
 } from './clientIntent';
 import { classifyIntentFailure, type IntentStatus } from './pure/intentStatus';
+import { holdEngagedFrom } from './pure/holdPhase';
 import { isPlausibleHeading, trimBy } from './pure/trimOffset';
+import { useHoldPhase } from './hooks/useHoldPhase';
 import { useHhLiveness, useRxLiveness } from './hooks/useRxLiveness';
 import { useSkConnection } from './hooks/useSkConnection';
 import { useWriteAccess } from './hooks/useWriteAccess';
@@ -194,14 +197,17 @@ export function App({
   // Is HH ACTUALLY holding, by its own report? Never a local guess: HH mirrors
   // hh.setpointDeg to the fused heading whenever it is not holding
   // (ARCHITECTURE.md §9), so the number alone reads the same either way and
-  // may not be labelled "holding" unconditionally. hh.armed + hh.mode is the
-  // pair that distinguishes "holding this" from "would hold this" -- and both
-  // are VALUES, which Signal K retains forever, so the liveness check is what
-  // stops a switched-off HH from reporting a hold it can no longer be running.
-  const holdEngaged =
-    values[SK_HH_ARMED_PATH] === true &&
-    values[SK_HH_MODE_PATH] === 'hold' &&
-    rxReadyToArm(hhLiveness);
+  // may not be labelled "holding" unconditionally. hh.armed + hh.mode narrows
+  // it, HH's own FSM state settles it (ENABLE is asserted in ARMED_IDLE too),
+  // and the liveness check is what stops a switched-off HH from reporting a hold
+  // it can no longer be running -- every one of those inputs is a VALUE, and
+  // Signal K retains those forever. The whole rule is in pure/holdPhase.ts.
+  const holdEngaged = holdEngagedFrom(
+    values[SK_HH_ARMED_PATH],
+    values[SK_HH_MODE_PATH],
+    values[SK_HH_FSM_STATE_PATH],
+    rxReadyToArm(hhLiveness),
+  );
 
   // The intent payload minus `seq` (which is stamped at send time so every
   // heartbeat is a distinct message).
@@ -384,6 +390,18 @@ export function App({
       ? sourceLabel(thrusterSource)
       : undefined;
 
+  // What has become of the hold this station is asking for. In HOLD the arm IS
+  // the request, so "asking" is HOLD selected while the thruster is
+  // commandable. The phase is what keeps the first moment after every arm from
+  // being drawn as a fault, and what makes a hold the unit is refusing look
+  // like one instead of like more waiting.
+  const hold = useHoldPhase(
+    thrusterCommandable && thrusterMode === 'hold',
+    holdEngaged,
+    values[SK_HH_FSM_STATE_PATH],
+    thrusterOverride !== undefined,
+  );
+
   return (
     <div className="app">
       <header className="app__header">
@@ -424,8 +442,11 @@ export function App({
         // see the prop's doc.
         holdsControl={armed}
         // What HH itself says, not what this app asked for -- the heading is
-        // only labelled "holding" when the unit reports the hold is running.
-        holdEngaged={holdEngaged}
+        // only labelled "holding" when the unit reports the hold is running,
+        // and a request it has not taken becomes a fault only once it has had
+        // long enough to take it.
+        holdPhase={hold.phase}
+        holdStall={hold.stall}
         overriddenBy={thrusterOverride}
         reversalPending={values[SK_HH_REVERSAL_PENDING_PATH] === true}
       />

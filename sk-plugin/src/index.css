@@ -706,6 +706,22 @@ button {
   color: var(--ink-muted);
 }
 
+/* A hold the unit has had every chance to take and has not. Unlike the notes
+   above this is a fault -- the operator asked the thruster to hold a heading
+   and it is not holding it -- so it is a filled band rather than another line
+   of grey text. Kept to one line's worth of content for the same reason the
+   Android panel does: this widget sits above the drive controls, and anything
+   that grows here pushes them down. */
+.thruster-control__alarm {
+  display: block;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bad);
+  color: #fff;
+  font-weight: 700;
+}
+
 .thruster-control.is-overridden .thruster-button,
 .thruster-control.is-overridden .trim-button {
   opacity: 0.55;

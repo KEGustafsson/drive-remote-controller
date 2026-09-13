@@ -7087,11 +7087,21 @@ Geometry is a safety property on that screen, so the band is measured as well
 as asserted: `ThrusterModeSelectionTest` renders it on the 360×512 dp floor and
 checks the drive contacts still clear 88 dp under it.
 
-Suites: Android core 186 (was 178), app 82 (was 75). The browser UI has the same
-two defects in the same words and is deliberately untouched here.
+**And then the browser station, which had both defects in the same words.**
+Same rule, same window, same wording as far as its own idiom allows: the phase
+is pure (`src/pure/holdPhase.ts`, the twin of the Kotlin `HoldPhase`/`HoldStall`
+— the two stations must not disagree about what is worth alarming an operator
+over), the clock that expires the window is `useHoldPhase` (the same necessity
+as `useUnitLiveness`: a hold that never arrives produces no event, so React
+would never re-render to find out), and `holdEngagedFrom` requires `HOLDING`
+with the same fallback to the pair. The band is `.thruster-control__alarm`,
+`role="alert"` rather than the notes' `role="status"`, because this one
+interrupts.
 
-Host-verified only, as ever: Robolectric lays the band out and the core suite
-drives the phases off a fake clock, but no phone has shown one and no refusal
-has been provoked at HH. The first real test is the next time the unit is
+Suites: Android core 186 (was 178), app 82 (was 75), plugin 295 (was 277).
+
+Host-verified only, as ever: Robolectric lays the Android band out, jsdom the
+browser one, and both suites drive the window off a fake clock -- but neither
+station has shown a band on the boat and no refusal has been provoked at HH. The first real test is the next time the unit is
 power-cycled with a station left armed -- which is exactly how the owner met
 this in the first place.
