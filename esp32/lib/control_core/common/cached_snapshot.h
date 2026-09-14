@@ -20,6 +20,8 @@
 
 #include <stdint.h>
 
+#include "common/elapsed_ms.h"
+
 namespace control_core {
 
 /**
@@ -34,7 +36,8 @@ namespace control_core {
  * gives the correct elapsed time across the ~49.7-day millis() rollover, where
  * comparing the two timestamps directly would read a wrapped clock as an
  * enormous age and drop a healthy source. Same idiom as LinkWatchdog, and the
- * reason this is written once.
+ * reason this is written once. A `last_update_ms` later than `now_ms` is age 0
+ * rather than ~49 days, for the reason given in common/elapsed_ms.h.
  *
  * @param snapshot cached copy, updated in place
  * @param now_ms current monotonic time
@@ -44,7 +47,7 @@ template <typename Snapshot>
 void AgeCachedSnapshot(Snapshot& snapshot, uint32_t now_ms,
                        uint32_t timeout_ms) {
   if (!snapshot.live) return;
-  snapshot.live = (now_ms - snapshot.last_update_ms) <= timeout_ms;
+  snapshot.live = ElapsedMs(now_ms, snapshot.last_update_ms) <= timeout_ms;
 }
 
 }  // namespace control_core

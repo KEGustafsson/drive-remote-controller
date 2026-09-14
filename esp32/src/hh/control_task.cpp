@@ -346,21 +346,30 @@ void ControlTask::Tick(uint32_t now_ms, float dt_s) {
   // locally rather than stalling the safe core (SAFETY.md thruster invariant
   // 5). A stale cache cannot outlive the source timeout, and the local ENGAGE
   // input outranks both regardless (invariant 6).
+  //
+  // The window depends on the MODE each source is publishing -- HOLD is given
+  // more room than MANUAL (config.h; the rule and its reasoning are in
+  // thruster_arbitration.h). Snapshot() picks it from the coherent tuple it is
+  // reading; the ageing path below can only use the cached copy's own mode,
+  // which is the same value that copy was judged on when it was taken.
+  static constexpr control_core::ThrusterStaleness kStaleness{
+      config::kThrusterHoldSourceStalenessMs,
+      config::kThrusterManualSourceStalenessMs};
   if (tx_thruster_ != nullptr) {
-    if (!tx_thruster_->Snapshot(now_ms, config::kThrusterSourceStalenessMs,
-                                &cached_tx_)) {
+    if (!tx_thruster_->Snapshot(now_ms, kStaleness, &cached_tx_)) {
       // Shared with RX's drive path -- see common/cached_snapshot.h for why the
       // rule is not written out here.
-      control_core::AgeCachedSnapshot(cached_tx_, now_ms,
-                                      config::kThrusterSourceStalenessMs);
+      control_core::AgeCachedSnapshot(
+          cached_tx_, now_ms,
+          control_core::ThrusterStalenessMsFor(cached_tx_.mode, kStaleness));
     }
   }
   if (plugin_thruster_ != nullptr) {
-    if (!plugin_thruster_->Snapshot(now_ms,
-                                    config::kThrusterSourceStalenessMs,
-                                    &cached_plugin_)) {
-      control_core::AgeCachedSnapshot(cached_plugin_, now_ms,
-                                      config::kThrusterSourceStalenessMs);
+    if (!plugin_thruster_->Snapshot(now_ms, kStaleness, &cached_plugin_)) {
+      control_core::AgeCachedSnapshot(
+          cached_plugin_, now_ms,
+          control_core::ThrusterStalenessMsFor(cached_plugin_.mode,
+                                               kStaleness));
     }
   }
   in.tx = cached_tx_;

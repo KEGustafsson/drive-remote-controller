@@ -32,6 +32,7 @@ procedure on this page.
 | Servo PWM frequency | 200 Hz | `kServoPeriodHz` |
 | TX power | 9 V battery with its own physical on/off switch | not a firmware concern |
 | Source staleness timeout | 1000 ms, against a 250 ms refresh (4× headroom) | `kSkStalenessTimeoutMs` |
+| Thruster source staleness | 2000 ms in HOLD (8×), 1000 ms in MANUAL (4×) — not one number; SAFETY.md invariant 9 says why | `kThrusterHoldSourceStalenessMs`, `kThrusterManualSourceStalenessMs` |
 | Unit-absent timeout | 1500 ms (six refreshes) | `kRxTelemetryStaleMs`, `kHhTelemetryStaleMs` |
 
 **Servo calibration is live-tunable**, not fixed at compile time: the values

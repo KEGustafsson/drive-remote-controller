@@ -1,5 +1,6 @@
 #include <unity.h>
 
+#include "common/elapsed_ms.h"
 #include "drive/link_watchdog.h"
 
 using control_core::LinkWatchdog;
@@ -109,6 +110,63 @@ void test_update_after_a_latched_stale_is_live_again() {
   TEST_ASSERT_TRUE(w.IsLive(5000, kTimeoutMs));
 }
 
+// The clock-ordering race (common/elapsed_ms.h). The control task reads its
+// clock at the top of a tick; an SK callback that completes before the tick
+// reaches its snapshot stamps a LATER millis(). That update is the freshest
+// evidence the unit has, and it must read live -- plain unsigned subtraction
+// read it as ~49 days old, latched the source stale until its next delta, and
+// on HH ended an engaged hold through the re-engage latch.
+void test_update_stamped_after_now_is_live() {
+  LinkWatchdog w;
+  w.Update(5001);
+  TEST_ASSERT_TRUE(w.IsLive(5000, kTimeoutMs));
+  TEST_ASSERT_TRUE(w.HasEverUpdated());  // not latched stale
+  w.Update(5007);
+  TEST_ASSERT_TRUE(w.IsLive(5000, kTimeoutMs));
+  // And it still expires on its own budget once the clock passes it.
+  TEST_ASSERT_TRUE(w.IsLive(5007 + kTimeoutMs, kTimeoutMs));
+  TEST_ASSERT_FALSE(w.IsLive(5007 + kTimeoutMs + 1, kTimeoutMs));
+}
+
+// The same race across the millis() rollover: stamp just after the wrap, tick
+// clock just before it.
+void test_update_stamped_after_now_across_rollover_is_live() {
+  LinkWatchdog w;
+  w.Update(0x00000002u);
+  TEST_ASSERT_TRUE(w.IsLive(0xFFFFFFFEu, kTimeoutMs));
+}
+
+// ElapsedMs itself: ordinary ages, ages straddling the rollover, and the
+// boundary where a difference stops being an age and becomes a future stamp.
+void test_elapsed_ms() {
+  using control_core::ElapsedMs;
+  using control_core::IsFutureTimestamp;
+  TEST_ASSERT_EQUAL_UINT32(0, ElapsedMs(5000, 5000));
+  TEST_ASSERT_EQUAL_UINT32(250, ElapsedMs(5250, 5000));
+  TEST_ASSERT_EQUAL_UINT32(512, ElapsedMs(0x00000100u, 0xFFFFFF00u));
+  TEST_ASSERT_FALSE(IsFutureTimestamp(5250, 5000));
+  // Later than now: age 0, and flagged.
+  TEST_ASSERT_EQUAL_UINT32(0, ElapsedMs(5000, 5001));
+  TEST_ASSERT_TRUE(IsFutureTimestamp(5000, 5001));
+  TEST_ASSERT_EQUAL_UINT32(0, ElapsedMs(0xFFFFFFFEu, 0x00000002u));
+  // The largest real age (just under 24.8 days) is still an age.
+  TEST_ASSERT_EQUAL_UINT32(0x7FFFFFFFu, ElapsedMs(0x7FFFFFFFu, 0));
+  TEST_ASSERT_FALSE(IsFutureTimestamp(0x7FFFFFFFu, 0));
+  TEST_ASSERT_TRUE(IsFutureTimestamp(0x80000000u, 0));
+}
+
+// A source that genuinely goes silent is still found stale, however the clock
+// race is handled -- the fix must not hand a dead station extra authority.
+void test_silent_source_still_goes_stale_at_its_timeout() {
+  LinkWatchdog w;
+  w.Update(5000);
+  for (uint32_t t = 5000; t <= 5000 + kTimeoutMs; t += 10) {
+    TEST_ASSERT_TRUE(w.IsLive(t, kTimeoutMs));
+  }
+  TEST_ASSERT_FALSE(w.IsLive(5000 + kTimeoutMs + 10, kTimeoutMs));
+  TEST_ASSERT_FALSE(w.HasEverUpdated());
+}
+
 // Independent instances don't share state.
 void test_instances_are_independent() {
   LinkWatchdog a;
@@ -130,5 +188,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_stale_verdict_is_latched_across_the_clock_wrap);
   RUN_TEST(test_update_after_a_latched_stale_is_live_again);
   RUN_TEST(test_instances_are_independent);
+  RUN_TEST(test_update_stamped_after_now_is_live);
+  RUN_TEST(test_update_stamped_after_now_across_rollover_is_live);
+  RUN_TEST(test_elapsed_ms);
+  RUN_TEST(test_silent_source_still_goes_stale_at_its_timeout);
   return UNITY_END();
 }

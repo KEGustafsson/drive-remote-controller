@@ -27,6 +27,7 @@
 // listener callbacks is a torn read of a live source, not a dead one. See
 // SkThrusterIn::Snapshot.
 
+#include <atomic>
 #include <memory>
 
 #include "drive/link_watchdog.h"
@@ -45,11 +46,39 @@ class SkThrusterIn {
              const char* trim_path, const char* enabled_path,
              int listen_delay_ms);
 
-  // Non-blocking; see the header note. now_ms/timeout_ms go straight to the
-  // internal LinkWatchdog::IsLive(), which latches a stale source (so the
-  // millis() wrap cannot revive it) -- hence not const.
-  bool Snapshot(uint32_t now_ms, uint32_t timeout_ms,
+  // Non-blocking; see the header note. now_ms and the window selected from
+  // `staleness` go straight to the internal LinkWatchdog::IsLive(), which
+  // latches a stale source (so the millis() wrap cannot revive it) -- hence not
+  // const.
+  //
+  // WHICH window is chosen by the MODE this source is currently publishing
+  // (control_core::ThrusterStalenessMsFor). The choice is made inside the same
+  // mutex acquisition as the read, so it is the mode of the coherent tuple
+  // being judged and not a mode sampled a tick earlier: a source that has begun
+  // publishing kManual is judged on MANUAL's shorter window from that first
+  // tick, and can never carry HOLD's tolerance into a manual command.
+  bool Snapshot(uint32_t now_ms,
+                const control_core::ThrusterStaleness& staleness,
                 control_core::ThrusterRemote* out);
+
+  // Link diagnostics, shown on HH's web status page (/api/info) so the source
+  // liveness path can be judged over WiFi on a unit with no serial console.
+  // Lock-free reads of counters the control task writes; each value is
+  // individually current, not a coherent set.
+  //   future_stamps     -- snapshots that found an update stamped after the
+  //                        tick's clock (common/elapsed_ms.h). Harmless since
+  //                        ElapsedMs; counted to show how often the race runs.
+  //   stale_transitions -- live -> not-live verdicts taken by Snapshot().
+  //   last_stale_age_ms -- the oldest member's age at the latest of those. A
+  //                        genuine loss reads just over the timeout.
+  //   contended         -- ticks that found the mutex busy and aged the cache.
+  struct Diagnostics {
+    uint32_t future_stamps;
+    uint32_t stale_transitions;
+    uint32_t last_stale_age_ms;
+    uint32_t contended;
+  };
+  Diagnostics diagnostics() const;
 
  private:
   std::shared_ptr<sensesp::SKValueListener<String>> command_listener_;
@@ -66,4 +95,10 @@ class SkThrusterIn {
   control_core::LinkWatchdog trim_watchdog_;
   control_core::LinkWatchdog enabled_watchdog_;
   SemaphoreHandle_t mutex_ = nullptr;
+
+  bool was_live_ = false;  // control task only, under mutex_
+  std::atomic<uint32_t> future_stamps_{0};
+  std::atomic<uint32_t> stale_transitions_{0};
+  std::atomic<uint32_t> last_stale_age_ms_{0};
+  std::atomic<uint32_t> contended_{0};
 };

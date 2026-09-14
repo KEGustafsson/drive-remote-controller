@@ -771,12 +771,47 @@ constexpr const char* kDutyWarnConfigPath = "/heading_hold/switcher/duty_warn";
 constexpr const char* kDutyMaxConfigPath = "/heading_hold/switcher/duty_max";
 
 // ---- Remote thruster control (ARCHITECTURE.md §6) ----
-// How stale a remote thruster source may get before HH stops honouring it.
-// Same value and same reasoning as the drives' kSkStalenessTimeoutMs (both TX
-// and the plugin refresh every kSkPeriodicRefreshMs = 250 ms, giving 4x
-// headroom), kept as its own name so the thruster's tolerance can be tightened
-// independently of the drives' if bench testing ever calls for it.
-constexpr uint32_t kThrusterSourceStalenessMs = 1000;
+// How stale a remote thruster source may get before HH stops honouring it --
+// ONE WINDOW PER MODE. The rule that picks between them, and the reasoning for
+// why the two gates do not share a number, is in the pure core next to the
+// modes themselves (heading/thruster_arbitration.h, ThrusterStaleness); these
+// are the values.
+//
+// MANUAL keeps the drives' 1000 ms, which is what MEASUREMENTS.md's source
+// staleness row measured ("max 1s") and what a momentary button wants: a
+// station that vanishes with a finger down must stop the thrust promptly. 4x
+// kSkPeriodicRefreshMs = 250 ms of headroom against jitter, exactly as on the
+// drives.
+//
+// HOLD gets 2000 ms (8x) -- 2026-09-13 owner decision, reported from the boat.
+// At 1000 ms, three missed republishes anywhere in HH's OWN inbound path (a
+// WiFi fade, an SK server hiccup, the SensESP loop blocked by the config UI)
+// dropped the commanding station to not-live, which arms the re-engage latch
+// (control_step.h) -- and that is permanent until the operator disarms and
+// re-arms. A transport blip of a few hundred milliseconds was therefore ending
+// holds outright and showing "NOT HOLDING -- RE-ARM TO ENGAGE" on the station.
+// Nothing about the latch changed; what changed is how little it takes to arm
+// it.
+//
+// What the extra second does NOT extend: a station that has actually gone is
+// stale-evicted by the plugin's arbiter at its own 1000 ms, and the plugin then
+// publishes enabled=false -- a DELIBERATE disarm, which HH obeys on its next
+// tick and which latches nothing. So the loosening is reachable only when HH's
+// own inbound stream stalls, which is precisely the case where no other party
+// could stop the thrust either. Unchanged regardless: the local ENGAGE input
+// outranks both remotes (SAFETY.md thruster invariant 6), BNO silence still
+// faults within kBnoRvcTimeoutMs, and the independent output fail-off watchdog
+// (kOutputFailoffTimeoutMs) still drops the outputs if the control task stops.
+constexpr uint32_t kThrusterHoldSourceStalenessMs = 2000;
+constexpr uint32_t kThrusterManualSourceStalenessMs = 1000;
+static_assert(kThrusterManualSourceStalenessMs >= kSkPeriodicRefreshMs * 4,
+              "a remote thruster source must survive several missed periodic "
+              "refreshes, or ordinary jitter drops it mid-command");
+static_assert(kThrusterHoldSourceStalenessMs >=
+                  kThrusterManualSourceStalenessMs,
+              "HOLD is the gate with nobody at a button and a latch behind it: "
+              "it may be more tolerant of a transport gap than MANUAL, never "
+              "less");
 
 // Ceiling on how fast a commanded trim may drag the setpoint off the captured
 // heading. A bow thruster on a displacement hull turns slowly; 10 deg/s is well

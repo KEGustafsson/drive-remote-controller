@@ -226,6 +226,44 @@ void test_unknown_thruster_cmd_string_reads_as_off() {
   TEST_ASSERT_TRUE(ThrusterCmdFromSkString(nullptr) == Cmd::kOff);
 }
 
+// The two gates are judged on DIFFERENT windows, and which one applies follows
+// the mode. Pinned because the whole point of the split is that a hold survives
+// a transport gap that a manual command must not.
+void test_each_mode_gets_its_own_staleness_window() {
+  const control_core::ThrusterStaleness windows{2000, 1000};
+  TEST_ASSERT_EQUAL_UINT32(
+      2000, control_core::ThrusterStalenessMsFor(ThrusterMode::kHold, windows));
+  TEST_ASSERT_EQUAL_UINT32(
+      1000,
+      control_core::ThrusterStalenessMsFor(ThrusterMode::kManual, windows));
+}
+
+// A garbage mode string already reads as kHold (the defensive default above),
+// and it therefore carries HOLD's window -- one default, not two. Worth
+// pinning: the alternative, quietly giving an unparseable mode the shorter
+// window, would make a malformed delta behave differently from the hold it is
+// being read as.
+void test_unparseable_mode_is_judged_on_the_hold_window() {
+  const control_core::ThrusterStaleness windows{2000, 1000};
+  TEST_ASSERT_EQUAL_UINT32(
+      2000, control_core::ThrusterStalenessMsFor(
+                ThrusterModeFromSkString("mnual"), windows));
+  TEST_ASSERT_EQUAL_UINT32(
+      2000, control_core::ThrusterStalenessMsFor(
+                ThrusterModeFromSkString(nullptr), windows));
+}
+
+// Equal windows are a legitimate configuration (it is what the firmware shipped
+// before the split), so the rule must not assume they differ.
+void test_equal_windows_are_mode_independent() {
+  const control_core::ThrusterStaleness windows{1000, 1000};
+  TEST_ASSERT_EQUAL_UINT32(
+      1000, control_core::ThrusterStalenessMsFor(ThrusterMode::kHold, windows));
+  TEST_ASSERT_EQUAL_UINT32(
+      1000,
+      control_core::ThrusterStalenessMsFor(ThrusterMode::kManual, windows));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_local_engage_wins_over_live_enabled_tx_manual);
@@ -249,5 +287,8 @@ int main(int, char**) {
   RUN_TEST(test_unknown_mode_string_reads_as_hold_not_manual);
   RUN_TEST(test_thruster_cmd_string_round_trip);
   RUN_TEST(test_unknown_thruster_cmd_string_reads_as_off);
+  RUN_TEST(test_each_mode_gets_its_own_staleness_window);
+  RUN_TEST(test_unparseable_mode_is_judged_on_the_hold_window);
+  RUN_TEST(test_equal_windows_are_mode_independent);
   return UNITY_END();
 }

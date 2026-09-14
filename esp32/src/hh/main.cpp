@@ -26,6 +26,7 @@
 #include "sensesp/sensors/sensor.h"
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/signalk/signalk_types.h"
+#include "sensesp/ui/status_page_item.h"
 #include "sensesp_app_builder.h"
 #include "sk_heading_in.h"
 #include "sk_thruster_in.h"
@@ -168,6 +169,28 @@ void setup() {
                            config::kSkCommandListenDelayMs);
 
   control_task.begin(&sk_heading_in, &tx_thruster_in, &plugin_thruster_in);
+
+  // Plugin-source link diagnostics on the web status page (/api/info), NOT on
+  // Signal K: the telemetry loop below is already two short of SensESP's
+  // outbound queue, and this is for whoever is judging the link over WiFi on a
+  // unit with no serial console (see SkThrusterIn::Diagnostics). Allocated
+  // once and never freed -- the status page registry holds raw pointers.
+  static constexpr const char* kLinkGroup = "Thruster link (plugin)";
+  auto* future_stamps_item =
+      new StatusPageItem<int>("Future-stamped updates", 0, kLinkGroup, 5000);
+  auto* stale_transitions_item =
+      new StatusPageItem<int>("Live -> stale verdicts", 0, kLinkGroup, 5010);
+  auto* last_stale_age_item =
+      new StatusPageItem<int>("Age at last stale (ms)", 0, kLinkGroup, 5020);
+  auto* contended_item =
+      new StatusPageItem<int>("Contended snapshots", 0, kLinkGroup, 5030);
+  event_loop()->onRepeat(1000, [=]() {
+    const SkThrusterIn::Diagnostics d = plugin_thruster_in.diagnostics();
+    future_stamps_item->set(static_cast<int>(d.future_stamps));
+    stale_transitions_item->set(static_cast<int>(d.stale_transitions));
+    last_stale_age_item->set(static_cast<int>(d.last_stale_age_ms));
+    contended_item->set(static_cast<int>(d.contended));
+  });
 
   // Attitude/telemetry publish (ARCHITECTURE.md §9): reads the control task's
   // mutex-protected snapshot at 10-20 Hz (never 100 Hz -- would flood

@@ -14,6 +14,8 @@
 
 #include <cstdint>
 
+#include "common/elapsed_ms.h"
+
 namespace control_core {
 
 class LinkWatchdog {
@@ -46,9 +48,16 @@ class LinkWatchdog {
   //
   // Not const, for exactly that reason; a query that can change the verdict
   // is a state change and is spelled as one.
+  //
+  // An update stamped AFTER now_ms is age 0, not ~49 days (ElapsedMs, and
+  // common/elapsed_ms.h for why the units produce such stamps at all). Without
+  // that, a callback landing between a tick's clock read and its snapshot
+  // latched a healthy source stale until its next delta. The same polling
+  // guarantee that makes the latch sufficient keeps this safe: a real age
+  // never reaches the upper half of the range unobserved.
   bool IsLive(uint32_t now_ms, uint32_t timeout_ms) {
     if (!has_update_) return false;
-    if ((now_ms - last_update_ms_) <= timeout_ms) return true;
+    if (ElapsedMs(now_ms, last_update_ms_) <= timeout_ms) return true;
     has_update_ = false;  // stale: latch, so a clock wrap cannot revive it
     return false;
   }

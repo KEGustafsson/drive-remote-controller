@@ -89,6 +89,54 @@ void test_thruster_snapshot_ages_the_same_way() {
   TEST_ASSERT_FALSE(t.live);
 }
 
+// A contended tick ages the cached copy locally, and it must age on the window
+// the copy's OWN mode earns -- the same rule Snapshot() applies when it can take
+// the mutex. A cached hold at 1.5 s is still commanding; the identical cache in
+// manual is not. Without this the ageing path would quietly re-impose one window
+// on both gates on every contended tick.
+void test_thruster_cache_ages_on_the_window_its_mode_earns() {
+  using control_core::ThrusterMode;
+  using control_core::ThrusterStaleness;
+  using control_core::ThrusterStalenessMsFor;
+  constexpr ThrusterStaleness kWindows{2000, 1000};
+
+  ThrusterRemote holding{};
+  holding.live = true;
+  holding.last_update_ms = 5000;
+  holding.mode = ThrusterMode::kHold;
+  AgeCachedSnapshot(holding, 6500,
+                    ThrusterStalenessMsFor(holding.mode, kWindows));
+  TEST_ASSERT_TRUE(holding.live);
+
+  ThrusterRemote manual{};
+  manual.live = true;
+  manual.last_update_ms = 5000;
+  manual.mode = ThrusterMode::kManual;
+  AgeCachedSnapshot(manual, 6500,
+                    ThrusterStalenessMsFor(manual.mode, kWindows));
+  TEST_ASSERT_FALSE(manual.live);
+
+  // And the hold's extra tolerance is bounded, not unlimited.
+  AgeCachedSnapshot(holding, 7001,
+                    ThrusterStalenessMsFor(holding.mode, kWindows));
+  TEST_ASSERT_FALSE(holding.live);
+}
+
+// A cached copy whose newest member was stamped after the tick's clock (the
+// ordering race in common/elapsed_ms.h) is fresh, not ~49 days old -- the
+// contended-tick path must not drop a source the uncontended path keeps.
+void test_cache_stamped_after_now_stays_live() {
+  ThrusterRemote t{};
+  t.live = true;
+  t.last_update_ms = 5002;
+  AgeCachedSnapshot(t, 5000, 2000);
+  TEST_ASSERT_TRUE(t.live);
+  AgeCachedSnapshot(t, 7002, 2000);
+  TEST_ASSERT_TRUE(t.live);
+  AgeCachedSnapshot(t, 7003, 2000);
+  TEST_ASSERT_FALSE(t.live);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_fresh_cache_stays_live);
@@ -97,5 +145,7 @@ int main() {
   RUN_TEST(test_dead_stays_dead);
   RUN_TEST(test_survives_millis_rollover);
   RUN_TEST(test_thruster_snapshot_ages_the_same_way);
+  RUN_TEST(test_thruster_cache_ages_on_the_window_its_mode_earns);
+  RUN_TEST(test_cache_stamped_after_now_stays_live);
   return UNITY_END();
 }

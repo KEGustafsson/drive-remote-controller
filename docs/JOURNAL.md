@@ -7127,3 +7127,185 @@ band has been seen on a real screen, and neither has the ARMED_IDLE reading that
 `sensors.headingHold.fsmState` now separates from a running hold. The next time
 HH is power-cycled with a station left armed will exercise it -- which is exactly
 how the owner met this in the first place.
+
+## 2026-09-13 — The loud half arrived, and it was the window, not the latch
+
+Hours after the fault band shipped, the owner reported seeing `NOT HOLDING —
+RE-ARM TO ENGAGE` *frequently*, and asked the right question: what changed so
+much, and why is the link so weak that it breaks?
+
+**Nothing about the link changed. The consequence of a blip did.** The message
+is drawn only when the plugin still publishes this station as the token holder,
+HH's telemetry is arriving, and HH reports `fsmState == disarmed` for longer
+than the 2 s grace. That combination rules out the phone's own connection and
+the arbiter's eviction — both of those take the token away and show a different
+screen — so it says HH is refusing a request still being published to it. With
+the deadman hard-wired true and BNO silence going to FAULT, that leaves the
+re-engage latch, which the review two commits back had just added. Before it, a
+station whose deltas stopped for a second and came back regenerated the engage
+level, HH read a rising edge, captured a fresh heading and thrust again with
+nobody having touched anything. The hold *appeared* to survive blips by silently
+restarting. Invariant 9 closed that, correctly. What it also did was turn a
+transport hiccup into the end of the hold.
+
+**How little it took.** The plugin republishes all nine paths every 250 ms, and
+HH judged a source live only while all four of its thruster paths were under
+`kThrusterSourceStalenessMs` = 1000 ms — the drives' number, adopted here
+because it looked like the same rule. Three missed republishes anywhere in HH's
+own inbound path — a WiFi fade, an SK server hiccup, the SensESP loop blocked by
+the config UI — dropped the commanding station to not-live. That arms the latch,
+and the latch clears only when HH sees that station live and *disabled*, which
+never happens while the operator is still armed. So a sub-second glitch ended
+the hold until a human disarmed and re-armed.
+
+**The fix is one window per mode, which is the shape the two gates always had.**
+`kThrusterHoldSourceStalenessMs` = 2000, `kThrusterManualSourceStalenessMs` =
+1000, chosen by `ThrusterStalenessMsFor` from the mode in the *same coherent
+read* of that source's tuple — so a source begins being judged on MANUAL's
+shorter window from the first tick it publishes `manual` and can never carry
+HOLD's tolerance into a manual command. The owner asked for 2 s on both first,
+then for the split, which is the better answer: the two gates are paying for
+different things. MANUAL's window stops thrust promptly when the station holding
+the button vanishes, and a false trip there costs one 250 ms gap in a command
+somebody is watching. HOLD's window decides how much transport jitter it takes
+to destroy an autonomous hold nobody is watching.
+
+**What the extra second does not extend.** A station that has actually gone is
+stale-evicted by the arbiter at its own 1000 ms, after which the plugin
+publishes `enabled=false` — a deliberate disarm, which HH obeys on its next tick
+and which latches nothing. The loosening is only reachable when HH's own inbound
+stream stalls, which is exactly the case where no other party could stop the
+thrust either. Unchanged: the local ENGAGE input still outranks both remotes,
+BNO silence still faults, and the independent fail-off watchdog still drops the
+outputs if the control task stops running.
+
+Two `static_assert`s hold the pair honest — MANUAL may not fall under four
+periodic refreshes, and HOLD may never be tightened below MANUAL — and four new
+Unity cases pin the selection rule, the unparseable-mode default, the
+equal-windows case, and the contended-tick ageing path, which had to learn the
+same rule or it would re-impose one window on both gates every time it ran.
+Suites: native 280 (was 276); all three firmwares build.
+
+**Not proven, and worth stating plainly.** Nothing here has been on hardware.
+The new bench checks in SAFETY.md are the ones that matter: interrupt HH's own
+link for ~1.5 s in HOLD and the hold must survive; interrupt it for over 2 s and
+it must still drop, latch, and demand a re-arm; hold a MANUAL button through the
+same interruption and thrust must stop within ~1 s, not 2. The first is the
+defect this fixes. The other two are the properties it must not have broken.
+
+**One diagnostic gap this left open.** `reengage_blocked` is still log-only, so
+a station cannot tell "HH is not hearing the commands" (`hh.linkUp` false) from
+"HH hears you and is refusing" (the latch) — both render as the same red band,
+and only the serial log separates them. `hh.linkUp`'s value is already
+subscribed by both stations and would answer it; publishing the latch flag would
+answer it outright. Neither is done here.
+
+## 2026-09-13 — It was never the link: a clock read that ran behind its own evidence
+
+The 2 s HOLD window above did not stop the drops. With HH flashed to it, the
+owner armed from the phone and holds still ended on their own, 41 s to 226 s
+in, each time the same way: `hh.linkUp` false for about 250 ms, `DISARMED`,
+source `none`, and the plugin still publishing `enabled=true` for the same
+client throughout. The previous entry's diagnosis — transport jitter pushing a
+source past its window — was wrong, and the evidence against it was
+measurable from the Signal K host:
+
+- **Plugin -> server:** all four thruster paths every 250 ms, worst gap 266 ms.
+- **Server -> HH:** a second client subscribed exactly as SensESP does (same
+  nine paths, `period: 50`, `sendMeta=all`) received every plugin path within
+  269 ms straight through a drop, at 5566 B/s — the byte rate on HH's own
+  socket.
+- **TCP/WiFi:** `ss` at 10 Hz showed `bytes_acked` to HH rising every 100 ms
+  across the two seconds before a drop, no retransmit backoff; ping 3–6 ms, no
+  loss. HH's lwIP window is 5760 B, about a second of that feed, so a
+  receive-side stall long enough to matter would have closed it. It did not.
+- **HH's loop:** its own telemetry kept arriving every ~100 ms.
+
+Nothing was silent for two seconds. And a *recovery* of one republish period is
+the signature of a latched stale verdict cleared by the path's next delta, not
+of a gap that ended.
+
+**The mechanism.** The control task reads `millis()` once at the top of a tick
+and judges every source against it. The SK listener callbacks stamp their own
+`millis()` when the loop task processes a delta. A callback that completes
+after the tick's clock read but before its `Snapshot()` records an update a
+millisecond or two later than `now_ms`, and `now_ms - last_update_ms` on
+`uint32_t` read that — the freshest evidence the unit holds — as ~49 days old.
+`LinkWatchdog` latched it stale until the path's next delta, and on HH the
+re-engage latch turned the blip into the end of the hold. Before `ce9c518` the
+same blip silently restarted the hold on a fresh heading capture instead, which
+is very likely what the 2026-09 "torn read" comment in `SkThrusterIn::Snapshot`
+was actually seeing.
+
+What lets the priority-1 loop task run inside a priority-2 tick on the same core
+was not identified. The 5 s jitter log sits in that gap and blocks on the UART,
+but the drop times do not fall on a 5 s grid. The fix does not depend on it.
+
+**The fix** is `common/elapsed_ms.h`: `ElapsedMs(now, then)` is the unsigned
+difference, rollover-safe as before, except that a difference in the upper half
+of the range is a timestamp from after `now` and reads as age 0. That cannot
+hide a real loss: every source is polled every tick and latched at its timeout,
+some 24.8 days before a true age could get there. `LinkWatchdog::IsLive`,
+`AgeCachedSnapshot`, and the age arithmetic in both `SkThrusterIn::Snapshot`
+(HH) and `SkCommandIn::Snapshot` (RX) use it. `HeadingFilter` still rejects a
+future-stamped fix, deliberately and harmlessly — the next one is 100 ms away.
+
+**And the board says so.** HH has no serial console on the boat, so
+`SkThrusterIn` now counts, for the plugin source, future-stamped updates,
+live->stale verdicts, the oldest member's age at the last of those, and
+contended snapshots, on the web status page (`/api/info`, group *Thruster link
+(plugin)*) rather than on Signal K, whose outbound queue is already two short.
+
+**On hardware, the same evening.** Flashed over OTA with the owner holding from
+the phone. Eleven minutes of continuous `HOLDING` (19:05–19:16 UTC), 0 of 9737
+`hh.linkUp` samples false, **9 future-stamped updates absorbed** — one every
+~73 s, the old drop interval — and **0 stale verdicts**. The race is real, it is
+this frequent, and every one of those nine would have ended the hold.
+
+A note on the evidence that almost misled: `gnssAge` showed 4294968 s in the
+history, exactly 2^32 ms. That is `HeadingFilter`'s no-fix-yet `UINT32_MAX`
+right after a boot, not this race. The counter above is what proves it.
+
+Not proven: RX carries the same fix but was only rebuilt, not flashed; its drive
+path has the same exposure (a healthy station read not-live for a refresh). The
+build host's `esp32/include/secrets.h` was created from the sibling project's
+copy plus the server and HH addresses observed live; the OTA password
+authenticated, so it matches what the boards were built with. Suites: native
+285 (was 280); all three firmwares build.
+
+## 2026-09-13 — The counter signature, written down as a check
+
+The future-stamp fix landed with its evidence in a commit message: 9 future
+stamps absorbed, 0 stale verdicts, over 11 minutes of continuous `HOLDING`. That
+is the right evidence and it was in the wrong place — a commit message is not
+something anyone reads before a sea trial, and the four counters it cites are on
+HH's status page precisely because the unit has no serial console on the boat.
+
+SAFETY.md's thruster checklist now carries the reading. What must be 0 is
+*Live -> stale verdicts* with nothing interrupted; that is the whole pass/fail.
+*Future-stamped updates* sits beside it as evidence rather than a requirement: a
+positive count says the race happened and `ElapsedMs` absorbed it, which is what
+9-in-11-minutes looked like when the defect was caught.
+
+**The first draft of that check had it backwards**, and CodeRabbit caught it on
+the PR: it demanded the future-stamp counter be climbing and called a zero proof
+that the diagnostic was not running. It is not. The race needs a callback to
+land inside one tick's clock-read-to-snapshot window, so a healthy board can
+simply never hit the ordering during a given hold — and a check written that way
+would fail a clean commissioning run and teach the operator to distrust a board
+that is working. A counter that only sometimes fires is evidence when it is
+positive and silence when it is not.
+The deliberate-interruption check above it gained the same route: on the boat,
+`re-engage BLOCKED` on the serial console is unreadable, and the same event
+shows as that counter stepping by one with *Age at last stale (ms)* just over
+the window.
+
+AGENTS.md's hardware status was also a commit behind and said the staleness
+windows had never been on hardware. They have, in the undisturbed case — an
+11-minute hold — and the honest gap is narrower and sharper than "none of it":
+no interruption was ever provoked, so none of the three staleness lines has been
+walked, least of all the one saying a MANUAL command must still stop within
+~1 s. RX's unflashed state is recorded there too, next to the fix it is carrying
+but not yet running.
+
+Documentation only; no code changed.

@@ -38,7 +38,14 @@ removable complexity:
    SAFETY.md thruster invariant 7 has the full reasoning.
 2. **Liveness is time-since-last-update, and is judged on message *arrival*,
    never on a message's value.** Signal K retains a path's last value forever, so
-   a published value cannot reveal its own publisher's absence.
+   a published value cannot reveal its own publisher's absence. The MECHANISM is
+   the same everywhere; the WINDOWS are not, and HH's thruster sources carry two
+   of their own — 2000 ms in HOLD, 1000 ms in MANUAL. That is not drift: a stale
+   HOLD commander is latched out until a human re-arms (invariant 9), so the
+   window also decides how little jitter ends a hold, while MANUAL's job is to
+   stop a momentary command promptly when the station holding the button
+   vanishes. SAFETY.md invariant 9 has the reasoning; ARCHITECTURE.md §6.2 has
+   the table.
 3. **Station precedence is fixed (local > TX > plugin), never recency-based.**
    A recency tie-break oscillates the output when two stations disagree.
 4. **A remote command must enter through the same safety gate as a local one.**
@@ -85,7 +92,7 @@ If a task would require breaking one of these, stop and flag it.
 ## Commands
 
 ```bash
-cd esp32 && pio test -e native                          # pure core, all three firmwares (276 cases)
+cd esp32 && pio test -e native                          # pure core, all three firmwares (285 cases)
 cd esp32 && pio run -e tx_shesp32|rx_shesp32|hh_shesp32 # build
 cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 277 cases
@@ -202,6 +209,33 @@ refusal was provoked, so `NOT HOLDING — RE-ARM TO ENGAGE` and its three
 siblings have still only ever been rendered by a suite. The wording and the
 band's geometry on a real phone remain unseen, as does the `ARMED_IDLE` reading
 that `sensors.headingHold.fsmState` now separates from a running hold.
+
+**Then the loud half arrived, and the window it exposed is also unproven.** The
+owner met `RE-ARM TO ENGAGE` frequently the same day: at 1000 ms, three missed
+250 ms republishes in HH's own inbound path dropped the commanding station to
+not-live, which arms the re-engage latch — permanent until a human re-arms. HOLD
+now gets 2000 ms and MANUAL keeps 1000 (`kThrusterHoldSourceStalenessMs` /
+`kThrusterManualSourceStalenessMs`). HH has since run with both numbers on
+hardware, but only in the undisturbed case: no interruption was ever provoked,
+so not one of the three staleness lines in SAFETY.md's thruster checklist has
+been walked — a ~1.5 s gap surviving, a >2 s gap still dropping and latching,
+and above all a MANUAL command still stopping within ~1 s. Work through them
+before trusting either number.
+
+**And the window was not what was ending the holds.** They kept ending 41-226 s
+in with nothing on the link silent. The control task reads `millis()` once per
+tick; an SK listener callback completing before that tick reaches its
+`Snapshot()` stamps a LATER time, and `now_ms - last_update_ms` on `uint32_t`
+called the freshest evidence the unit held ~49 days old. The source latched
+stale, and the re-engage latch turned that one tick into the end of the hold.
+`common/elapsed_ms.h` reads a future stamp as age 0; `LinkWatchdog`,
+`AgeCachedSnapshot` and both units' `Snapshot()` use it. Flashed to HH and held
+11 minutes continuously: 9 future stamps absorbed, 0 stale verdicts, 0 of 9737
+`hh.linkUp` samples false. **RX carries the same fix and has NOT been flashed**
+— its drive path still has the same exposure (a healthy station read not-live
+for one refresh, failing to NEUTRAL and recovering on the next delta). The
+counters that prove this stay fixed are on HH's status page, and SAFETY.md's
+thruster checklist says what they must read.
 
 **Resolved layout defect, now guarded by a suite, still awaiting phone
 remeasurement:** expanding Android telemetry formerly compressed each drive

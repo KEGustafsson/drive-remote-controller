@@ -157,6 +157,21 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
    as a held shift switch does at RX: a momentary button is the operator's
    presence, a hold is not. (`ControlStep`'s re-engage latch; test_control_step.)
 
+   **What "stale" means here is mode-dependent, and the two numbers must not be
+   harmonised.** A remote thruster source is judged gone after
+   `kThrusterManualSourceStalenessMs` (1000 ms) while it publishes `manual`, and
+   after `kThrusterHoldSourceStalenessMs` (2000 ms) while it publishes `hold`.
+   That asymmetry is this invariant's own consequence: because a stale HOLD
+   commander is latched out until a human re-arms, the window that declares it
+   stale is also the window that decides how little transport jitter it takes to
+   end a hold — at 1000 ms, three missed 250 ms republishes in HH's own inbound
+   path did it (2026-09-13, reported from the boat). MANUAL keeps 1000 ms
+   because there the window is doing the opposite job: stopping thrust promptly
+   when the station holding the button vanishes. Loosening MANUAL to match, or
+   tightening HOLD back, breaks one of the two. The window is chosen from the
+   mode in the same coherent read of the source's tuple, so a source cannot
+   carry HOLD's tolerance into a manual command (ARCHITECTURE.md §6.2).
+
 ---
 
 ## Cross-cutting rules
@@ -333,6 +348,9 @@ A bow thruster can move several tonnes of boat and amputate fingers.
 - [ ] Leave HOLD and return → the setpoint is re-captured from the current heading, not the earlier session's target.
 - [ ] **Arming straight into HOLD from a station.** The plugin and phone let the operator pick MANUAL or HOLD while disarmed, so the arm itself is what engages the hold — no thruster press is involved. With motor power isolated and a scope on the outputs: select HOLD with nothing armed (nothing may appear at the outputs, and `plugin.thruster.mode` must not follow a non-holder), then arm and confirm the hold engages against the heading captured **at the arm**, and that a preceding manual thrust still buys its full 1.85 s dwell across that arm. Then repeat with MANUAL selected: arming alone must produce no thrust at all.
 - [ ] WiFi off → holds briefly on the gyro, then disengages cleanly; never slams to full deflection.
+- [ ] **The two staleness windows, seen separately (invariant 9).** Interrupt *HH's own* link — its AP, or HH's WiFi — and leave the commanding station connected, so the plugin keeps publishing and only HH stops hearing it. In HOLD, a ~1.5 s interruption must leave the hold RUNNING (`fsmState` stays `holding`, the station shows no fault band). A >2 s interruption must drop it: `fsmState` reads `disarmed`, the station says `NOT HOLDING — RE-ARM TO ENGAGE`, HH's serial prints `re-engage BLOCKED` once — and on the boat, where there is no serial console, the same event shows on HH's status page as *Live -> stale verdicts* stepping by one with *Age at last stale (ms)* just over the window — and only a disarm/re-arm brings the hold back. Both halves matter — the first is the defect this window was widened to fix, the second is invariant 9 still doing its job.
+- [ ] **The liveness counters read clean after a long hold — the future-stamp race (2026-09-13).** HH's web status page (`/api/info`, group *Thruster link (plugin)*) carries four counters for the plugin source: *Future-stamped updates*, *Live -> stale verdicts*, *Age at last stale (ms)*, *Contended snapshots*. Hold for ten minutes or more with a station commanding and nothing interrupted, then read them. **Live -> stale verdicts must be 0** — that is the one that passes or fails the check. *Future-stamped updates* is evidence, not a requirement: a positive count (9 in 11 minutes when the defect was caught, ~one a minute) says the race happened and `ElapsedMs` absorbed it, which is exactly what should happen; but the race depends on a callback landing inside one tick's clock-read-to-snapshot window, so a healthy board can legitimately read 0 and that proves nothing either way. Do not fail a clean hold on it. A stale verdict with nothing interrupted is the race biting again, and every one of them ends the hold (this is the reading that caught the defect: 9 future stamps absorbed, 0 stale verdicts, over 11 minutes of continuous `HOLDING`). *Contended snapshots* climbing slowly is normal and harmless — a contended tick ages the cached copy, it does not drop the source.
+- [ ] **MANUAL does not inherit HOLD's tolerance.** Motor power isolated, scope on the outputs: hold a PORT button from a station and interrupt HH's link the same way. Thrust must stop within ~1 s (`kThrusterManualSourceStalenessMs`), not 2. If it runs on to 2 s, the mode is not reaching the window selection and every manual command is being judged on HOLD's budget.
 - [ ] Arm refused on a bad or float-quality heading.
 - [ ] Duty limiting observed under repeated use.
 
