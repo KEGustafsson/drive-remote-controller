@@ -84,9 +84,11 @@ bool SkCommandIn::Snapshot(uint32_t now_ms, uint32_t timeout_ms,
   // an incoherent source. Judging that as not-live dropped the drives to
   // neutral for a tick every time the control task interleaved with the
   // callbacks, which is a failure this code invents rather than detects.
-  const bool live = port_watchdog_.IsLive(now_ms, timeout_ms) &&
-                    stbd_watchdog_.IsLive(now_ms, timeout_ms) &&
-                    enabled_watchdog_.IsLive(now_ms, timeout_ms);
+  //
+  // AllLive, not a chain of `&&`: every member must be polled every tick so a
+  // stale one latches (control_core::AllLive).
+  const bool live = control_core::AllLive(now_ms, timeout_ms, port_watchdog_,
+                                          stbd_watchdog_, enabled_watchdog_);
   // ElapsedMs, not plain subtraction: a callback that stamped its update after
   // this tick's clock read is age 0, not ~49 days (common/elapsed_ms.h).
   using control_core::ElapsedMs;

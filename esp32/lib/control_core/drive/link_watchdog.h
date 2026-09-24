@@ -75,4 +75,20 @@ class LinkWatchdog {
   bool has_update_ = false;
 };
 
+// A tuple of independently-retained paths is live only when EVERY member is.
+// Every member is POLLED, whatever the others say, and only then combined --
+// never `a.IsLive() && b.IsLive()`. IsLive() is where the stale latch above
+// happens, and its safety rests on each watchdog being polled every tick: a
+// short-circuit that stops at the first stale member leaves the rest unlatched,
+// and after 2^31 ms of silence ElapsedMs reads their old stamps as age 0. A
+// month-old command then comes back live the moment the first member's path
+// updates again.
+template <typename... Watchdogs>
+bool AllLive(uint32_t now_ms, uint32_t timeout_ms, Watchdogs&... watchdogs) {
+  bool live = true;
+  // IsLive() first, so `live` going false cannot skip the call.
+  ((live = watchdogs.IsLive(now_ms, timeout_ms) && live), ...);
+  return live;
+}
+
 }  // namespace control_core

@@ -7,6 +7,7 @@
 #include <freertos/task.h>
 
 #include "common/cached_snapshot.h"
+#include "common/elapsed_ms.h"
 #include "config.h"
 #include "sensesp/ui/config_item.h"
 
@@ -240,7 +241,12 @@ void ControlTask::FailoffWatchdogTrampoline(void* arg) {
 // whole point is that it keeps running when the control task doesn't.
 void ControlTask::CheckFailoff() {
   uint32_t now_ms = millis();
-  uint32_t age_ms = now_ms - heartbeat_ms_.load(std::memory_order_relaxed);
+  // ElapsedMs, not plain subtraction: this runs on the other core, and a tick
+  // that completes between the clock read above and the load below stores a
+  // heartbeat LATER than now_ms. That is proof of life, not ~49 days of
+  // silence, and must not release the outputs (common/elapsed_ms.h).
+  uint32_t age_ms = control_core::ElapsedMs(
+      now_ms, heartbeat_ms_.load(std::memory_order_relaxed));
   if (age_ms <= config::kOutputFailoffTimeoutMs) {
     return;
   }
