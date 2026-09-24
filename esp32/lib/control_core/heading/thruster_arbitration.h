@@ -14,6 +14,11 @@
 //      This is SAFETY.md thruster invariant 6 ("manual authority dominates") preserved
 //      unchanged by the addition of remote control: someone standing at the
 //      unit can always take it, and a phone can never wrestle it back.
+//      RELEASING it is not a handover either: it disarms. That rule needs
+//      history this stateless function does not keep, so ControlStep enforces
+//      it -- on the release edge it latches every armed remote out, so nothing
+//      qualifies here until that station has been seen disarmed and armed
+//      again (control_step.h, "RE-ENGAGE LATCH").
 //   2. Otherwise TX outranks the plugin by FIXED precedence (never recency),
 //      exactly as for the drives -- "TX wins both motion and bow thruster
 //      controls whenever it is activated" (owner requirement). A source must

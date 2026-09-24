@@ -109,7 +109,15 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
    the gyro, then disengage cleanly.
 6. **Manual authority dominates.** Engage or deadman released → DISARMED,
    outputs OFF. HH's own ENGAGE input outranks every remote station,
-   unconditionally, and always means HOLD. *Current hardware status:* no
+   unconditionally, and always means HOLD. Releasing it disarms even with a
+   remote station armed: it is never a handover. On the debounced release edge,
+   every remote (TX and plugin) whose `enabled` reads true at that instant —
+   live or not, in either mode, whether it was in command before the takeover
+   or armed while ENGAGE was held — is refused by the same re-engage latch as
+   invariant 9, so the thruster stays off until that station is **stopped
+   (seen live and disarmed) and then armed again**. A station already disarmed
+   at the release is not affected, and its next arm engages normally.
+   (`ControlStep`, test_control_step `test_local_release_*`.) *Current hardware status:* no
    deadman switch is installed and its read is compile-time disabled
    (`config::kDeadmanWired = false` — no switch is fitted), so this
    invariant's deadman half is provided by ENGAGE alone until the switch is
@@ -154,7 +162,8 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
    must disarm and re-arm. That holds whether or not it was the station in
    command: one outranked by TX or by the local ENGAGE carries the same
    retained `enabled`, and would engage the moment whatever outranked it let
-   go. HH boots in that same refused state for both remote
+   go. (A local ENGAGE release refuses every armed station regardless — see
+   invariant 6.) HH boots in that same refused state for both remote
    sources, so a station left armed across an HH power-cycle cannot engage a
    hold at boot either. MANUAL deliberately resumes after a link blip, exactly
    as a held shift switch does at RX: a momentary button is the operator's
@@ -347,6 +356,7 @@ A bow thruster can move several tonnes of boat and amputate fingers.
 - [ ] Release during a dwell (HOLD, or MANUAL with a non-zero dwell) → the thruster does **not** fire when it expires.
 - [ ] Unplug the IMU mid-thrust → outputs off, FAULT — in MANUAL mode as well as HOLD.
 - [ ] Local ENGAGE asserted while a remote is thrusting → local takes over, mode reads `hold`, source reads `local`.
+- [ ] **Local ENGAGE released with a remote still armed → DISARMED, outputs OFF, and they stay off (invariant 6).** Motor power isolated, scope on the outputs. Hold STBD in MANUAL from a station, assert ENGAGE, release it while the station is still armed and still pressing STBD: ENABLE and both direction lines must drop and stay low, `fsmState` reads `DISARMED`, `hh.source` reads `none`, and HH's serial prints `re-engage BLOCKED` once. Repeat with the station armed in HOLD (no hold may continue, on the local capture or a new one), and with a station that armed only while ENGAGE was held. In each case the station must be disarmed and then armed again before it commands anything; a station that was disarmed at the release must engage on a single arm. On the station: in HOLD, the "controlled by" note gives way to `NOT HOLDING — RE-ARM TO ENGAGE` (phone; the browser says `not holding — disarm and re-arm to engage`). In MANUAL there is no refusal band — the station still reads armed and its PORT/STBD contacts still light under a finger while the thruster does nothing — so confirm the outputs on the scope, not on the station.
 - [ ] HOLD: trim from a station → the setpoint slews at the rate limit and never jumps; the fused heading is not snapped.
 - [ ] Leave HOLD and return → the setpoint is re-captured from the current heading, not the earlier session's target.
 - [ ] **Arming straight into HOLD from a station.** The plugin and phone let the operator pick MANUAL or HOLD while disarmed, so the arm itself is what engages the hold — no thruster press is involved. With motor power isolated and a scope on the outputs: select HOLD with nothing armed (nothing may appear at the outputs, and `plugin.thruster.mode` must not follow a non-holder), then arm and confirm the hold engages against the heading captured **at the arm**, and that a preceding manual thrust still buys its full 1.85 s dwell across that arm. Then repeat with MANUAL selected: arming alone must produce no thrust at all.

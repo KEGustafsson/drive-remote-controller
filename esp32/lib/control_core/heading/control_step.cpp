@@ -96,6 +96,24 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   // Local always wins and always means hold (SAFETY.md thruster invariant 6); otherwise TX
   // outranks the plugin by fixed precedence. See thruster_arbitration.h.
   bool local_engage = engage_debounce_.Update(in.engage_raw, in.now_ms);
+  // RELEASING the local ENGAGE disarms (SAFETY.md thruster invariant 6: "Engage
+  // released -> DISARMED, outputs OFF"). It is never a handover. Arbitration is
+  // a level regenerated every tick, so without this a remote that is enabled
+  // qualifies on the very tick local lets go, engage_request never falls, the
+  // FSM never sees the release, and HOLDING carries straight on for that remote
+  // (its manual direction, or a hold on the local capture) with nobody having
+  // touched anything. So on the debounced FALLING edge, every remote whose
+  // retained enabled is true -- live or not, in command before the takeover or
+  // armed while local was held -- is latched exactly as a dropped HOLD link is
+  // (control_step.h, "RE-ENGAGE LATCH"): it must be seen live and DISARMED, then
+  // arm afresh. Judged on the RAW enabled, before this tick's latch is applied,
+  // and set before it is applied, so the release tick itself already refuses
+  // it. A remote that is disarmed at the release is not touched.
+  if (prev_local_engage_ && !local_engage) {
+    if (in.tx.enabled) tx_reengage_blocked_ = true;
+    if (in.plugin.enabled) plugin_reengage_blocked_ = true;
+  }
+  prev_local_engage_ = local_engage;
   // A source latched out by the re-engage rule (control_step.h) is presented
   // to arbitration as not-enabled, so it cannot qualify and cannot manufacture
   // the engage edge its retained SK values would otherwise supply. Done on
@@ -117,9 +135,9 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   // lets go, that retained value would qualify it and hand the FSM a rising
   // edge nobody pressed. A deliberate enabled=false is not latched (the station
   // is present and said stop, so its next arm is already a fresh press), and
-  // the local ENGAGE taking over latches nothing by itself -- a live station
-  // that is merely outranked is still there to disarm. Read from the PREVIOUS
-  // tick: by the time a source goes stale it no longer qualifies this tick.
+  // the local ENGAGE TAKING OVER latches nothing by itself -- it is the RELEASE
+  // that latches every armed remote (above). Read from the PREVIOUS tick: by
+  // the time a source goes stale it no longer qualifies this tick.
   if (prev_tx_armed_in_hold_ && !in.tx.live) {
     tx_reengage_blocked_ = true;
   }

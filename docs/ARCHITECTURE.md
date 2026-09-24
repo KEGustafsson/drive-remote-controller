@@ -331,6 +331,19 @@ Two structural properties are enforced in the result itself rather than trusted
 to callers: a manual direction cannot survive into HOLD, and a commanded trim
 cannot survive into MANUAL.
 
+**Releasing local ENGAGE disarms; it is not a handover** (SAFETY.md thruster
+invariant 6). The arbiter above is stateless and re-run every tick, so on its
+own an armed remote would qualify on the very tick ENGAGE falls and keep
+`engage_request` high straight through the release — the FSM would never see
+it. `ControlStep` therefore acts on the debounced ENGAGE falling edge: every
+remote whose `enabled` reads true at that instant (live or not, either mode, in
+command before the takeover or armed while ENGAGE was held) gets its re-engage
+latch set, the same latch a HOLD source earns by going stale (invariant 9). A
+latched source is presented to the arbiter as not enabled, so nothing qualifies,
+the request drops, the FSM goes `DISARMED` and the outputs go off. The latch
+clears only when HH sees that station live and **disarmed**; its next arm is
+then a fresh engage edge. A station disarmed at the release is not latched.
+
 ### 6.2 Where a remote command enters
 
 The arbitrated `engage_request` is fed to `SafetyFsm` **at exactly the position

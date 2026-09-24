@@ -187,7 +187,8 @@ class ControlStep {
   // whether or not it was the one in command at the time. An outranked source
   // (TX above it, or the local ENGAGE) carries the same retained enabled=true,
   // and would supply the same unpressed edge the moment whatever outranked it
-  // let go. Its `enabled` is forced false before arbitration
+  // let go (for the local ENGAGE, the release latches it anyway -- below). Its
+  // `enabled` is forced false before arbitration
   // sees it, and the latch clears only when that station has been observed
   // live and DISARMED -- proof a human took it out of arm, so its next
   // `enabled=true` is a deliberate fresh arm rather than a retained value
@@ -222,8 +223,21 @@ class ControlStep {
   // disarmed heartbeat long before anyone arms it, which clears the latch on
   // the first tuple; only the station-armed-across-an-HH-restart case has to
   // be re-armed, which is the case that must not be silent.
+  //
+  // THIRD WAY IN: RELEASING THE LOCAL ENGAGE. SAFETY.md thruster invariant 6
+  // says engage released -> DISARMED, outputs OFF, and that includes a remote
+  // that is armed at that moment. Arbitration is a level, so an armed remote
+  // would otherwise qualify on the release tick and keep engage_request high
+  // straight through it -- a silent handover the FSM cannot see. So the
+  // debounced local FALLING edge sets the latch for every remote whose retained
+  // enabled is true at that instant, live or not, in either mode, whether it
+  // was in command before the takeover or armed while local was held. A remote
+  // disarmed at the release is not latched. The clearing rule is unchanged:
+  // STOP (seen live, disarmed), then ARM.
   bool tx_reengage_blocked_ = true;
   bool plugin_reengage_blocked_ = true;
+  // The debounced local ENGAGE on the previous tick, for the release edge above.
+  bool prev_local_engage_ = false;
   // Whether each source was armed in HOLD (live, enabled after its latch, mode
   // hold) on the PREVIOUS tick, regardless of who won arbitration. The latch is
   // armed from these, not from this tick's values: on the tick a source goes

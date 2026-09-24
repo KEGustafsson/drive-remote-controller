@@ -402,9 +402,11 @@ void ControlTask::Tick(uint32_t now_ms, float dt_s) {
   // One line the first time a present station is latched out, not one per
   // tick: HH is refusing a station that still shows ARMED, and without this the
   // operator sees only a station that says ARMED commanding nothing
-  // (control_step.h, "RE-ENGAGE LATCH"). Two causes, one remedy: that
-  // station's link dropped while it was holding, or HH itself restarted under
-  // a station that was already armed.
+  // (control_step.h, "RE-ENGAGE LATCH"). Three causes, one remedy: that
+  // station's link dropped while it was holding, HH itself restarted under a
+  // station that was already armed, or the unit's own ENGAGE was released
+  // while that station was armed (invariant 6: the release disarms, it does
+  // not hand the thruster back).
   if (last_step_.reengage_blocked && !prev_reengage_blocked_) {
     ESP_LOGW("control",
              "re-engage BLOCKED: a station is publishing ARMED that HH has not "
