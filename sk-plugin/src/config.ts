@@ -189,6 +189,32 @@ export const RX_TELEMETRY_STALE_MS = 1500;
 // is noticed within one refresh of the timeout above.
 export const RX_TELEMETRY_POLL_MS = PERIODIC_REFRESH_MS;
 
+// How long the arbiter's own publish may go without a fresh delta before this
+// UI stops believing the server stream is live. The plugin republishes
+// activeClient every PERIODIC_REFRESH_MS (index.cjs heartbeat), so its ARRIVAL
+// is the proof that the stream still carries live data -- neither the socket's
+// state (a half-open socket with no FIN stays 'open' indefinitely) nor the
+// retained value can say so. Same six-refresh budget as RX_TELEMETRY_STALE_MS.
+export const SERVER_STREAM_STALE_MS = RX_TELEMETRY_STALE_MS;
+
+// A socket that has delivered NOTHING for this long is abandoned and a fresh
+// one opened. The browser cannot detect a half-open socket on its own (this
+// client never sends after subscribing, so TCP never notices), and without
+// this the UI above would sit on OFFLINE until the page was reloaded. Well
+// above SERVER_STREAM_STALE_MS, so the display degrades first and a healthy
+// but momentarily quiet link is not churned.
+export const SK_STREAM_SILENCE_RECONNECT_MS = 5000;
+
+// How long after the kill switch last meant STOP a tap on it still means STOP.
+// A tap's meaning is decided when the operator reaches for the button, but it
+// lands on whatever the button shows by then: the arbiter answers a STOP in
+// milliseconds, so the second half of a double-tapped STOP -- or a second
+// person's STOP aimed at IN USE just as the holder disarmed -- would otherwise
+// land on DISARMED and ARM this station (in HOLD, engaging a hold). A STOP is
+// universal and harmless when nothing is armed, so erring toward it costs only
+// a deliberate re-arm waiting a second.
+export const KILL_SWITCH_STOP_HOLDOVER_MS = 1000;
+
 // How long a requested hold may go unconfirmed by HH before this UI calls it a
 // fault rather than a transition.
 //

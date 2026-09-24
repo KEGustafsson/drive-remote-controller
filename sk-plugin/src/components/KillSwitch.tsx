@@ -1,4 +1,7 @@
+import { useLayoutEffect, useRef } from 'react';
+import { KILL_SWITCH_STOP_HOLDOVER_MS } from '../config';
 import type { RxLiveness } from '../pure/rxLiveness';
+import { runtimeNowMs } from '../pure/runtimeClock';
 
 interface KillSwitchProps {
   /** This instance currently holds the arm token (arbiter: activeClient === us). */
@@ -6,9 +9,10 @@ interface KillSwitchProps {
   /** A DIFFERENT device currently holds the token. */
   foreignControl: boolean;
   /**
-   * The Signal K socket is open right now. When false, `armed`/`foreignControl`
-   * are last-known (stale) values -- see below -- so we must NOT keep showing
-   * a confident ARMED/IN USE.
+   * The server stream is live right now: the socket is open AND the arbiter's
+   * own republish is still arriving (App.tsx). When false, `armed`/
+   * `foreignControl` are last-known (stale) values -- see below -- so we must
+   * NOT keep showing a confident ARMED/IN USE.
    */
   connected: boolean;
   /** Why RX is or isn't considered alive -- used to explain a blocked ARM. */
@@ -63,6 +67,16 @@ interface KillSwitchProps {
  * best it is the stop that mattered. Arming while offline is still
  * impossible -- the only offline action is STOP.
  *
+ * A TAP AIMED AT STOP STAYS A STOP. What a tap means is decided when the
+ * operator reaches for the button, but the click lands on whatever is shown
+ * by then -- and the arbiter answers a STOP within milliseconds. So for
+ * KILL_SWITCH_STOP_HOLDOVER_MS after the button last meant STOP (ARMED, IN
+ * USE or OFFLINE), a tap still disarms. Without that, a double-tapped STOP's
+ * second tap, or a second person's STOP aimed at IN USE just as the holder
+ * disarmed, lands on DISARMED and ARMS this station. Disarm is universal and
+ * a no-op when nothing is armed, so erring this way costs nothing but a
+ * second's wait before a deliberate arm.
+ *
  * NO REACHABLE UNIT, NO ARM. When neither unit's telemetry is arriving, the
  * arm path is withdrawn and the reason is named. Without that condition,
  * arming would depend only on the arbiter's token, so with a board switched
@@ -91,13 +105,37 @@ export function KillSwitch({
   onArm,
   onDisarm,
 }: KillSwitchProps) {
+  // Any tap while armed, while another device holds it, or while offline =>
+  // disarm (stop). Only when nobody holds it does a tap arm this instance.
+  const disarms = !connected || armed || foreignControl;
+
+  // When the button last STOPPED meaning STOP (null = it has not, this mount).
+  // Stamped in a LAYOUT effect: that runs synchronously in the commit that
+  // flips the button, so no click can be dispatched between the flip and the
+  // stamp. Only a true -> false transition stamps; a page that simply opens
+  // DISARMED arms on its first tap.
+  const stopEndedAtRef = useRef<number | null>(null);
+  const prevDisarmsRef = useRef(disarms);
+  useLayoutEffect(() => {
+    if (prevDisarmsRef.current && !disarms) stopEndedAtRef.current = runtimeNowMs();
+    prevDisarmsRef.current = disarms;
+  }, [disarms]);
+
+  const onTap = () => {
+    const endedAt = stopEndedAtRef.current;
+    const stillStop =
+      endedAt !== null && runtimeNowMs() - endedAt < KILL_SWITCH_STOP_HOLDOVER_MS;
+    if (disarms || stillStop) onDisarm();
+    else onArm();
+  };
+
   if (!connected) {
     return (
       <button
         type="button"
         className="kill-switch kill-switch--offline"
         aria-pressed={false}
-        onClick={() => onDisarm()}
+        onClick={onTap}
       >
         <span className="kill-switch__state">OFFLINE</span>
         <span className="kill-switch__hint">
@@ -106,10 +144,6 @@ export function KillSwitch({
       </button>
     );
   }
-
-  // Any tap while armed or while another device holds it => disarm (stop).
-  // Only when nobody holds it does a tap arm this instance.
-  const disarms = armed || foreignControl;
 
   // Nothing is armed and RX isn't answering: block the arm and say why.
   // Checked AFTER `disarms` so it can never suppress a stop -- if something
@@ -162,7 +196,7 @@ export function KillSwitch({
       type="button"
       className={`kill-switch ${stateClass}`}
       aria-pressed={armed}
-      onClick={() => (disarms ? onDisarm() : onArm())}
+      onClick={onTap}
     >
       <span className="kill-switch__state">{stateLabel}</span>
       <span className="kill-switch__hint">{hint}</span>

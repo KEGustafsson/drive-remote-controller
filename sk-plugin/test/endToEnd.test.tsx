@@ -12,6 +12,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket as NodeWebSocket } from 'ws';
 import { App } from '../src/App';
+import { KILL_SWITCH_STOP_HOLDOVER_MS } from '../src/config';
 import { SkClientContext } from '../src/hooks/useSkConnection';
 import { createSkClient, type SkClient } from '../src/skClient';
 import { startArbiterServer, type ArbiterHarness } from './arbiterServer';
@@ -178,7 +179,13 @@ describe('end-to-end: choosing the thruster mode before arming', () => {
     });
 
     // Arm: HOLD is the gate that opens, off the selection made while
-    // disarmed, with no thruster press anywhere in the sequence.
+    // disarmed, with no thruster press anywhere in the sequence. A beat after
+    // the disarm, because a tap within KILL_SWITCH_STOP_HOLDOVER_MS of the
+    // button meaning STOP is still a STOP -- the very double-tap that would
+    // otherwise have engaged this hold by accident.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, KILL_SWITCH_STOP_HOLDOVER_MS));
+    });
     fireEvent.click(screen.getByText('DISARMED'));
     await waitFor(() => {
       const s = harness.state();

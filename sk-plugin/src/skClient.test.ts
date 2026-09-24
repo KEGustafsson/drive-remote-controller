@@ -226,3 +226,53 @@ describe('createSkClient delta arrival times', () => {
     expect(client.getSnapshot().values[LINK_UP]).toBe(true); // but the value lies on
   });
 });
+
+// A half-open socket (the far end gone, no FIN) never errors or closes: this
+// client sends nothing after subscribing, so TCP has nothing to time out on.
+// The server republishes every 250 ms, so total silence means a dead socket.
+describe('createSkClient on a silent socket', () => {
+  it('stamps when each socket opened, so pre-reconnect arrivals can be told apart', async () => {
+    const first = nextConnection();
+    client = createSkClient(url, NodeWebSocket as unknown as typeof WebSocket);
+    const firstSocket = await first;
+    await vi.waitFor(() => expect(client!.getSnapshot().openedAt).toBeDefined());
+    const firstOpenedAt = client.getSnapshot().openedAt!;
+
+    const second = nextConnection();
+    firstSocket.close();
+    await second;
+    await vi.waitFor(() =>
+      expect(client!.getSnapshot().openedAt!).toBeGreaterThan(firstOpenedAt),
+    );
+  });
+
+  it('abandons a socket that has delivered nothing for the window, and reconnects', async () => {
+    const first = nextConnection();
+    client = createSkClient(url, NodeWebSocket as unknown as typeof WebSocket, 300);
+    const firstSocket = await first;
+    await vi.waitFor(() => expect(client!.getSnapshot().connectionState).toBe('open'));
+
+    // The server side stays open and simply says nothing.
+    const second = nextConnection();
+    await second;
+    await vi.waitFor(() => expect(client!.getSnapshot().connectionState).toBe('open'));
+    // The abandoned socket was closed from our side, not left dangling.
+    await vi.waitFor(() => expect(firstSocket.readyState).not.toBe(firstSocket.OPEN));
+  });
+
+  it('keeps a socket that is still delivering', async () => {
+    const first = nextConnection();
+    client = createSkClient(url, NodeWebSocket as unknown as typeof WebSocket, 300);
+    const socket = await first;
+    let reconnected = false;
+    server.once('connection', () => (reconnected = true));
+    const pulse = setInterval(
+      () => socket.send(JSON.stringify({ context: 'vessels.self', updates: [] })),
+      100,
+    );
+    await new Promise((r) => setTimeout(r, 1500));
+    clearInterval(pulse);
+    expect(reconnected).toBe(false);
+    expect(client.getSnapshot().connectionState).toBe('open');
+  });
+});

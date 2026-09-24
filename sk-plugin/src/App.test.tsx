@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket as NodeWebSocket } from 'ws';
 import { App } from './App';
 import { IntentPostError, type PostIntent } from './clientIntent';
-import { PERIODIC_REFRESH_MS } from './config';
+import { KILL_SWITCH_STOP_HOLDOVER_MS, PERIODIC_REFRESH_MS } from './config';
 import { SkClientContext } from './hooks/useSkConnection';
 import { createSkClient, type SkClient } from './skClient';
 import { startArbiterServer, type ArbiterHarness } from '../test/arbiterServer';
@@ -342,7 +342,12 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
     expect(harness.state().enabled).toBe(false);
 
-    // Tap 2 -> arm: we take control.
+    // Tap 2 -> arm: we take control. Deliberately a beat later: a tap within
+    // KILL_SWITCH_STOP_HOLDOVER_MS of the button meaning STOP is still a STOP
+    // (see 'a tap decided as STOP stays a STOP' below).
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, KILL_SWITCH_STOP_HOLDOVER_MS));
+    });
     fireEvent.click(screen.getByText('DISARMED'));
     await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument());
     expect(harness.state().activeClient).not.toBe('other-device');
@@ -610,5 +615,126 @@ describe('App: the intent heartbeat', () => {
       await new Promise((r) => setTimeout(r, PERIODIC_REFRESH_MS * 5));
     });
     expect(calls).toBe(2); // no heartbeat: the mount request is still pending
+  });
+});
+
+// A tap's meaning is decided by the operator when they reach for the button,
+// but the click lands on whatever the button shows by then. The arbiter's
+// answer to a STOP comes back within milliseconds, so the second half of a
+// double-tapped STOP -- or a second person's STOP decided against IN USE just
+// before the holder disarmed -- used to land on DISARMED and ARM this station.
+// In HOLD that engages a hold on the boat.
+describe('App: a tap decided as STOP stays a STOP', () => {
+  it('a double-tapped STOP does not re-arm; a tap after the hold-over arms normally', async () => {
+    await renderApp();
+    await arm();
+
+    fireEvent.click(screen.getByText('ARMED')); // tap 1: STOP
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('DISARMED')); // tap 2, a moment later
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(harness.state().enabled).toBe(false);
+    expect(harness.state().activeClient).toBe('');
+    expect(screen.queryByText('ARMED')).not.toBeInTheDocument();
+
+    // A deliberate arm, once the hold-over has run out, still works.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, KILL_SWITCH_STOP_HOLDOVER_MS));
+    });
+    fireEvent.click(screen.getByText('DISARMED'));
+    await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument());
+    expect(harness.state().enabled).toBe(true);
+  });
+
+  it('a STOP decided against IN USE stays a STOP when the holder disarms first', async () => {
+    await renderApp();
+    harness.injectIntent({ clientId: 'other-device', armReq: 0, disarmReq: 0 });
+    harness.injectIntent({ clientId: 'other-device', armReq: 1, disarmReq: 0 });
+    await waitFor(() => expect(screen.getByText('IN USE')).toBeInTheDocument());
+
+    // The holder disarms between this operator's decision and their click.
+    harness.injectIntent({ clientId: 'other-device', armReq: 1, disarmReq: 1 });
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('DISARMED'));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(harness.state().enabled).toBe(false);
+    expect(harness.state().activeClient).toBe('');
+  });
+});
+
+// Signal K keeps the last activeClient forever and the SK client keeps its
+// copy across drops, so neither the socket's state nor that value can say the
+// server is still there. A half-open socket (no FIN) stays 'open' indefinitely.
+// The plugin republishes activeClient every 250 ms; its ARRIVAL is the proof.
+describe('App: the server stream going silent', () => {
+  it('reads a silent-but-open socket as OFFLINE, and the tap still stops', async () => {
+    await renderApp();
+    await arm();
+    const portFwd = within(screen.getByLabelText('Port drive control')).getByLabelText(
+      'Port forward',
+    );
+    expect(portFwd).not.toBeDisabled();
+
+    harness.stallConnections();
+
+    await waitFor(() => expect(screen.getByText('OFFLINE')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    // Nothing on the socket itself ever said so.
+    expect(client.getSnapshot().connectionState).toBe('open');
+    expect(screen.queryByText('ARMED')).not.toBeInTheDocument();
+    expect(portFwd).toBeDisabled();
+    expect(screen.getByRole('status', { name: 'Link: no data from server' })).toHaveClass(
+      'lamp--bad',
+    );
+    expect(screen.getByRole('status', { name: /^Control:/ })).toHaveClass('lamp--stale');
+
+    // The arbiter still hears our intents over HTTP -- we are still armed
+    // there -- and the OFFLINE tap is the stop.
+    expect(harness.state().enabled).toBe(true);
+    fireEvent.click(screen.getByText('OFFLINE'));
+    await waitFor(() => expect(harness.state().enabled).toBe(false));
+  });
+});
+
+// A heading or a reversal note from a unit that has stopped answering is a
+// frozen reading, and "current heading" under it presents it as live.
+describe('App: HH readings follow HH liveness', () => {
+  it('stops showing the held heading once HH stops answering', async () => {
+    await renderApp();
+    fireEvent.click(screen.getByText('HOLD'));
+    harness.sendDelta([{ path: 'control.remoteController.hh.setpointDeg', value: 40 }]);
+    await waitFor(() => expect(screen.getByText('040°')).toBeInTheDocument());
+
+    harness.stopHh();
+    await waitFor(
+      () => expect(screen.getByText(/thruster unit not responding/i)).toBeInTheDocument(),
+      { timeout: 4000 },
+    );
+    expect(screen.queryByText('040°')).not.toBeInTheDocument();
+    expect(screen.getByText('---°')).toBeInTheDocument();
+  });
+
+  it('drops a reversal-pending note once HH stops answering', async () => {
+    await renderApp();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.reversalPending', value: true },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByText(/reversing — waiting for the thruster/)).toBeInTheDocument(),
+    );
+
+    harness.stopHh();
+    await waitFor(
+      () => expect(screen.getByText(/thruster unit not responding/i)).toBeInTheDocument(),
+      { timeout: 4000 },
+    );
+    expect(
+      screen.queryByText(/reversing — waiting for the thruster/),
+    ).not.toBeInTheDocument();
   });
 });

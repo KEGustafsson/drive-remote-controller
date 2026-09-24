@@ -190,7 +190,9 @@ summary row rather than behind the detail toggle.
 
 Every row **below Connection** is derived from the last data the app
 received, so whenever the socket isn't open (the Connection row reads
-"Connecting…" or "Disconnected — reconnecting…") those rows are greyed out.
+"Connecting…" or "Disconnected — reconnecting…"), or it is open but the
+plugin's 250 ms republish has stopped arriving on it ("no data from server" —
+a half-open socket never closes by itself), those rows are greyed out.
 They keep their last-known text but are dimmed to signal "not live" — the
 app never shows a confident green/yellow reading it can't currently confirm.
 Only the Connection row itself stays fully coloured while offline, since it's
@@ -214,6 +216,9 @@ only when it *is* that holder. Concretely:
   machinery can always stop it.
 - **Take over** deliberately: on the *IN USE* device, tap once to STOP (disarm
   the other), then tap again to arm — passing through the safe disarmed state.
+  The second tap must come at least a second after the button stopped meaning
+  STOP: until then a tap is still a STOP, so a double-tapped stop, or a stop
+  aimed at *IN USE* just as the holder disarmed, can never arm this device.
 - **Fail-safe:** if the holder's tab closes or its WiFi drops, its heartbeat
   stops and the token auto-releases (→ disarmed, both drives NEUTRAL).
 - **Arming only from rest.** An arm press is granted only on a packet that

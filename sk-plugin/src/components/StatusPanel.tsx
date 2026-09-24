@@ -18,6 +18,12 @@ import type { ConnectionState, SkSnapshot } from '../skClient';
 
 interface StatusPanelProps {
   connectionState: ConnectionState;
+  /**
+   * The socket reads open but the server's stream has stopped carrying live
+   * data (App's useServerStreamLive). Treated like a disconnect for every
+   * derived lamp; the Link lamp says which it is.
+   */
+  serverSilent?: boolean;
   writeStatus: WriteStatus;
   /**
    * How the plugin answered this app's last intent POST -- the real effect,
@@ -123,6 +129,7 @@ function unitLamp(
  */
 export function StatusPanel({
   connectionState,
+  serverSilent = false,
   writeStatus,
   intentStatus = 'unknown',
   controlState,
@@ -130,7 +137,7 @@ export function StatusPanel({
   hhLiveness,
   values,
 }: StatusPanelProps) {
-  const live = connectionState === 'open';
+  const live = connectionState === 'open' && !serverSilent;
   const rxAlive = rxLiveness === 'live';
   const hhAlive = hhLiveness === 'live';
 
@@ -163,12 +170,14 @@ export function StatusPanel({
           title="Link"
           value={
             connectionState === 'open'
-              ? 'connected'
+              ? serverSilent
+                ? 'no data from server'
+                : 'connected'
               : connectionState === 'connecting'
                 ? 'connecting…'
                 : 'disconnected'
           }
-          status={connectionState === 'open' ? 'good' : 'bad'}
+          status={live ? 'good' : 'bad'}
         />
         <Lamp
           title="Commands"
@@ -221,12 +230,20 @@ export function StatusPanel({
           />
           <Lamp
             title="Port"
-            value={`${portState} · ${sourceLabel(portSource)}`}
+            value={
+              !live || !rxAlive
+                ? 'no data'
+                : `${portState} · ${sourceLabel(portSource)}`
+            }
             status={fromRx(portState === 'unknown' ? 'warn' : 'good')}
           />
           <Lamp
             title="Starboard"
-            value={`${stbdState} · ${sourceLabel(stbdSource)}`}
+            value={
+              !live || !rxAlive
+                ? 'no data'
+                : `${stbdState} · ${sourceLabel(stbdSource)}`
+            }
             status={fromRx(stbdState === 'unknown' ? 'warn' : 'good')}
           />
           <Lamp

@@ -69,6 +69,14 @@ export interface ArbiterHarness {
   /** Drop all current client sockets (simulates a WiFi blip); arbiter state persists. */
   dropConnections: () => void;
   /**
+   * Stop sending ANYTHING to the currently connected sockets while leaving
+   * them open -- no FIN, no close frame. Models a half-open link (a phone
+   * walked out of WiFi range, an AP that stopped forwarding): the browser's
+   * socket still reads 'open' and nothing on the wire says otherwise. The
+   * arbiter keeps running and intents still reach it.
+   */
+  stallConnections: () => void;
+  /**
    * Stop simulating the RX unit: no more telemetry deltas. Models the board
    * being switched off / losing WiFi -- note that NOTHING announces this, no
    * "RX is gone" message exists; its absence is the only evidence, which is
@@ -137,12 +145,26 @@ export async function startArbiterServer(
     };
   }
 
-  function broadcast() {
-    const msg = JSON.stringify(stateDelta());
+  // Sockets that are still open but no longer hear anything (stallConnections).
+  const stalled = new WeakSet<WsSocket>();
+  function sendAll(msg: string) {
     for (const ws of sockets) {
-      if (ws.readyState === ws.OPEN) ws.send(msg);
+      if (ws.readyState === ws.OPEN && !stalled.has(ws)) ws.send(msg);
     }
   }
+
+  function broadcast() {
+    sendAll(JSON.stringify(stateDelta()));
+  }
+
+  // The plugin republishes its whole state every REFRESH_MS whether or not
+  // anything changed (index.cjs heartbeat), and the UI judges the arbiter's
+  // presence on those ARRIVALS. Without this the UI would read a harness that
+  // merely has nothing new to say as a server that has gone silent. Broadcast
+  // only -- no arbiter.tick() here, because several tests drive tick() with
+  // synthetic timestamps and a wall-clock tick would evict their clients.
+  const stateTimer = setInterval(broadcast, PERIODIC_REFRESH_MS);
+  if (typeof stateTimer.unref === 'function') stateTimer.unref();
 
   function feed(intent: Record<string, unknown>, nowMs: number) {
     arbiter.onIntent(intent, nowMs);
@@ -155,13 +177,12 @@ export async function startArbiterServer(
   }
 
   function sendValues(values: Array<{ path: string; value: unknown }>) {
-    const msg = JSON.stringify({
-      context: 'vessels.self',
-      updates: [{ values }],
-    });
-    for (const ws of sockets) {
-      if (ws.readyState === ws.OPEN) ws.send(msg);
-    }
+    sendAll(
+      JSON.stringify({
+        context: 'vessels.self',
+        updates: [{ values }],
+      }),
+    );
   }
 
   // The simulated RX unit's telemetry heartbeat: RX republishes its whole
@@ -272,7 +293,11 @@ export async function startArbiterServer(
       for (const ws of sockets) ws.terminate();
       sockets.clear();
     },
+    stallConnections: () => {
+      for (const ws of sockets) stalled.add(ws);
+    },
     close: () => {
+      clearInterval(stateTimer);
       stopRx();
       stopHh();
       return new Promise<void>((resolve) => server.close(() => resolve()));

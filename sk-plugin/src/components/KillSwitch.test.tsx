@@ -8,7 +8,8 @@
 // anything -- least of all on the health of a different transport).
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { KILL_SWITCH_STOP_HOLDOVER_MS } from '../config';
 import { KillSwitch } from './KillSwitch';
 
 function renderSwitch(props: Partial<Parameters<typeof KillSwitch>[0]> = {}) {
@@ -184,5 +185,71 @@ describe('KillSwitch when no unit is responding', () => {
     });
     fireEvent.click(killButton());
     expect(onDisarm).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The button's meaning can change between the operator's decision and the
+// click landing -- the arbiter answers a STOP in milliseconds. A tap within
+// KILL_SWITCH_STOP_HOLDOVER_MS of the button last meaning STOP is a STOP.
+describe('KillSwitch: a tap aimed at STOP stays a STOP', () => {
+  const base = {
+    connected: true,
+    rxLiveness: 'live' as const,
+    hhLiveness: 'live' as const,
+    canArm: true,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  for (const [what, from] of [
+    ['ARMED', { armed: true, foreignControl: false, connected: true }],
+    ['IN USE', { armed: false, foreignControl: true, connected: true }],
+    ['OFFLINE', { armed: false, foreignControl: false, connected: false }],
+  ] as const) {
+    it(`a tap just after ${what} flips to DISARMED still stops, never arms`, () => {
+      const onArm = vi.fn();
+      const onDisarm = vi.fn();
+      const { rerender } = render(
+        <KillSwitch {...base} {...from} onArm={onArm} onDisarm={onDisarm} />,
+      );
+      rerender(
+        <KillSwitch
+          {...base}
+          armed={false}
+          foreignControl={false}
+          onArm={onArm}
+          onDisarm={onDisarm}
+        />,
+      );
+      expect(screen.getByText('DISARMED')).toBeInTheDocument();
+      fireEvent.click(killButton());
+      expect(onDisarm).toHaveBeenCalledTimes(1);
+      expect(onArm).not.toHaveBeenCalled();
+    });
+  }
+
+  it('arms normally once the hold-over has passed', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const onArm = vi.fn();
+    const onDisarm = vi.fn();
+    const { rerender } = render(
+      <KillSwitch {...base} armed foreignControl={false} onArm={onArm} onDisarm={onDisarm} />,
+    );
+    rerender(
+      <KillSwitch
+        {...base}
+        armed={false}
+        foreignControl={false}
+        onArm={onArm}
+        onDisarm={onDisarm}
+      />,
+    );
+    now += KILL_SWITCH_STOP_HOLDOVER_MS + 1;
+    fireEvent.click(killButton());
+    expect(onArm).toHaveBeenCalledTimes(1);
+    expect(onDisarm).not.toHaveBeenCalled();
   });
 });
