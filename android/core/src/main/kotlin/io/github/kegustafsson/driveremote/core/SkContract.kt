@@ -165,6 +165,31 @@ object SkContract {
    */
   const val TELEMETRY_POLL_MS = PERIODIC_REFRESH_MS
 
+  /**
+   * How long the arbiter's own publish may go without a fresh delta before this
+   * station stops believing the server stream is live. Mirrors
+   * `SERVER_STREAM_STALE_MS` in `sk-plugin/src/config.ts`.
+   *
+   * The plugin republishes `activeClient` every [PERIODIC_REFRESH_MS], so its
+   * ARRIVAL -- on the current socket -- is the proof the stream still carries
+   * live data. Neither the socket's state (a half-open socket, the far end gone
+   * with no FIN, reads OPEN until a ping fails) nor the retained value can say
+   * so. Same six-refresh budget as [TELEMETRY_STALE_MS]. See [serverStreamLive].
+   */
+  const val SERVER_STREAM_STALE_MS = TELEMETRY_STALE_MS
+
+  /**
+   * A socket that has delivered NOTHING for this long is abandoned and a fresh
+   * one opened. Mirrors `SK_STREAM_SILENCE_RECONNECT_MS` in
+   * `sk-plugin/src/config.ts`.
+   *
+   * This station sends nothing after subscribing, so only OkHttp's ping would
+   * ever notice a half-open socket -- 20 s and more after the stream went quiet.
+   * Well above [SERVER_STREAM_STALE_MS], so the display degrades to OFFLINE
+   * first and a healthy but momentarily quiet link is not churned.
+   */
+  const val SK_STREAM_SILENCE_RECONNECT_MS = 5000L
+
   /** Largest heading trim a station may command. Mirrors `control_core::kMaxTrimDeg`. */
   const val MAX_TRIM_DEG = 45.0
 

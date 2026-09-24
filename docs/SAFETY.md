@@ -403,6 +403,7 @@ handset is not evidence about this one.
 **Owner decisions of 2026-09-24, host-tested only (repeat each in the browser UI too):**
 
 - [ ] **Trim survives a read-stream drop.** Armed in HOLD with trim +20, kill only the station's live-data stream (block the WebSocket, or stop the SK server's stream while the intent route stays up) → the heading does not move, the trim steps grey out, and `plugin.thruster.trimDeg` stays 20 in the data browser. Restore the stream → still +20, steps enabled.
+- [ ] **A silent stream reads offline.** Armed in HOLD with trim +20, DROP (not reject) the phone's traffic at the AP or server → within ~1.5 s the kill switch reads OFFLINE and LINK `no data from server`, a tap still STOPs, the trim stays +20; ~5 s later LINK reads reconnecting. Lift the rule → it reconnects with no automatic re-arm, trim unchanged if still armed.
 - [ ] **STOP at touch-down.** Armed, press the kill switch and slide the finger off before lifting → disarmed. Then from DISARMED press and slide off → nothing arms.
 - [ ] **Commands not reaching the boat are named.** Stop the plugin → the COMMANDS lamp reads BLOCKED and the kill switch says `commands not reaching boat — plugin stopped`.
 - [ ] **MANUAL refusal.** Armed in MANUAL, assert and release HH's ENGAGE → after 2 s the station shows `THRUSTER REFUSED — RE-ARM TO COMMAND`, and STOP then ARM restores command.

@@ -590,6 +590,7 @@ private fun ComposeContentTestRule.showKillSwitch(
 private val armed =
   StationView(
     connectionState = ConnectionState.OPEN,
+    serverLive = true,
     linkPhase = LinkPhase.ONLINE,
     controlState = ControlState.YOU,
     rxLiveness = UnitLiveness.LIVE,

@@ -3,10 +3,13 @@ package io.github.kegustafsson.driveremote.core
 /**
  * How the link should be PRESENTED, which is not the same as what it is.
  *
- * [ConnectionState] is the fact: the socket is open, opening, or shut. This is
- * the reading given to the operator, and the two differ in exactly one place --
- * a socket that is not open yet because the app has only just started is not
- * the same event as a socket that went down, and must not look like one.
+ * [ConnectionState] is the socket's fact: open, opening, or shut. The link is
+ * LIVE only while the socket is open AND the arbiter's publish is arriving on it
+ * ([serverStreamLive]) -- an open socket that has gone silent is not a link.
+ * This is the reading given to the operator, and it differs from "live or not"
+ * in exactly one place -- a stream that is not live yet because the app has
+ * only just started is not the same event as one that went down, and must not
+ * look like one.
  *
  * The distinction is worth a type because getting it wrong is what the operator
  * saw: every launch opened on a yellow OFFLINE kill switch for the few hundred
@@ -16,48 +19,60 @@ package io.github.kegustafsson.driveremote.core
  *
  * **Presenting [CONNECTING] calmly is safe, and provably so rather than by
  * assertion.** Arming requires `canArm`, which requires unit liveness, which
- * requires an OPEN socket -- so this station cannot be armed or commanding
- * before its first open. The one other way a session begins connecting afresh
- * is `changeServer`, which refuses outright while armed on a live link, and
- * when the link is down leaves with a disarm -- after which the heartbeat is
- * stopped, so the arbiter stale-evicts this station even if that disarm is
- * lost. There is no state in which [CONNECTING] hides a live command.
+ * requires a LIVE stream -- so this station cannot be armed or commanding
+ * before the stream is first live. The one other way a session begins
+ * connecting afresh is `changeServer`, which refuses outright while armed on a
+ * live link, and when the link is down leaves with a disarm -- after which the
+ * heartbeat is stopped, so the arbiter stale-evicts this station even if that
+ * disarm is lost. There is no state in which [CONNECTING] hides a live command.
  *
- * Once a session HAS been open, every later gap is [OFFLINE] with no grace at
- * all. That is the dangerous case the OFFLINE state was written for: the
- * station may still hold the token and still be commanding while unable to see
- * the boat, and it must say so the instant it happens.
+ * Once a session HAS been live, every later gap -- the socket dropping, or an
+ * open socket falling silent -- is [OFFLINE] with no grace at all. That is the
+ * dangerous case the OFFLINE state was written for: the station may still hold
+ * the token and still be commanding while unable to see the boat, and it must
+ * say so the instant it is known.
  */
 enum class LinkPhase {
-  /** The stream is open. */
+  /** The stream is live: open, with the arbiter's publish arriving on it. */
   ONLINE,
 
   /**
-   * Never yet open this session, and still within
+   * Never yet live this session, and still within
    * [SkContract.LINK_STARTUP_GRACE_MS]. Starting up, not broken.
    */
   CONNECTING,
 
-  /** Was open and is not now, or has been trying long enough to be a fault. */
+  /**
+   * Was live and is not now -- closed, reopening, or open and silent -- or has
+   * been trying long enough to be a fault.
+   */
   OFFLINE,
 }
 
 /**
  * [LinkPhase] from the facts. Pure, and the whole rule in one place.
  *
+ * [everConnected] is whether this session's stream has been LIVE at least once
+ * -- not merely opened: the moments between the first open and the arbiter's
+ * first publish landing are still a start-up (see [deriveStationView]).
+ *
  * [connectingForMs] is measured from when the current target was set, not from
  * the latest socket attempt: a first connection that fails and is retried three
  * times is still one start-up, and restarting the clock on each attempt would
  * keep it in [LinkPhase.CONNECTING] for as long as the backoff kept trying --
  * which is forever, and is the failure this grace window must not become.
+ *
+ * [serverLive] is [serverStreamLive]: required, so no caller can read an open
+ * socket as a live link by leaving it out.
  */
 fun linkPhaseOf(
   connectionState: ConnectionState,
   everConnected: Boolean,
   connectingForMs: Long,
+  serverLive: Boolean,
 ): LinkPhase =
   when {
-    connectionState == ConnectionState.OPEN -> LinkPhase.ONLINE
+    connectionState == ConnectionState.OPEN && serverLive -> LinkPhase.ONLINE
     everConnected -> LinkPhase.OFFLINE
     connectingForMs < SkContract.LINK_STARTUP_GRACE_MS -> LinkPhase.CONNECTING
     else -> LinkPhase.OFFLINE
@@ -229,44 +244,67 @@ fun manualRefusalOf(
 }
 
 /**
- * Must the heading trim be dropped to 0 now? Owner decision, 2026-09-24:
- * **the trim is kept when the live-data stream drops, and reset only when the
- * hold ends.**
+ * Must the heading trim be dropped to 0 now? Port of
+ * `sk-plugin/src/pure/trimReset.ts`, and the same table. Owner decision,
+ * 2026-09-24: **the trim is kept when the live-data stream drops, and reset
+ * only when the hold ends.**
  *
  * The trim is RELATIVE to the heading HH captured when the hold engaged, so
  * dropping it to 0 is not a neutral act: it swings the boat back by the whole
  * offset with nobody touching anything. It used to happen whenever this
- * station's read socket dropped -- even when only the WebSocket had gone and
- * the intents, which travel over HTTP, were still steering the hold.
+ * station's read side went dark -- even when only the stream had gone and the
+ * intents, which travel over HTTP, were still steering the hold.
  *
  * Reset when:
  *  - [mode] is not HOLD -- always. There is no hold for a trim to belong to.
- *  - [connected], and this station is not [armed] or HH is not answering. The
- *    hold has genuinely ended, or cannot be running, and a later hold must
- *    begin at "hold the captured heading", never at an offset dialled in
- *    before.
+ *  - [connected], and this station is not [armed] -- at once. The stream only
+ *    reads connected once the arbiter's own publish has arrived on it
+ *    ([serverStreamLive]), and that publish carries `activeClient`.
+ *  - [connected], and HH has not been live for a full HH liveness window
+ *    ([hhGoneForMs] >= [hhSettleMs]) -- see below.
  *
- * NOT while disconnected, and that is the point. Liveness is judged on arrival,
- * so with the socket down HH reads as not answering and `armed` is only
- * last-known -- neither says anything about the hold, which may well still be
- * running on the intents this station keeps posting. The trim is kept and keeps
- * being SENT; only adjusting it is frozen (the steps are inert while the
- * thruster is not commandable). If HH really has gone, the arbiter zeroes the
- * trim it publishes on its own: `_refreshUnitLiveness` in
+ * NOT while disconnected -- socket down, or open and silent -- and that is the
+ * point. Liveness is judged on arrival, so blind, HH reads as not answering and
+ * `armed` is only last-known -- neither says anything about the hold, which may
+ * well still be running on the intents this station keeps posting. The trim is
+ * kept and keeps being SENT; only adjusting it is frozen (the steps are inert
+ * while the thruster is not commandable). If HH really has gone, the arbiter
+ * zeroes the trim it publishes on its own: `_refreshUnitLiveness` in
  * `sk-plugin/arbiter.cjs` sets the holder's `trimDeg = 0` on HH's falling edge,
  * and `_thrusterCommandable()` masks it to 0 until this station is seen asking
  * for the safe tuple (off AND no trim) with HH live again -- which the
  * connected half of this rule then provides.
  *
- * [hhAnswering] is the verdict on evidence from the socket as it is NOW; see
- * [StationView.hhNotAnswering] for why that is not simply `hhLiveness == LIVE`.
+ * **Both edges of an outage.** HH's verdict and the stream's are separate
+ * clocks over separate arrivals, so neither edge flips them together:
+ *  - going dark: every arrival stops at once, but HH's last delta may predate
+ *    the arbiter's last publish by up to one HH publish period, so HH's window
+ *    runs out first and for a tick or two the stream still reads connected with
+ *    HH "gone";
+ *  - coming back: the stream reads connected as soon as the arbiter's publish
+ *    lands, while HH's last arrival is as old as the outage until its first new
+ *    delta follows.
+ * Read at face value either moment would reset the trim on an outage about as
+ * often as the race went the wrong way. So "HH not answering" counts only once
+ * `connected && !hhLive` has held CONTINUOUSLY for a full HH liveness window
+ * ([SkContract.TELEMETRY_STALE_MS], the browser's `RX_TELEMETRY_STALE_MS`); the
+ * stream dropping restarts the count ([StationView.hhGoneForMs]). The only
+ * price is that a real HH loss resets the trim here one window later -- and the
+ * arbiter has already zeroed it at the server by then.
  */
 fun trimMustReset(
   mode: ThrusterMode,
   connected: Boolean,
   armed: Boolean,
-  hhAnswering: Boolean,
-): Boolean = mode != ThrusterMode.HOLD || (connected && (!armed || !hhAnswering))
+  hhLive: Boolean,
+  hhGoneForMs: Long,
+  hhSettleMs: Long = SkContract.TELEMETRY_STALE_MS,
+): Boolean {
+  if (mode != ThrusterMode.HOLD) return true
+  if (!connected) return false
+  if (!armed) return true
+  return !hhLive && hhGoneForMs >= hhSettleMs
+}
 
 /** This command with [trimMustReset] applied -- the trim dropped when it must be, else unchanged. */
 fun ThrusterCommand.trimGovernedBy(view: StationView): ThrusterCommand =
@@ -286,7 +324,15 @@ fun ThrusterCommand.trimGovernedBy(view: StationView): ThrusterCommand =
  * so it has to be recomputed on a clock (see [SkContract.TELEMETRY_POLL_MS]).
  */
 data class StationView(
+  /** The socket's own state. Says nothing about whether data is arriving on it. */
   val connectionState: ConnectionState,
+
+  /**
+   * Is the arbiter's publish arriving on the current socket ([serverStreamLive])?
+   * Required, with no default: an open socket that has gone silent is not a
+   * link, and a view built without saying which it is must not read as one.
+   */
+  val serverLive: Boolean,
 
   /**
    * The same link, as the operator should be told about it. Differs from
@@ -390,16 +436,17 @@ data class StationView(
   val manualRefusal: HoldStall = HoldStall.NONE,
 
   /**
-   * Is [hhLiveness] a verdict on evidence from the socket as it is NOW?
-   *
-   * False only in the moments after the read socket (re)opens, before HH's
-   * telemetry has had [SkContract.TELEMETRY_STALE_MS] to arrive: the arrival
-   * stamps in the store are from before the drop, so HH reads STALE purely
-   * because this station was not listening. That is the socket's fact, not
-   * HH's, and it must not be acted on as HH going away -- see [hhNotAnswering].
-   * Defaults to true, the answer for a caller that does not track the open.
+   * Since when [hhGone] has held continuously, on the caller's clock, or null
+   * while it does not hold. The caller hands it back to the next
+   * [deriveStationView] -- it is the one piece of history the trim rule needs.
    */
-  val hhVerdictSettled: Boolean = true,
+  val hhGoneSinceMs: Long? = null,
+
+  /**
+   * How long [hhGone] has held continuously as of this view; 0 whenever it does
+   * not hold, and on the derivation it starts on. See [trimMustReset].
+   */
+  val hhGoneForMs: Long = 0,
 
   /**
    * The outcome of this station's last intent POST: whether its commands --
@@ -410,8 +457,14 @@ data class StationView(
   val armed: Boolean
     get() = controlState == ControlState.YOU
 
+  /**
+   * The stream is LIVE: the socket open AND the arbiter's publish still arriving
+   * on it. Mirrors `connected = connectionState === 'open' && serverLive` in
+   * `sk-plugin/src/App.tsx`. Everything that asks "can this station see the
+   * boat" reads this, never [connectionState] alone.
+   */
   val connected: Boolean
-    get() = connectionState == ConnectionState.OPEN
+    get() = connectionState == ConnectionState.OPEN && serverLive
 
   /**
    * Must "disconnect / change server" be refused? Only while this station is
@@ -437,19 +490,23 @@ data class StationView(
     get() = armed && !connected
 
   /**
-   * HH is positively not answering on a live link: connected, the verdict
-   * settled on post-(re)connect evidence ([hhVerdictSettled]), and not LIVE.
-   *
-   * Narrower than `!readyToArm(hhLiveness)` on purpose. That is also true while
-   * the socket is down and for the first moments after it comes back, and in
-   * neither case has anything been heard from HH that says it has gone.
+   * HH reads not live on a live stream. Only a CANDIDATE for "HH has gone": on
+   * either edge of an outage this is briefly true with nothing wrong with HH
+   * (see [trimMustReset]), which is why the trim rule waits for it to have held
+   * a full window ([hhGoneForMs]) before acting on it.
    */
-  val hhNotAnswering: Boolean
-    get() = connected && hhVerdictSettled && !readyToArm(hhLiveness)
+  val hhGone: Boolean
+    get() = connected && !readyToArm(hhLiveness)
 
   /** [trimMustReset] for this view. */
   fun trimMustReset(mode: ThrusterMode): Boolean =
-    trimMustReset(mode = mode, connected = connected, armed = armed, hhAnswering = !hhNotAnswering)
+    trimMustReset(
+      mode = mode,
+      connected = connected,
+      armed = armed,
+      hhLive = readyToArm(hhLiveness),
+      hhGoneForMs = hhGoneForMs,
+    )
 
   /** What the COMMANDS lamp shows. See [commandsIndication]. */
   val commands: CommandsIndication
@@ -519,7 +576,12 @@ fun deriveStationView(
   connectionState: ConnectionState,
   myClientId: String,
   nowMs: Long,
-  /** Has this session's stream been open at least once? See [LinkPhase]. */
+  /**
+   * Has this session's socket been open at least once? See [LinkPhase]. The
+   * phase needs "has the stream been LIVE", which is this AND an `activeClient`
+   * arrival in [store] -- the store is emptied whenever a session ends, so any
+   * arrival in it was heard on this session's stream.
+   */
   everConnected: Boolean = true,
   /**
    * When the current target was set, on the same clock as [nowMs]; null if that
@@ -551,31 +613,52 @@ fun deriveStationView(
   manualRequestedSinceMs: Long? = null,
   /**
    * When the read socket last opened, on the same clock as [nowMs]; null if
-   * that is not tracked. See [StationView.hhVerdictSettled]. Defaults to null,
-   * which reads every verdict as settled -- the pre-existing behaviour.
+   * that is not tracked. An `activeClient` arrival from before it was heard on
+   * a socket that is gone and does not make this one live ([serverStreamLive]).
    */
   streamOpenedAtMs: Long? = null,
+  /**
+   * [StationView.hhGoneSinceMs] from the previous derivation; null for none.
+   * Threading it through is what makes "HH not answering" a CONTINUOUS
+   * verdict for the trim rule. See [trimMustReset].
+   */
+  hhGoneSinceMs: Long? = null,
   /** The last intent POST's outcome. See [IntentStatus]. */
   intentStatus: IntentStatus = IntentStatus.UNKNOWN,
 ): StationView {
+  // Is the stream live -- socket open AND the arbiter's publish arriving on it?
+  val serverLive =
+    serverStreamLive(
+      connectionState = connectionState,
+      receivedAtMs = store.receivedAtMs(SkContract.PLUGIN_ACTIVE_CLIENT),
+      openedAtMs = streamOpenedAtMs,
+      nowMs = nowMs,
+    )
+  // What unit liveness and commandability are judged against: the stream as
+  // EVIDENCE, not the socket. An open socket the arbiter has gone silent on is
+  // treated exactly as a closed one -- the units read OFFLINE ("cannot tell")
+  // rather than STALE, because the silence is the server's, not theirs, and
+  // nothing is commandable through a stream this station cannot see the boat on.
+  val readSide = if (serverLive) ConnectionState.OPEN else ConnectionState.CLOSED
+
   val rxLiveness =
     evaluateLiveness(
-      connectionState = connectionState,
+      connectionState = readSide,
       telemetryAgeMs = store.ageMs(SkContract.RX_LINK_UP, nowMs),
       pluginUnitLive = store.boolOrNull(SkContract.PLUGIN_RX_LIVE),
       pluginVerdictAgeMs = store.ageMs(SkContract.PLUGIN_RX_LIVE, nowMs),
     )
   val hhLiveness =
     evaluateLiveness(
-      connectionState = connectionState,
+      connectionState = readSide,
       telemetryAgeMs = store.ageMs(SkContract.HH_LINK_UP, nowMs),
       pluginUnitLive = store.boolOrNull(SkContract.PLUGIN_HH_LIVE),
       pluginVerdictAgeMs = store.ageMs(SkContract.PLUGIN_HH_LIVE, nowMs),
     )
 
   val controlState = controlStateOf(store[SkContract.PLUGIN_ACTIVE_CLIENT], myClientId)
-  val driveCommandable = canCommand(controlState, connectionState, rxLiveness)
-  val thrusterCommandable = canCommand(controlState, connectionState, hhLiveness)
+  val driveCommandable = canCommand(controlState, readSide, rxLiveness)
+  val thrusterCommandable = canCommand(controlState, readSide, hhLiveness)
 
   val portSource = parseSource(store[SkContract.RX_PORT_SOURCE])
   val stbdSource = parseSource(store[SkContract.RX_STBD_SOURCE])
@@ -588,11 +671,14 @@ fun deriveStationView(
   val view =
     StationView(
       connectionState = connectionState,
+      serverLive = serverLive,
       linkPhase =
         linkPhaseOf(
           connectionState = connectionState,
-          everConnected = everConnected,
+          everConnected =
+            everConnected && store.hasEverReceived(SkContract.PLUGIN_ACTIVE_CLIENT),
           connectingForMs = linkAttemptStartedMs?.let { nowMs - it } ?: Long.MAX_VALUE,
+          serverLive = serverLive,
         ),
       controlState = controlState,
       rxLiveness = rxLiveness,
@@ -632,15 +718,12 @@ fun deriveStationView(
       hhMode = store.stringOrNull(SkContract.HH_MODE),
       thrusterState = store.stringOrNull(SkContract.HH_THRUSTER_STATE),
       hhFsmState = store.stringOrNull(SkContract.HH_FSM_STATE),
-      hhVerdictSettled =
-        hhVerdictSettledOf(
-          connectionState = connectionState,
-          nowMs = nowMs,
-          streamOpenedAtMs = streamOpenedAtMs,
-          hhTelemetryAtMs = store.receivedAtMs(SkContract.HH_LINK_UP),
-        ),
       intentStatus = intentStatus,
     )
+
+  // How long HH has read not-live on a live stream, CONTINUOUSLY: any break --
+  // HH heard again, or the stream itself dropping -- restarts the count.
+  val hhGoneSince = continuousSince(view.hhGone, hhGoneSinceMs, nowMs)
 
   val holdPhase =
     holdPhaseOf(
@@ -649,6 +732,8 @@ fun deriveStationView(
       requestedForMs = holdRequestedSinceMs?.let { nowMs - it },
     )
   return view.copy(
+    hhGoneSinceMs = hhGoneSince,
+    hhGoneForMs = hhGoneSince?.let { maxOf(0L, nowMs - it) } ?: 0L,
     holdPhase = holdPhase,
     holdStall =
       if (holdPhase == HoldPhase.NOT_ENGAGING) {
@@ -665,28 +750,6 @@ fun deriveStationView(
       ),
   )
 }
-
-/**
- * [StationView.hhVerdictSettled] from the facts: settled unless the socket is
- * open, opened less than [SkContract.TELEMETRY_STALE_MS] ago, and HH's newest
- * telemetry predates that open.
- *
- * Only HH's own telemetry counts as fresh evidence, not the arbiter's
- * `plugin.hhLive`: Signal K hands a new subscriber each path's RETAINED value,
- * so a verdict arriving just after the open may have been written long before
- * it. A unit that is really gone is still called gone -- one staleness window
- * after the open, which is the same patience a unit that never appeared gets.
- */
-fun hhVerdictSettledOf(
-  connectionState: ConnectionState,
-  nowMs: Long,
-  streamOpenedAtMs: Long?,
-  hhTelemetryAtMs: Long?,
-): Boolean =
-  connectionState != ConnectionState.OPEN ||
-    streamOpenedAtMs == null ||
-    nowMs - streamOpenedAtMs >= SkContract.TELEMETRY_STALE_MS ||
-    (hhTelemetryAtMs != null && hhTelemetryAtMs >= streamOpenedAtMs)
 
 private fun overrideNote(commandable: Boolean, source: CommandSource): String? =
   if (commandable && source.overridesThisApp) source.label else null

@@ -492,6 +492,7 @@ private fun ComposeContentTestRule.showControlScreen(
 private val disarmed =
   StationView(
     connectionState = ConnectionState.OPEN,
+    serverLive = true,
     linkPhase = LinkPhase.ONLINE,
     controlState = ControlState.NONE,
     rxLiveness = UnitLiveness.LIVE,

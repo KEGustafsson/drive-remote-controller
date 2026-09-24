@@ -105,8 +105,10 @@ private fun Modifier.contactHeight(helm: HelmScale): Modifier =
  * that always fires is one the operator stops reading, which costs exactly the
  * times it means something. [LinkPhase.CONNECTING] is the same fact said
  * calmly, and it is safe to say calmly because this station cannot be armed
- * before its first open (see [LinkPhase]). The moment a session HAS been open,
- * every later gap is OFFLINE with no grace at all.
+ * before its stream is first live (see [LinkPhase]). The moment a session HAS
+ * been live, every later gap is OFFLINE with no grace at all -- and "live" is
+ * judged on the arbiter's publish ARRIVING, so an open socket that has gone
+ * silent is OFFLINE too, not a confident ARMED over a boat it cannot see.
  */
 @Composable
 fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modifier: Modifier = Modifier) {
@@ -117,7 +119,7 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
   val colour: Color
 
   when {
-    // Before OFFLINE, and only ever true before this session's first open.
+    // Before OFFLINE, and only ever true before this session's stream is first live.
     // Deliberately the DISARMED grey: the transition into DISARMED a moment
     // later is then a change of words rather than a change of colour, which is
     // what stops the launch reading as an alarm going off and clearing.

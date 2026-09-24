@@ -35,6 +35,18 @@ import okhttp3.WebSocketListener
  * this app can be pointed at any server while the web UI is confined to
  * same-origin cookies.
  *
+ * ## A socket that goes silent
+ *
+ * A half-open socket -- the Signal K host losing power, the Wi-Fi path breaking
+ * with no FIN -- stays OPEN here, and this class sends nothing after
+ * subscribing, so only OkHttp's ping would notice, 20 s and more later. The view
+ * stops calling such a stream live on its own (`serverStreamLive` in :core,
+ * judged on the arbiter's publish arriving); this class does the recovery
+ * half, as the browser's `skClient.ts` does: a socket that has delivered no
+ * frame at all for [SkContract.SK_STREAM_SILENCE_RECONNECT_MS] is abandoned
+ * and a fresh one opened. Abandoning bumps [generation], so nothing the old socket still
+ * delivers -- a late frame, its eventual close -- can touch the new one.
+ *
  * ## Threading
  *
  * [SkValueStore] is not thread-safe, and OkHttp delivers callbacks on its own
@@ -66,6 +78,10 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
 
   private var webSocket: WebSocket? = null
   private var reconnectJob: Job? = null
+  /** The silence watchdog for the current open socket; see the class KDoc. */
+  private var silenceJob: Job? = null
+  /** elapsedRealtime of the current socket's last frame, or of its open. */
+  private var lastFrameAtMs = 0L
   private val backoff = ReconnectBackoff()
 
   private var target: ServerAddress? = null
@@ -117,10 +133,10 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
    * elapsedRealtime when the socket last OPENED -- every open, reconnects
    * included -- or null if it has not opened since the target was set.
    *
-   * What lets the view tell "HH has gone" from "this station has only just
-   * started listening again": for a moment after a reconnect every arrival stamp
-   * in [store] predates the drop. See
-   * [io.github.kegustafsson.driveremote.core.StationView.hhVerdictSettled].
+   * What lets the view refuse an arrival heard on a socket that is gone: the
+   * store keeps its stamps across a reconnect, and a retained `activeClient`
+   * from before the drop says nothing about this socket. See
+   * [io.github.kegustafsson.driveremote.core.serverStreamLive].
    */
   var openedAtMs: Long? = null
     private set
@@ -151,6 +167,7 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
   fun close() {
     closedByCaller = true
     generation += 1
+    stopSilenceWatchdog()
     reconnectJob?.cancel()
     reconnectJob = null
     webSocket?.close(NORMAL_CLOSURE, null)
@@ -165,6 +182,7 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
 
   private fun openSocket() {
     val address = target ?: return
+    stopSilenceWatchdog()
     webSocket?.cancel()
     _connectionState.value = ConnectionState.CONNECTING
 
@@ -173,6 +191,39 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
 
     val myGeneration = ++generation
     webSocket = httpClient.newWebSocket(builder.build(), Listener(myGeneration))
+  }
+
+  private fun stopSilenceWatchdog() {
+    silenceJob?.cancel()
+    silenceJob = null
+  }
+
+  /**
+   * Watch the socket that has just opened as [myGeneration]. Polls rather than
+   * re-arming a timer per frame: frames land four times a second, and a poll of
+   * at most a second puts the abandon within a second of the window.
+   */
+  private fun startSilenceWatchdog(myGeneration: Long, socket: WebSocket) {
+    stopSilenceWatchdog()
+    val silenceMs = SkContract.SK_STREAM_SILENCE_RECONNECT_MS
+    silenceJob =
+      scope.launch {
+        while (true) {
+          delay(minOf(silenceMs, 1_000L))
+          if (myGeneration != generation) return@launch
+          if (SystemClock.elapsedRealtime() - lastFrameAtMs <= silenceMs) continue
+          // Abandon it. The generation bump is what makes this final: every
+          // callback the old socket still delivers is dropped by its guard, and
+          // the reconnect below is keyed to the new value.
+          silenceJob = null
+          generation += 1
+          socket.cancel()
+          if (webSocket === socket) webSocket = null
+          _connectionState.value = ConnectionState.CLOSED
+          scheduleReconnect(generation)
+          return@launch
+        }
+      }
   }
 
   private fun currentScheme(): AuthScheme =
@@ -198,8 +249,11 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
         everConnected = true
         // Before the state flips, so the refresh that the flip triggers already
         // reads this open's time rather than the previous one's.
-        openedAtMs = SystemClock.elapsedRealtime()
+        val openedAt = SystemClock.elapsedRealtime()
+        openedAtMs = openedAt
+        lastFrameAtMs = openedAt
         _connectionState.value = ConnectionState.OPEN
+        startSilenceWatchdog(myGeneration, webSocket)
         // The only frame this app ever sends.
         webSocket.send(SkDelta.buildSubscribeMessage())
       }
@@ -209,10 +263,15 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
       // Parse off the callback thread's data but mutate on `scope`, which is
       // the store's single writer.
       val entries = SkDelta.parseUpdates(text, ACCEPT)
-      if (entries.isEmpty()) return
       scope.launch {
         if (myGeneration != generation) return@launch
-        store.apply(entries, SystemClock.elapsedRealtime())
+        // ANY frame proves the socket is carrying data -- the silence watchdog
+        // asks only that. Whether the stream is live for the view is a separate,
+        // narrower question: the arbiter's publish arriving (serverStreamLive).
+        val arrivedAt = SystemClock.elapsedRealtime()
+        lastFrameAtMs = arrivedAt
+        if (entries.isEmpty()) return@launch
+        store.apply(entries, arrivedAt)
         // Bump unconditionally: arrival is the signal, not the value.
         _revision.value = _revision.value + 1
       }
@@ -239,6 +298,7 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
           // AuthScheme.nextAfterRefusal, which the intent poster uses.
           schemeIndex = 0
         }
+        stopSilenceWatchdog()
         this@SkStream.webSocket = null
         _connectionState.value = ConnectionState.CLOSED
         scheduleReconnect(myGeneration)
@@ -261,6 +321,7 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
       webSocket.close(NORMAL_CLOSURE, null)
       scope.launch {
         if (myGeneration != generation) return@launch
+        stopSilenceWatchdog()
         this@SkStream.webSocket = null
         _connectionState.value = ConnectionState.CLOSED
         scheduleReconnect(myGeneration)
@@ -270,6 +331,7 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
       scope.launch {
         if (myGeneration != generation) return@launch
+        stopSilenceWatchdog()
         this@SkStream.webSocket = null
         _connectionState.value = ConnectionState.CLOSED
         scheduleReconnect(myGeneration)

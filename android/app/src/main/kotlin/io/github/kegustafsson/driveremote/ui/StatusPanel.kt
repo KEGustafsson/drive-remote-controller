@@ -124,14 +124,23 @@ fun StatusPanel(
         // uses it: a socket that has not opened YET is a start-up, and lighting
         // this amber and then red for the few hundred milliseconds of every
         // launch trains the operator to ignore the one lamp that reports the
-        // link. Once a session has been open, a gap is reported immediately.
+        // link. Once a session has been live, a gap is reported immediately.
+        //
+        // "no data from server" is the socket that still reads open while
+        // nothing arrives on it -- the far end gone without a FIN. Named apart
+        // from "disconnected" because it looks nothing like one from the phone:
+        // Wi-Fi up, the app still attached, and the boat invisible. The
+        // browser's Link lamp says the same words.
         reading =
           when (view.linkPhase) {
             LinkPhase.ONLINE -> "connected"
             LinkPhase.CONNECTING -> "connecting…"
             LinkPhase.OFFLINE ->
-              if (view.connectionState == ConnectionState.CONNECTING) "reconnecting…"
-              else "disconnected"
+              when (view.connectionState) {
+                ConnectionState.OPEN -> "no data from server"
+                ConnectionState.CONNECTING -> "reconnecting…"
+                ConnectionState.CLOSED -> "disconnected"
+              }
           },
         colour =
           when (view.linkPhase) {

@@ -19,7 +19,7 @@ class StationViewTest {
   private fun healthyStore(nowMs: Long = 10_000, activeClient: String? = null): SkValueStore {
     val store = SkValueStore()
     store.apply(
-      listOfNotNull(
+      listOf(
         SkContract.RX_LINK_UP to true,
         SkContract.RX_LINK_OK to true,
         SkContract.RX_PORT_STATE to "neutral",
@@ -30,12 +30,22 @@ class StationViewTest {
         SkContract.HH_SOURCE to "none",
         SkContract.PLUGIN_RX_LIVE to true,
         SkContract.PLUGIN_HH_LIVE to true,
-        activeClient?.let { SkContract.PLUGIN_ACTIVE_CLIENT to it },
+        // The arbiter republishes activeClient every 250 ms whether or not
+        // anyone holds the token ('' when nobody does), and its arrival is what
+        // makes the stream live (serverStreamLive).
+        SkContract.PLUGIN_ACTIVE_CLIENT to (activeClient ?: ""),
       ),
       nowMs,
     )
     return store
   }
+
+  /**
+   * The arbiter's 250 ms republish landing at [atMs] -- what keeps the stream
+   * live (serverStreamLive) while a unit's own telemetry is what goes quiet.
+   */
+  private fun arbiterPublishes(store: SkValueStore, atMs: Long, activeClient: String = "") =
+    store.apply(listOf(SkContract.PLUGIN_ACTIVE_CLIENT to activeClient), atMs)
 
   private fun view(store: SkValueStore, nowMs: Long, state: ConnectionState = ConnectionState.OPEN) =
     deriveStationView(store, state, me, nowMs)
@@ -76,9 +86,10 @@ class StationViewTest {
     // The fifth screenshot in the plugin README, as a unit test. The drives are
     // what you need at the dock; the thruster board is the likelier to be off.
     val store = healthyStore(nowMs = 10_000, activeClient = me)
-    // RX keeps publishing; HH stops. Only RX's arrival advances.
+    // RX keeps publishing; HH stops. Only RX's arrival (and the arbiter's) advances.
     val later = 10_000 + SkContract.TELEMETRY_STALE_MS + 1
     store.apply(listOf(SkContract.RX_LINK_UP to true), later)
+    arbiterPublishes(store, later, activeClient = me)
 
     val v = view(store, later, ConnectionState.OPEN)
     assertEquals(UnitLiveness.LIVE, v.rxLiveness)
@@ -93,8 +104,11 @@ class StationViewTest {
   fun `arming is withdrawn only once neither unit answers, and names both`() {
     val store = healthyStore(nowMs = 10_000)
     val later = 10_000 + SkContract.TELEMETRY_STALE_MS + 1
+    arbiterPublishes(store, later)
 
     val v = view(store, later, ConnectionState.OPEN)
+    assertEquals(UnitLiveness.STALE, v.rxLiveness)
+    assertEquals(UnitLiveness.STALE, v.hhLiveness)
     assertFalse(v.canArm)
     assertEquals(listOf("drive unit", "thruster unit"), v.missingUnits)
   }
@@ -104,6 +118,7 @@ class StationViewTest {
     // The bug this whole liveness design exists for, end to end.
     val store = healthyStore(nowMs = 10_000)
     val later = 10_000 + SkContract.TELEMETRY_STALE_MS + 1
+    arbiterPublishes(store, later)
     val v = view(store, later, ConnectionState.OPEN)
 
     assertEquals(true, v.rxLinkUp, "the published value never withdraws itself")
@@ -220,6 +235,7 @@ class StationViewTest {
 
     val later = 10_000 + SkContract.TELEMETRY_STALE_MS + 1
     store.apply(listOf(SkContract.RX_LINK_UP to true), later)
+    arbiterPublishes(store, later, activeClient = me)
     val v = view(store, later)
     assertEquals(UnitLiveness.STALE, v.hhLiveness)
     assertEquals(true, v.hhArmed, "the retained value still says armed")
@@ -500,6 +516,7 @@ class StationViewTest {
     // RX keeps publishing; HH has gone quiet.
     val later = 10_000 + SkContract.TELEMETRY_STALE_MS + 1
     store.apply(listOf(SkContract.RX_LINK_UP to true), later)
+    arbiterPublishes(store, later)
 
     val v = view(store, later)
     assertEquals(UnitLiveness.STALE, v.hhLiveness)

@@ -91,6 +91,7 @@ the firmware core with no ESP32 attached.
 | `KillSwitchTapPolicy.kt` | `KillSwitch.tsx` | what a kill-switch gesture means: the STOP holdover, a STOP on touch-down, an ARM on the lift |
 | `IntentStatus.kt` | `pure/intentStatus.ts` | whether this station's intent POSTs are reaching the boat, and how that is said |
 | `Liveness.kt` | `pure/rxLiveness.ts` | whether a unit is present — on **arrival**, never on a value |
+| `ServerStream.kt` | `pure/serverStream.ts` | whether the server stream is live — the arbiter's publish **arriving** on the current socket, not the socket reading open |
 | `Sources.kt` | `pure/sources.ts` | fixed precedence local > TX > plugin |
 | `ControlState.kt` | `App.tsx` | armed state from `activeClient`; per-machine commandability |
 | `ClientIntent.kt` | `clientIntent.ts` | the intent wire format |
@@ -577,7 +578,7 @@ thing that will catch the three drifting apart.
 
 | File | Responsibility |
 |---|---|
-| `net/SkStream.kt` | OkHttp WebSocket, auth header on the upgrade, reconnect |
+| `net/SkStream.kt` | OkHttp WebSocket, auth header on the upgrade, reconnect, and abandoning a socket silent for `SK_STREAM_SILENCE_RECONNECT_MS` |
 | `net/IntentPoster.kt` | the intent POST, independent of the stream |
 | `auth/AccessRequestClient.kt` | HTTP for the token flow; all parsing is in `core` |
 | `discovery/MdnsDiscovery.kt` | `NsdManager` browse for `_signalk-http._tcp` |
@@ -656,19 +657,31 @@ hold ends** (owner decision, 2026-09-24). The trim is relative to the heading HH
 captured, so dropping it to 0 swings the boat back by the whole offset with
 nobody touching anything — which is what used to happen whenever the read
 socket dropped, even with the intents still steering the hold over HTTP. The
-rule is `trimMustReset` in `StationView.kt`: reset when the mode is not HOLD,
-or when — **on a live link** — this station is not armed or HH is not
-answering. Offline nothing is reset: armed-ness is last-known and HH liveness is
-arrival-based, so neither says anything about the hold. The trim is kept, kept
-in every intent, and frozen (the trim steps follow `thrusterCommandable`, which
-is false offline). The first moments after a reconnect count as offline too,
-until HH's first frame arrives or `TELEMETRY_STALE_MS` passes
-(`StationView.hhVerdictSettled`) — the store's arrival stamps are from before
-the drop, and reading those as HH going away would reset the trim on the way
-back from every outage. If HH really has gone, the arbiter zeroes and
-quarantines the trim it publishes on its own (`_refreshUnitLiveness` and
-`_thrusterCommandable` in `arbiter.cjs`), and the connected half of the rule
-then sends the 0 that lifts the quarantine.
+rule is `trimMustReset` in `StationView.kt`, the same table as the browser's
+`pure/trimReset.ts`: reset when the mode is not HOLD, or when — **on a live
+link** — this station is not armed, or HH has not been live for a full
+`TELEMETRY_STALE_MS` window. Offline — socket down, *or open and silent* —
+nothing is reset: armed-ness is last-known and HH liveness is arrival-based, so
+neither says anything about the hold. The trim is kept, kept in every intent,
+and frozen (the trim steps follow `thrusterCommandable`, which is false
+offline).
+
+The window is what makes both edges of an outage safe, and it is continuous:
+`connected && HH not live` must have held unbroken for the whole of it, and the
+stream dropping restarts the count (`StationView.hhGoneForMs`, threaded from
+one derivation to the next through `hhGoneSinceMs`). Going dark, HH's last
+frame can predate the arbiter's last publish by up to one HH period, so HH goes
+stale a tick or two before the stream is judged dead; coming back, the stream
+reads live on the arbiter's first publish while HH's newest arrival is as old
+as the outage until its own first frame follows. Either moment, read at face
+value, reset the trim on an outage. If HH really has gone, the trim resets one
+window after it stopped answering on a live stream — and by then the arbiter
+has already zeroed and quarantined the trim it publishes on its own
+(`_refreshUnitLiveness` and `_thrusterCommandable` in `arbiter.cjs`); the
+connected half of the rule then sends the 0 that lifts the quarantine.
+`TrimPolicyTest` drives the derivation tick by tick through a silent stream, its
+return, a stream drop in the middle of the count, and HH going silent on a live
+stream.
 
 **The kill switch's gesture means what it meant at touch-down.** It is not a
 `clickable`, which acts on the lift and cancels when the finger slides off — a
@@ -861,6 +874,7 @@ force a re-authorisation.)
 | Stored token past its stated expiry | token dropped at startup, server screen, notice saying why |
 | No server stored | server screen |
 | Network drops, token still good | **stays on the controls**; the stream reconnects on backoff |
+| Socket stays open, nothing arrives | OFFLINE after 1.5 s (tap = STOP); socket abandoned and reopened after 5 s |
 | Token revoked server-side | past the auth-scheme probe → session ends, server screen, notice |
 | Token expires mid-session | pre-empted by the heartbeat, not waited for |
 | Auth-scheme probe in progress | a note in the status panel, no teardown |
@@ -883,14 +897,37 @@ authority, and counting it would drop a good token every time the boat's WiFi
 hiccuped. It also matters that the station stays on the control screen while
 offline: its disarm has to keep working when it cannot see the boat.
 
+**A socket reading open is not a live link.** The far end vanishing without a
+FIN — the Signal K host losing power, the Wi-Fi path breaking — leaves the
+socket OPEN, and this station sends nothing after subscribing, so only OkHttp's
+20 s ping would ever notice. Meanwhile the store keeps the retained
+`activeClient` naming this station, and the screen used to go on saying ARMED,
+connected, control this app, indefinitely. So the link is judged the way the
+browser judges it (`pure/serverStream.ts`): `StationView.connected` is the
+socket open **and** the arbiter's `activeClient` — republished every 250 ms —
+having arrived within `SERVER_STREAM_STALE_MS` (1500 ms) **on the current
+socket** (an arrival from before the latest open says nothing about this one).
+A silent stream is then treated exactly as a closed one: the kill switch reads
+OFFLINE and its tap is a STOP, the LINK lamp says `no data from server`, the
+unit lamps read `unknown — offline` and the derived lamps grey, and every
+commanding control goes inert — units, commandability and the trim rule all
+read the stream as evidence, not the socket. `SilentStreamTest` (core) and
+`SilentStreamScreenTest` (store → view → screen) hold it. Recovery is
+`SkStream`'s: a socket that has delivered no frame at all for
+`SK_STREAM_SILENCE_RECONNECT_MS` (5 s, well above the display's window) is
+abandoned and a fresh one opened, generation-guarded so nothing the old socket
+still delivers can touch the new one (`SkStreamSilenceTest`). Both constants
+carry the browser's names and values.
+
 **Starting up is not offline.** `LinkPhase` (in `:core`) is what the operator is
-told about the link, as against `ConnectionState`, which is what the link is —
-and they differ in exactly one place. A socket that has *never* opened this
-session reads as `CONNECTING`, in the same calm grey as DISARMED, for up to
-`SkContract.LINK_STARTUP_GRACE_MS`; after that, and from the instant a session
-that *had* been open loses its stream, it is `OFFLINE` in amber. Every command
-gate still reads `ConnectionState`, so nothing is loosened — this is only what
-is said.
+told about the link, as against `ConnectionState`, which is what the socket is.
+A stream that has *never been live* this session — not yet open, or open with
+the arbiter's first publish still on its way — reads as `CONNECTING`, in the
+same calm grey as DISARMED, for up to `SkContract.LINK_STARTUP_GRACE_MS`; after
+that, and from the instant a session that *had* been live loses its stream
+(closed, reopening, or open and silent), it is `OFFLINE` in amber. Every
+command gate reads the live-stream verdict, so nothing is loosened — this is
+only what is said.
 
 The reason for the distinction is that the old behaviour drew the full amber
 OFFLINE panel on the STOP button at every single launch, for the few hundred
@@ -899,8 +936,8 @@ one the operator stops reading. Saying it calmly is safe here and provably so:
 arming requires liveness, liveness requires an open socket, and `changeServer`
 refuses while armed on a live link — and offline, where "armed" is only the
 retained last value no disarm could visibly clear, leaves with a disarm and
-stops the heartbeat — so no station can be armed or commanding before its first
-open. `LinkPhaseTest` holds the rule, including that a drop mid-session gets no
+stops the heartbeat — so no station can be armed or commanding before its
+stream is first live. `LinkPhaseTest` holds the rule, including that a drop mid-session gets no
 grace at all.
 
 **Teardown order is deliberate** — release all controls to neutral *while the
@@ -929,8 +966,8 @@ That is a real milestone and still a long way short of "it works".
 
 | | |
 |---|---|
-| `core/` | **Verified.** 240 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 110 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `core/` | **Verified.** 256 tests, `./gradlew :core:test`, no warnings. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 118 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |
@@ -1088,7 +1125,11 @@ commands anything in earnest.
   case the change exists for. The kept trim across a dropped stream is a pure
   rule (`TrimPolicyTest`) wired into `StationViewModel.refreshView`, whose
   wiring is reasoned rather than tested, and no socket has been dropped under a
-  real trimmed hold to watch the heading not move. And the COMMANDS lamp and the
+  real trimmed hold to watch the heading not move. The same goes for a stream
+  that goes *silent* on an open socket: the OFFLINE reading, the kept trim and
+  the 5 s abandon-and-reopen are proven on the JVM (with Robolectric's clock
+  wound forward for the reopen) and have never been provoked by pulling the
+  Signal K host's power or Wi-Fi under a live station. And the COMMANDS lamp and the
   kill switch's "commands not reaching boat" line have been rendered by the
   suite, never provoked against a stopped plugin on the boat.
 - **Token revocation has never been exercised against a real server.** The

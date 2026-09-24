@@ -886,7 +886,7 @@ the kill switch renders a distinct OFFLINE state while disconnected — or while
 the socket reads open but the plugin's 250 ms `activeClient` republish has
 stopped arriving on it — rather than
 a confident ARMED — or a false DISARMED: the socket is only the read side, and
-the intent heartbeat keeps POSTing over HTTP, so the tab may still genuinely
+the intent heartbeat keeps POSTing over HTTP, so the station may still genuinely
 hold the token. The OFFLINE tap therefore stays live and always means STOP;
 disarm is never gated on the read socket's health (SAFETY.md).
 

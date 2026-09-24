@@ -7393,3 +7393,52 @@ sessionless station's first STOP below its old total still fires. On Android,
 running the process on an ephemeral id, and the token cache is not marked
 loaded by a read made without a key. The README's disconnect rules now separate
 armed-on-an-open-link (refused) from the offline cases.
+
+## 2026-09-24 — Four owner decisions, same PR
+
+The review above left four items for the owner. All four were decided the same
+evening and are implemented here; none has been on hardware or glass.
+
+**Releasing local ENGAGE disarms (thruster invariant 6, literally).** The
+arbitration level used to hand the thruster straight to any enabled remote on
+the release tick, so `engage_request` never fell and a remote MANUAL direction
+or a hold resumed with nobody touching anything. On the debounced falling edge,
+`ControlStep` now sets the existing per-source re-engage latch for every remote
+whose retained `enabled` is true, live or not; it clears only on seeing the
+station live and disarmed. The release rather than the takeover is the edge
+because it also catches a station that armed while ENGAGE was held. That left a
+MANUAL station armed with nothing telling it the thruster had stopped obeying,
+so both stations now show a MANUAL refusal band (`THRUSTER REFUSED — RE-ARM TO
+COMMAND`) when HH reports DISARMED or FAULT past the 2 s engage grace.
+
+**Trim is kept across a read-stream drop; it resets only when the hold ends.**
+Trim is relative to the captured heading, so zeroing it on a socket drop turned
+the boat by up to 45° while intents still flowed over HTTP. The network
+stations now reset on leaving HOLD, or -- only while their stream is live -- on
+losing the token or HH answering, and freeze the trim buttons while blind. The
+arbiter already zeroes and quarantines trim server-side if HH really drops.
+Implementing it exposed two races, both edges of an outage briefly reading "HH
+gone" on a live stream (HH's last delta is older than the arbiter's, and on
+reconnect HH is stale until its first new one), so *HH not answering* counts
+only after a continuous 1500 ms window on a live stream. Both stations use that
+identical rule (`pure/trimReset.ts`, `StationView.trimMustReset`).
+
+That also required the Android station to judge its server stream on arrival,
+as the browser now does: `connected` was socket-OPEN alone, so a silent socket
+showed a confident ARMED indefinitely and would still have reset the trim.
+`core/ServerStream.kt` ports `serverStream.ts`, and `SkStream` abandons and
+reopens a socket silent for 5 s.
+
+**A kill-switch gesture's meaning is fixed at touch-down.** A press that means
+STOP disarms on the down and its lift can never arm, so a STOP whose thumb
+slides off still stops; ARM fires on the lift inside the button, so a slide-off
+cancels it. Keyboard and accessibility activation go through the same policy.
+The 1 s holdover remains as the backstop for a second gesture.
+
+**Android shows command-delivery failures.** `core/IntentStatus.kt` ports the
+browser's classification; a COMMANDS lamp and the kill switch's second line
+(`commands not reaching boat — plugin stopped / login refused / no network`)
+replace a healthy-looking DISARMED while every POST fails.
+
+Suites: native 302, plugin 377, core 256, app 118; all firmwares build.
+SAFETY.md's Android checklist carries the hand-on-glass lines for each.

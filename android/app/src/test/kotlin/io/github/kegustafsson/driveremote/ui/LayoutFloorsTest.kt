@@ -784,6 +784,7 @@ private val manualRefused by lazy {
 private val armedAndLive =
   StationView(
     connectionState = ConnectionState.OPEN,
+    serverLive = true,
     linkPhase = LinkPhase.ONLINE,
     controlState = ControlState.YOU,
     rxLiveness = UnitLiveness.LIVE,

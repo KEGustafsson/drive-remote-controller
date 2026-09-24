@@ -218,6 +218,14 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    */
   private var manualRequestedSinceMs: Long? = null
 
+  /**
+   * Since when HH has read not-live on a live stream, continuously -- the one
+   * piece of history the trim rule needs (`trimMustReset` in :core). Handed to
+   * each derivation and taken back from the view it returns; the view clears it
+   * whenever the condition breaks, the stream dropping included.
+   */
+  private var hhGoneSinceMs: Long? = null
+
   private var heartbeatJob: Job? = null
   private var tickerJob: Job? = null
   /**
@@ -1053,20 +1061,23 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
         linkAttemptStartedMs = stream.targetSetAtMs,
         holdRequestedSinceMs = holdRequestedSinceMs,
         manualRequestedSinceMs = manualRequestedSinceMs,
-        // So the moment a dropped socket comes back -- every arrival stamp still
-        // from before the drop -- is not read as HH having gone away.
+        // So an activeClient heard on a socket that has since been replaced is
+        // not read as proof that this one is live (serverStreamLive).
         streamOpenedAtMs = stream.openedAtMs,
+        hhGoneSinceMs = hhGoneSinceMs,
         intentStatus = _uiState.value.intentStatus,
       )
+    hhGoneSinceMs = view.hhGoneSinceMs
 
     // The trim is reset only when the hold has ENDED, never because this
-    // station's read socket dropped -- the rule, and why, is trimMustReset in
-    // :core (owner decision 2026-09-24). Offline the trim is kept and keeps
-    // being sent; the trim steps are inert there (they follow
-    // thrusterCommandable), so it is frozen rather than lost. Once the hold
-    // really is over -- disarmed on a live link, HH not answering, MANUAL --
-    // it goes back to 0, so a later hold begins at "hold the captured heading"
-    // and never swings the boat to an offset dialled in earlier.
+    // station's read side went dark -- socket down, or open and silent. The
+    // rule, and why, is trimMustReset in :core (owner decision 2026-09-24).
+    // Offline the trim is kept and keeps being sent; the trim steps are inert
+    // there (they follow thrusterCommandable), so it is frozen rather than
+    // lost. Once the hold really is over -- disarmed on a live link, HH not
+    // answering for a full window on a live link, MANUAL -- it goes back to 0,
+    // so a later hold begins at "hold the captured heading" and never swings
+    // the boat to an offset dialled in earlier.
     //
     // Trim only -- the mode is untouched, so this does not go through
     // updateThruster's mode rule (and must not: it runs on every tick).
