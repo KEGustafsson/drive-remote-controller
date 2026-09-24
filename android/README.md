@@ -799,7 +799,9 @@ force a re-authorisation.)
 | Token expires mid-session | pre-empted by the heartbeat, not waited for |
 | Auth-scheme probe in progress | a note in the status panel, no teardown |
 | Operator taps Disconnect | final all-neutral intent, then session ends |
-| Disconnect **while armed** | refused — "Disarm before changing server" |
+| Disconnect **while armed, link open** | refused — "Disarm before changing server" |
+| Disconnect **offline, last seen armed by this station** | sends a disarm, then session ends |
+| Disconnect **offline, foreign or disarmed** | no disarm sent; final all-neutral intent, then session ends |
 
 **A 401 does not mean the token is dead.** Both this app and the browser UI
 probe `AuthScheme.TRY_ORDER` (`Bearer`, then `JWT`) because signalk-server has
@@ -841,10 +843,16 @@ socket. The arbiter sees this station let go rather than merely fall silent.
 Falling silent also works, since stale eviction is the backstop, but it costs a
 timeout for nothing.
 
-**Disconnect is refused while armed** rather than hidden. Disconnecting armed
-would leave the station holding the arm token until stale eviction, with the
-operator on a screen showing no controls: armed, still commanding, unable to see
-or stop it. It also lives behind the telemetry toggle rather than on the main
+**Disconnect is refused while armed on an open link** rather than hidden.
+Disconnecting armed would leave the station holding the arm token until stale
+eviction, with the operator on a screen showing no controls: armed, still
+commanding, unable to see or stop it. **Offline it is not refused**, because
+"armed" is then only the retained last value, which no disarm could visibly
+clear — refusing would lock the operator out of choosing a server that is
+reachable. If this station was last seen holding the arm, the departure carries
+a disarm; a station last seen disarmed, or seeing another device in control,
+sends none. Either way the heartbeat then stops, so the arbiter drops the
+station on its staleness timeout even if that disarm is lost. It also lives behind the telemetry toggle rather than on the main
 surface — a control that ends the session should not sit where a thumb lands
 during a manoeuvre.
 
@@ -856,7 +864,7 @@ That is a real milestone and still a long way short of "it works".
 | | |
 |---|---|
 | `core/` | **Verified.** 204 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 90 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 92 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |

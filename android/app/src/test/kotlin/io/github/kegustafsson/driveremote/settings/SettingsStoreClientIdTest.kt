@@ -46,6 +46,52 @@ class SettingsStoreClientIdTest {
     assertEquals("one process, one id", id, settings.clientId())
   }
 
+  private val testKey: javax.crypto.SecretKey =
+    javax.crypto.spec.SecretKeySpec(ByteArray(32) { (it * 7).toByte() }, "AES")
+
+  /** Seal values under [testKey], as a previous launch whose key worked did. */
+  private fun sealStored(vararg entries: Pair<String, String>) {
+    rawSecure().edit().clear().commit()
+    val writer =
+      KeystoreEncryptedPreferences(
+        context, SettingsStore.SECURE_FILE, "recover_alias", keySource = { testKey },
+      )
+    val edit = writer.edit()
+    for ((k, v) in entries) edit.putString(k, v)
+    edit.commit()
+  }
+
+  /** A store whose key fails on its first load and is there on every later one. */
+  private fun storeWithOneKeyHiccup(): SettingsStore {
+    var loads = 0
+    return SettingsStore(context) { ctx ->
+      KeystoreEncryptedPreferences(
+        ctx, SettingsStore.SECURE_FILE, "recover_alias",
+        keySource = { if (loads++ == 0) null else testKey },
+      )
+    }
+  }
+
+  // The first read found nothing because the key was not there yet; the
+  // availability check then recovered it, and the process still ran on an
+  // ephemeral id -- a new device -- with its real one on disk. It re-reads.
+  @Test
+  fun `a key that recovers within the call returns the stored id`() {
+    sealStored(SettingsStore.KEY_CLIENT_ID to "stable-id")
+    assertEquals("stable-id", storeWithOneKeyHiccup().clientId())
+  }
+
+  // The token cache was marked loaded after a read that ran without the key
+  // (the availability check had recovered it meanwhile), so it kept "no
+  // token" for the rest of the process. A keyless moment is not cached.
+  @Test
+  fun `a token unreadable during a key hiccup is found once the key is back`() {
+    sealStored(SettingsStore.KEY_TOKEN to "tok-123")
+    val settings = storeWithOneKeyHiccup()
+    settings.token()
+    assertEquals("tok-123", settings.token())
+  }
+
   @Test
   fun `with no key and nothing stored, nothing is written`() {
     rawSecure().edit().clear().commit()

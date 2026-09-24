@@ -514,6 +514,44 @@ describe('ArmArbiter: malformed intents are ignored', () => {
     expect(a.state()).toMatchObject({ enabled: false, activeClient: '' });
   });
 
+  // The bounds are per kind. Choosing a sessionless victim only helps while
+  // one exists: with the memory full of sessioned stations, the next browser
+  // entry displaced the oldest phone's arm total all the same.
+  it('a sessionless entry never displaces a sessioned one, even with none of its own kind to evict', () => {
+    const a = makeArbiter();
+    a.onIntent(intent('phone', { session: 7, seq: 1, armReq: 0 }), 0);
+    a.onIntent(intent('phone', { session: 7, seq: 2, armReq: 1 }), 10);
+    a.onIntent(intent('other', { session: 3, disarmReq: 1 }), 20);
+    expect(a.state().enabled).toBe(false);
+    for (let i = 0; i < MAX_TRACKED_CLIENTS - 2; i++) {
+      a.onIntent(intent(`tablet-${i}`, { session: 5 }), 30);
+    }
+    a.tick(2000); // every sessioned station is evicted; memory is all sessioned
+    for (let i = 0; i < MAX_TRACKED_CLIENTS + 8; i++) {
+      a.onIntent(intent(`reload-${i}`), 2100);
+    }
+    a.tick(4000);
+
+    a.onIntent(intent('phone', { session: 7, seq: 1, armReq: 0 }), 4100);
+    a.onIntent(intent('phone', { session: 7, seq: 50, armReq: 1 }), 4110);
+    expect(a.state()).toMatchObject({ enabled: false, activeClient: '' });
+  });
+
+  // The with-record path scores a missing baseline the way the no-record path
+  // does, backward-counter rule included: a sessionless station that restarted
+  // counts from 0 again, so its first STOP is below the remembered total.
+  it('a restarted station\'s first STOP fires even below its remembered total', () => {
+    const a = makeArbiter();
+    a.onIntent(intent('B', { disarmReq: 3 }), 0);
+    a.tick(2000); // B evicted; its total (3) is remembered
+    a.onIntent(intent('A', { armReq: 0 }), 2100);
+    a.onIntent(intent('A', { armReq: 1 }), 2110);
+    expect(a.state().activeClient).toBe('A');
+    a.onIntent(intent('B', { disarmReq: undefined }), 2120); // restarted, says nothing yet
+    a.onIntent(intent('B', { disarmReq: 1 }), 2130); // its first STOP
+    expect(a.state()).toMatchObject({ enabled: false, activeClient: '' });
+  });
+
   // A station whose first packet carried no numeric disarm total must still be
   // able to STOP on its next one -- the no-record path already scores such a
   // packet against 0, and the with-record path must not instead spend it as a

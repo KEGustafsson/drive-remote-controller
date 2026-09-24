@@ -561,10 +561,11 @@ class ArmArbiter {
       // the CURRENT session, so a restarted station that is evicted a second
       // time is not scored against its dead session's total all over again.
       if (disarmReq !== null || armReq !== null) {
-        this._rememberCounters(clientId, {
-          lastArmReq: armReq,
-          lastDisarmReq: disarmReq,
-        });
+        this._rememberCounters(
+          clientId,
+          { lastArmReq: armReq, lastDisarmReq: disarmReq },
+          session !== null,
+        );
       }
       // Refuse to start tracking a new client once the table is full (see
       // MAX_TRACKED_CLIENTS). Checked here, before any state is recorded, so a
@@ -666,7 +667,13 @@ class ArmArbiter {
     // its own; it is scored against what the no-record path above would have
     // used (the remembered total, else 0), so that STOP still fires rather than
     // being quietly spent as a baseline.
-    const disarmBaseline = rec.lastDisarmReq ?? this._rememberedDisarmReq(clientId);
+    // That includes its backward-counter rule: a total BELOW the remembered one
+    // is a restarted station's fresh count, scored against 0, not a replay.
+    let disarmBaseline = rec.lastDisarmReq;
+    if (disarmBaseline === null) {
+      const remembered = this._rememberedDisarmReq(clientId);
+      disarmBaseline = disarmReq !== null && disarmReq < remembered ? 0 : remembered;
+    }
     const disarmEdge = disarmReq !== null && disarmReq > disarmBaseline;
     if (disarmEdge) {
       // Universal disarm: any client releases the token, whoever holds it.
@@ -747,7 +754,7 @@ class ArmArbiter {
     const before = this._stateKey();
     for (const [clientId, rec] of this._clients) {
       if (nowMs - rec.lastSeenMs > this.staleTimeoutMs) {
-        this._rememberCounters(clientId, rec);
+        this._rememberCounters(clientId, rec, rec.session != null);
         this._clients.delete(clientId);
         if (this.holder === clientId) this.holder = null;
       }
@@ -812,11 +819,12 @@ class ArmArbiter {
    * Remember an evicted client's arm and disarm counters, so its return is
    * recognised as the SAME station resuming rather than a new one arriving.
    *
-   * Bounded like _clients, and insertion-ordered so the oldest memory is the
-   * one dropped -- but a station that sends a session generation is dropped
-   * only once no sessionless one is left. A browser mints a new clientId every
-   * page load, so its entries are never needed again, and letting 32 reloads
-   * push out a phone's memory is what makes losing it reachable at all.
+   * Bounded, and insertion-ordered so the oldest memory is the one dropped --
+   * with SEPARATE bounds of MAX_TRACKED_CLIENTS each for stations that send a
+   * session generation and for those that do not, so an entry only ever
+   * displaces one of its own kind. A browser mints a new clientId every page
+   * load, so its entries are never needed again, and letting reloads push out
+   * a phone's memory is what made losing it reachable at all.
    *
    * Losing a DISARM memory is not dangerous: that station's next
    * re-registration is treated as a first sighting again, and a STOP that fires
@@ -824,8 +832,8 @@ class ArmArbiter {
    * the re-registration's baseline then comes from whichever packet arrives
    * first, so a delayed pre-tap heartbeat followed by the current one reads as
    * a fresh tap and re-grants the token with no press. That is the residual of
-   * the bound documented on _sessionWatermark, and preferring sessionless
-   * victims confines it to more than 32 distinct sessioned stations.
+   * the bound documented on _sessionWatermark, and the separate bounds confine
+   * it to more than MAX_TRACKED_CLIENTS distinct sessioned stations.
    *
    * THE TWO COUNTERS AGE DIFFERENTLY, and the asymmetry is the safety property:
    *
@@ -839,8 +847,12 @@ class ArmArbiter {
    *    exists to prevent. Ordered evidence of a relaunch (a session generation
    *    above the watermark) clears the whole entry instead; a guess never does.
    */
-  _rememberCounters(clientId, rec) {
+  _rememberCounters(clientId, rec, sessioned) {
     const prev = this._counterMemory.get(clientId);
+    // Once sessioned, always: the flag decides which bound this entry counts
+    // against, and a packet that omits the generation must not move a phone's
+    // memory into the pool that browser reloads churn through.
+    const isSessioned = Boolean(sessioned || (prev && prev.sessioned));
     const incomingArm = typeof rec.lastArmReq === 'number' ? rec.lastArmReq : null;
     const keptArm =
       prev && typeof prev.lastArmReq === 'number' ? prev.lastArmReq : null;
@@ -859,23 +871,20 @@ class ArmArbiter {
           ? prev.lastDisarmReq
           : null;
 
-    if (
-      this._counterMemory.size >= MAX_TRACKED_CLIENTS &&
-      !this._counterMemory.has(clientId)
-    ) {
-      let victim = this._counterMemory.keys().next().value;
-      for (const id of this._counterMemory.keys()) {
-        if (!this._sessionWatermark.has(id)) {
-          victim = id;
-          break;
-        }
+    if (!prev) {
+      let sameKind = 0;
+      let oldestSameKind;
+      for (const [id, entry] of this._counterMemory) {
+        if (entry.sessioned !== isSessioned) continue;
+        if (oldestSameKind === undefined) oldestSameKind = id;
+        sameKind += 1;
       }
-      this._counterMemory.delete(victim);
+      if (sameKind >= MAX_TRACKED_CLIENTS) this._counterMemory.delete(oldestSameKind);
     }
     // delete-then-set moves this entry to the back of the insertion order, so
     // the map ages by last use rather than by first sighting.
     this._counterMemory.delete(clientId);
-    this._counterMemory.set(clientId, { lastArmReq, lastDisarmReq });
+    this._counterMemory.set(clientId, { lastArmReq, lastDisarmReq, sessioned: isSessioned });
   }
 
   /**

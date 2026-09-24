@@ -21,7 +21,18 @@ private val Context.dataStore by preferencesDataStore(name = "drive_remote_setti
  * because it authorises commanding machinery -- it is the one stored value
  * whose disclosure matters. Everything else is ordinary preferences.
  */
-class SettingsStore(context: Context) {
+class SettingsStore
+internal constructor(
+  context: Context,
+  // Test seam only: the Keystore does not exist under Robolectric, and the
+  // key-recovery paths below cannot be exercised without a key source that
+  // fails and then recovers.
+  private val secureFactory: (Context) -> KeystoreEncryptedPreferences,
+) {
+
+  constructor(context: Context) : this(context, { ctx ->
+    KeystoreEncryptedPreferences(ctx, SECURE_FILE, SECURE_KEY_ALIAS)
+  })
 
   private val appContext = context.applicationContext
 
@@ -37,9 +48,7 @@ class SettingsStore(context: Context) {
   //
   // A station that somehow never ran a migrating build loses its stored token
   // and asks for a new one -- the same recovery as any unreadable token.
-  private val secure: KeystoreEncryptedPreferences by lazy {
-    KeystoreEncryptedPreferences(appContext, SECURE_FILE, SECURE_KEY_ALIAS)
-  }
+  private val secure: KeystoreEncryptedPreferences by lazy { secureFactory(appContext) }
 
   /** The configured server, or null until one has been chosen. */
   val serverAddress: Flow<ServerAddress?> =
@@ -80,14 +89,23 @@ class SettingsStore(context: Context) {
    * already presents itself, and the arbiter keys nothing on it but bookkeeping.
    */
   fun clientId(): String {
+    synchronized(cacheLock) { ephemeralClientId?.let { return it } }
     secure.getString(KEY_CLIENT_ID, null)?.let { return it }
-    val storedButUnreadable = secure.contains(KEY_CLIENT_ID)
-    if (storedButUnreadable || !secure.keyAvailable) {
-      synchronized(cacheLock) {
-        return ephemeralClientId ?: UUID.randomUUID().toString().also { ephemeralClientId = it }
+    // Asking for the key retries a failed load. If that brings it back, read
+    // again: the first read may have missed a stored id only because the key
+    // was not there yet, and the decision below must rest on the same key
+    // state as the read it follows.
+    if (secure.keyAvailable) {
+      secure.getString(KEY_CLIENT_ID, null)?.let { return it }
+      if (!secure.contains(KEY_CLIENT_ID)) {
+        return UUID.randomUUID().toString().also {
+          secure.edit().putString(KEY_CLIENT_ID, it).apply()
+        }
       }
     }
-    return UUID.randomUUID().toString().also { secure.edit().putString(KEY_CLIENT_ID, it).apply() }
+    synchronized(cacheLock) {
+      return ephemeralClientId ?: UUID.randomUUID().toString().also { ephemeralClientId = it }
+    }
   }
 
   /** This process's id when the stored one cannot be read; see [clientId]. */
@@ -165,15 +183,23 @@ class SettingsStore(context: Context) {
   /** Caller must hold [cacheLock]. */
   private fun loadCache() {
     if (cacheLoaded) return
+    // Not cached when no key can be had: a read then sees "nothing stored" only
+    // because nothing COULD be read, and caching it would keep a launch-time
+    // Keystore hiccup as a missing token for the whole process. The key is
+    // asked for FIRST, because asking retries the load -- a read made before
+    // it could miss a token that the same call then went on to find the key for.
+    if (!secure.keyAvailable) {
+      cachedToken = null
+      cachedTokenServer = null
+      cachedExpiryMs = null
+      return
+    }
     cachedToken = secure.getString(KEY_TOKEN, null)
     cachedTokenServer = secure.getString(KEY_TOKEN_SERVER, null)
     cachedExpiryMs =
       if (secure.contains(KEY_TOKEN_EXPIRY)) secure.getLong(KEY_TOKEN_EXPIRY, Long.MAX_VALUE)
       else null
-    // Not cached when read without a key: that read saw "nothing stored" only
-    // because nothing COULD be read, and caching it would keep a launch-time
-    // Keystore hiccup as a missing token for the whole process.
-    cacheLoaded = secure.keyAvailable
+    cacheLoaded = true
   }
 
   /**

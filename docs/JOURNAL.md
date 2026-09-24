@@ -7380,5 +7380,16 @@ wording vs fixed precedence); trim resets when the read socket drops
 (`!connected`), which the silent-socket fix now also triggers; Android STOP
 fires on lift, not touch-down; POST failures are not surfaced on Android.
 
-Not on hardware: none of this has been flashed. Suites: native 295, plugin 319,
-core 204, app 90; all three firmwares build.
+Not on hardware: none of this has been flashed. Suites: native 295, plugin 321,
+core 204, app 92; all three firmwares build.
+
+CodeRabbit's review of the PR found five more, all fixed with tests that failed
+first. Choosing a sessionless eviction victim only helped while one existed: a
+memory full of sessioned stations still let a browser entry displace a phone,
+so each kind now has its own bound of `MAX_TRACKED_CLIENTS`. The missing-disarm
+baseline also takes the no-record path's backward-counter rule, so a restarted
+sessionless station's first STOP below its old total still fires. On Android,
+`clientId()` re-reads after the availability check recovers the key rather than
+running the process on an ephemeral id, and the token cache is not marked
+loaded by a read made without a key. The README's disconnect rules now separate
+armed-on-an-open-link (refused) from the offline cases.
