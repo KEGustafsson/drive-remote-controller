@@ -18,8 +18,10 @@ package io.github.kegustafsson.driveremote.core
  * assertion.** Arming requires `canArm`, which requires unit liveness, which
  * requires an OPEN socket -- so this station cannot be armed or commanding
  * before its first open. The one other way a session begins connecting afresh
- * is `changeServer`, which refuses outright while armed. There is no state in
- * which [CONNECTING] hides a live command.
+ * is `changeServer`, which refuses outright while armed on a live link, and
+ * when the link is down leaves with a disarm -- after which the heartbeat is
+ * stopped, so the arbiter stale-evicts this station even if that disarm is
+ * lost. There is no state in which [CONNECTING] hides a live command.
  *
  * Once a session HAS been open, every later gap is [OFFLINE] with no grace at
  * all. That is the dangerous case the OFFLINE state was written for: the
@@ -248,10 +250,17 @@ data class StationView(
    * target only while it is actually holding, and as a mirror of this value
    * otherwise -- so on a station that is not the one holding, the setpoint is
    * somebody else's target and says nothing about where the boat is pointing.
+   *
+   * Null unless HH is live ([readyToArm] on [hhLiveness]): the last value a
+   * silent unit published is not the current heading.
    */
   val currentHeadingDeg: Double?,
 
-  /** HH is waiting out the thruster control box's reversal interlock. */
+  /**
+   * HH is waiting out the thruster control box's reversal interlock. False
+   * unless HH is live -- a retained `true` from a unit that has gone quiet is
+   * not an interlock anyone is waiting out.
+   */
   val reversalPending: Boolean,
 
   /** Raw-ish telemetry for the status lamps. */
@@ -292,6 +301,29 @@ data class StationView(
 
   val connected: Boolean
     get() = connectionState == ConnectionState.OPEN
+
+  /**
+   * Must "disconnect / change server" be refused? Only while this station is
+   * armed IN A LIVE VIEW of the boat, where disarming first is one tap and makes
+   * the state unambiguous.
+   *
+   * Offline, [armed] is only the last-known `activeClient` that the store keeps
+   * across a dropped socket. A disarm sent then can land and still never be
+   * seen, so refusing on it locked the operator onto a server they could not
+   * reach, with no way to pick another. See [changeServerSendsStop] for what
+   * happens instead.
+   */
+  val changeServerRefused: Boolean
+    get() = armed && connected
+
+  /**
+   * Leaving while the last-known view says armed but the link is down: the
+   * departure carries a disarm, so this station cannot walk away still holding
+   * the arm token. A disarm nobody needed costs nothing -- it is the universal
+   * stop, and it travels over HTTP independently of the read stream.
+   */
+  val changeServerSendsStop: Boolean
+    get() = armed && !connected
 
   /**
    * Which units are not answering, named for the operator.
@@ -424,13 +456,22 @@ fun deriveStationView(
       stbdOverriddenBy = overrideNote(driveCommandable, stbdSource),
       thrusterOverriddenBy = overrideNote(thrusterCommandable, thrusterSource),
       heldDeg = plausibleHeadingOrNull(store[SkContract.HH_SETPOINT]),
+      // Both of these are HH's VALUES, and Signal K retains values forever: with
+      // HH switched off or the socket down, the last heading is still in the
+      // store, and was drawn frozen under a caption promising the CURRENT
+      // heading. So they exist only while HH is live, by the same predicate
+      // holdEngaged uses -- "---" is the honest reading of a unit that is not
+      // answering (AGENTS.md: never present unconfirmable data as live).
       currentHeadingDeg =
-        (store[SkContract.HH_FUSED_HEADING_RAD] as? Number)?.toDouble()?.let { rad ->
+        (store[SkContract.HH_FUSED_HEADING_RAD] as? Number)?.toDouble()?.takeIf {
+          readyToArm(hhLiveness)
+        }?.let { rad ->
           // Published in radians; every other angle here is degrees. Normalised to
           // 0..360 because the fused value is free to run negative.
           plausibleHeadingOrNull(((Math.toDegrees(rad) % 360.0) + 360.0) % 360.0)
         },
-      reversalPending = store.boolOrNull(SkContract.HH_REVERSAL_PENDING) == true,
+      reversalPending =
+        readyToArm(hhLiveness) && store.boolOrNull(SkContract.HH_REVERSAL_PENDING) == true,
       rxLinkUp = store.boolOrNull(SkContract.RX_LINK_UP),
       rxLinkOk = store.boolOrNull(SkContract.RX_LINK_OK),
       rxMasterEnable = store.boolOrNull(SkContract.RX_MASTER_ENABLE),

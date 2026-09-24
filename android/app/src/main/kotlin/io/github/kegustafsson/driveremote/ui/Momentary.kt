@@ -3,6 +3,7 @@ package io.github.kegustafsson.driveremote.ui
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,19 +46,29 @@ import androidx.compose.ui.input.pointer.pointerInput
  *
  * The remaining case -- the app leaving the foreground mid-press -- cannot be
  * seen from here and is handled by the lifecycle observer in MainActivity,
- * which calls `releaseAllControls()`. RX's own 1 s staleness watchdog is the
- * final backstop under all of them.
+ * which calls `releaseAllControls()`. That releases the COMMAND, but a pause
+ * need not cancel the pointer, so the contact itself would stay lit showing
+ * FORWARD while NEUTRAL was being sent. [releaseEpoch] closes that: it is bumped
+ * by the same release and is a `pointerInput` key, so the loop restarts and the
+ * `finally` releases the button too -- and a finger still on the glass does not
+ * press again until it is lifted and put back. RX's own 1 s staleness watchdog
+ * is the final backstop under all of them.
  *
+ * @param releaseEpoch bumped whenever every control has been forced safe.
  * @param onPressedChange called with true on press and false on release. Must
  *   be idempotent: false may arrive without a preceding true.
  */
 @Composable
-fun Modifier.momentaryPress(enabled: Boolean, onPressedChange: (Boolean) -> Unit): Modifier {
+fun Modifier.momentaryPress(
+  enabled: Boolean,
+  releaseEpoch: Int = LocalReleaseEpoch.current,
+  onPressedChange: (Boolean) -> Unit,
+): Modifier {
   // rememberUpdatedState so a recomposition with a new lambda does not restart
   // the gesture loop -- restarting mid-press would release the button.
   val currentOnPressedChange by rememberUpdatedState(onPressedChange)
 
-  return this.pointerInput(enabled) {
+  return this.pointerInput(enabled, releaseEpoch) {
     if (!enabled) {
       // Nothing to await; the caller has already been told to release by the
       // teardown of the previous block.
@@ -95,6 +106,13 @@ fun Modifier.momentaryPress(enabled: Boolean, onPressedChange: (Boolean) -> Unit
     }
   }
 }
+
+/**
+ * How many times every control has been forced back to its safe value -- see
+ * [momentaryPress]. Provided by [ControlScreen] from the ViewModel's
+ * `releaseEpoch`; 0, and never changing, where nothing provides it.
+ */
+val LocalReleaseEpoch = compositionLocalOf { 0 }
 
 /**
  * The two contacts of one drive side.

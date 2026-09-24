@@ -1,5 +1,6 @@
 package io.github.kegustafsson.driveremote.ui
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,7 +20,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +40,8 @@ import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DrivePosition
 import io.github.kegustafsson.driveremote.core.HoldPhase
 import io.github.kegustafsson.driveremote.core.HoldStall
+import io.github.kegustafsson.driveremote.core.KillSwitchTap
+import io.github.kegustafsson.driveremote.core.KillSwitchTapPolicy
 import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.SkContract
 import io.github.kegustafsson.driveremote.core.StationView
@@ -162,7 +167,23 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
   // independently of the read socket. SAFETY.md: disarm is never gated on
   // anything.
   val canOfferArm = view.connected && !view.armed && !foreign && view.canArm
-  val onTap: () -> Unit = { if (canOfferArm) onArm() else onDisarm() }
+
+  // ...and a tap aimed at STOP stays a STOP. Deciding from what is on screen
+  // when the click fires is not enough: double-tap STOP, the arbiter's release
+  // is back in milliseconds, the button flips to "tap to arm", and the second
+  // tap ARMS -- which in HOLD is a hold request. KillSwitchTapPolicy (:core)
+  // keeps a tap a STOP for KILL_SWITCH_STOP_HOLDOVER_MS after the button last
+  // meant one, as the browser's kill switch does. The flip is stamped from a
+  // SideEffect, which runs in the frame that draws it, before any tap on it.
+  val meansStop = !canOfferArm
+  val tapPolicy = remember { KillSwitchTapPolicy() }
+  SideEffect { tapPolicy.observe(meansStop, SystemClock.elapsedRealtime()) }
+  val onTap: () -> Unit = {
+    when (tapPolicy.onTap(meansStop, SystemClock.elapsedRealtime())) {
+      KillSwitchTap.ARM -> onArm()
+      KillSwitchTap.DISARM -> onDisarm()
+    }
+  }
 
   Column(
     modifier
@@ -309,7 +330,7 @@ private fun ContactButton(
       .clip(RoundedCornerShape(10.dp))
       .background(background)
       .border(1.dp, DriveColors.border, RoundedCornerShape(10.dp))
-      .momentaryPress(enabled, onPressedChange)
+      .momentaryPress(enabled, onPressedChange = onPressedChange)
       .semantics {
         role = Role.Button
         contentDescription = if (enabled) text else "$text, unavailable"

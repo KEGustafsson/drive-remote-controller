@@ -1,7 +1,6 @@
 package io.github.kegustafsson.driveremote.settings
 
 import android.content.Context
-import android.content.SharedPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -38,7 +37,7 @@ class SettingsStore(context: Context) {
   //
   // A station that somehow never ran a migrating build loses its stored token
   // and asks for a new one -- the same recovery as any unreadable token.
-  private val secure: SharedPreferences by lazy {
+  private val secure: KeystoreEncryptedPreferences by lazy {
     KeystoreEncryptedPreferences(appContext, SECURE_FILE, SECURE_KEY_ALIAS)
   }
 
@@ -69,10 +68,30 @@ class SettingsStore(context: Context) {
    *
    * It survives reinstall only as far as the app's data does; a fresh id simply
    * means a fresh access request, which is the correct outcome.
+   *
+   * **A stored id that cannot be read right now is not an absent one.** Minting
+   * and writing a new id in that state used to DELETE the stored one -- the
+   * write fails without a key and the store removes the entry rather than leave
+   * a stale value -- so a single launch-time Keystore hiccup made this station a
+   * new device, needing an admin to approve it again. So a new id is persisted
+   * only when there is genuinely none and the key works. Otherwise this process
+   * runs on an in-memory id and leaves the stored one alone for the next launch.
+   * That is protocol-safe: a fresh id per process is exactly how the browser UI
+   * already presents itself, and the arbiter keys nothing on it but bookkeeping.
    */
-  fun clientId(): String =
-    secure.getString(KEY_CLIENT_ID, null)
-      ?: UUID.randomUUID().toString().also { secure.edit().putString(KEY_CLIENT_ID, it).apply() }
+  fun clientId(): String {
+    secure.getString(KEY_CLIENT_ID, null)?.let { return it }
+    val storedButUnreadable = secure.contains(KEY_CLIENT_ID)
+    if (storedButUnreadable || !secure.keyAvailable) {
+      synchronized(cacheLock) {
+        return ephemeralClientId ?: UUID.randomUUID().toString().also { ephemeralClientId = it }
+      }
+    }
+    return UUID.randomUUID().toString().also { secure.edit().putString(KEY_CLIENT_ID, it).apply() }
+  }
+
+  /** This process's id when the stored one cannot be read; see [clientId]. */
+  private var ephemeralClientId: String? = null
 
   /**
    * Claim the next session generation: a strictly increasing integer, bumped
@@ -151,7 +170,10 @@ class SettingsStore(context: Context) {
     cachedExpiryMs =
       if (secure.contains(KEY_TOKEN_EXPIRY)) secure.getLong(KEY_TOKEN_EXPIRY, Long.MAX_VALUE)
       else null
-    cacheLoaded = true
+    // Not cached when read without a key: that read saw "nothing stored" only
+    // because nothing COULD be read, and caching it would keep a launch-time
+    // Keystore hiccup as a missing token for the whole process.
+    cacheLoaded = secure.keyAvailable
   }
 
   /**

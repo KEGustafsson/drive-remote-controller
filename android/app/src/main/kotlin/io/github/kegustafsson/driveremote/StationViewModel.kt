@@ -86,6 +86,13 @@ data class UiState(
   val setupNotice: String? = null,
   /** The last server used, offered for one-tap reconnection. */
   val lastServer: ServerAddress? = null,
+  /**
+   * Bumped every time [StationViewModel.releaseAllControls] forces the controls
+   * safe. The screen keys its momentary contacts on it, so a contact still drawn
+   * as held -- a pause need not cancel the pointer -- is released on screen as
+   * well as on the wire, rather than showing FORWARD while NEUTRAL is sent.
+   */
+  val releaseEpoch: Int = 0,
 )
 
 /**
@@ -408,11 +415,12 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
   /**
    * Operator-initiated: stop talking to this server and pick another.
    *
-   * Refused while armed. Disconnecting would leave this station holding the arm
-   * token until the arbiter stale-evicts it, with the operator already on a
-   * setup screen that shows no controls -- armed, commanding, and unable to
-   * see or stop it. Disarming first is one tap and makes the state
-   * unambiguous.
+   * Refused while armed on a live link ([StationView.changeServerRefused];
+   * offline it leaves with a disarm instead). Disconnecting would leave this
+   * station holding the arm token until the arbiter stale-evicts it, with the
+   * operator already on a setup screen that shows no controls -- armed,
+   * commanding, and unable to see or stop it. Disarming first is one tap and
+   * makes the state unambiguous.
    *
    * "Armed" here means armed IN A LIVE SESSION, and both halves of that are
    * load-bearing. `view.armed` is derived from the arbiter's `activeClient`,
@@ -426,13 +434,22 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    * test stays as the cheap second answer to the same question.
    */
   fun changeServer() {
-    if (_uiState.value.stage == Stage.Ready && _uiState.value.view?.armed == true) {
+    val ready = _uiState.value.stage == Stage.Ready
+    val view = _uiState.value.view
+    if (ready && view?.changeServerRefused == true) {
       _uiState.value =
         _uiState.value.copy(
           authError = "Disarm before changing server — this station is armed."
         )
       return
     }
+    // Offline, "armed" is only the last-known activeClient, which a disarm sent
+    // now could never visibly clear -- refusing on it was a lockout onto a server
+    // the operator could not reach. So leave, but leave with a STOP: teardown()'s
+    // final safe intent carries disarmReq, and bumping it here makes that intent
+    // a disarm edge. If it is lost too, the heartbeat stops with the session and
+    // the arbiter stale-evicts this station anyway.
+    if (ready && view?.changeServerSendsStop == true) disarmReq += 1
     teardown()
     _uiState.value =
       _uiState.value.copy(
@@ -673,6 +690,7 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    */
   fun releaseAllControls() {
     setControlsSafe()
+    _uiState.value = _uiState.value.copy(releaseEpoch = _uiState.value.releaseEpoch + 1)
     sendIntentNow(allowWithoutHeartbeat = true, urgent = true, nonCancellable = true)
   }
 

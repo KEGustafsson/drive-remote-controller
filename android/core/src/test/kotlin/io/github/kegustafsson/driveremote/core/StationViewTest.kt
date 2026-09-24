@@ -388,4 +388,85 @@ class StationViewTest {
     store.apply(listOf(SkContract.HH_REVERSAL_PENDING to true), 10_000)
     assertTrue(view(store, 10_000).reversalPending)
   }
+
+  // ---- Values that must not outlive their unit ---------------------------
+
+  /** HH's fused heading, in the radians it is published in. */
+  private fun SkValueStore.withHeading(deg: Double, reversal: Boolean, atMs: Long): SkValueStore {
+    apply(
+      listOf(
+        SkContract.HH_FUSED_HEADING_RAD to Math.toRadians(deg),
+        SkContract.HH_REVERSAL_PENDING to reversal,
+      ),
+      atMs,
+    )
+    return this
+  }
+
+  @Test
+  fun `the current heading is shown while HH is answering`() {
+    val store = healthyStore(nowMs = 10_000).withHeading(172.0, reversal = true, atMs = 10_000)
+    val v = view(store, 10_000)
+    assertEquals(172.0, v.currentHeadingDeg!!, 1e-6)
+    assertTrue(v.reversalPending)
+  }
+
+  /**
+   * The defect: HH switched off, its last heading still retained in the store,
+   * and the panel drawing it under CURRENT HEADING as though the boat were still
+   * pointing there. Likewise a retained reversal-pending explaining a thruster
+   * delay that no unit is imposing.
+   */
+  @Test
+  fun `a silent HH shows no current heading and no reversal wait`() {
+    val store = healthyStore(nowMs = 10_000).withHeading(172.0, reversal = true, atMs = 10_000)
+    // RX keeps publishing; HH has gone quiet.
+    val later = 10_000 + SkContract.TELEMETRY_STALE_MS + 1
+    store.apply(listOf(SkContract.RX_LINK_UP to true), later)
+
+    val v = view(store, later)
+    assertEquals(UnitLiveness.STALE, v.hhLiveness)
+    assertNull(v.currentHeadingDeg, "a heading from a unit that stopped answering is not current")
+    assertFalse(v.reversalPending, "no live unit is waiting out an interlock")
+  }
+
+  @Test
+  fun `a dropped socket shows no current heading and no reversal wait`() {
+    val store = healthyStore(nowMs = 10_000).withHeading(172.0, reversal = true, atMs = 10_000)
+    val v = view(store, 10_000, ConnectionState.CLOSED)
+    assertEquals(UnitLiveness.OFFLINE, v.hhLiveness)
+    assertNull(v.currentHeadingDeg)
+    assertFalse(v.reversalPending)
+  }
+
+  // ---- Leaving the server ------------------------------------------------
+
+  @Test
+  fun `changing server is refused only while armed on a live link`() {
+    val armedLive = view(healthyStore(activeClient = me), 10_000)
+    assertTrue(armedLive.changeServerRefused)
+    assertFalse(armedLive.changeServerSendsStop)
+
+    val disarmedLive = view(healthyStore(), 10_000)
+    assertFalse(disarmedLive.changeServerRefused)
+    assertFalse(disarmedLive.changeServerSendsStop, "leaving disarmed must not stop anyone else")
+  }
+
+  /**
+   * The lockout. Offline, "armed" is the last-known activeClient that the store
+   * keeps across a drop; a disarm sent now cannot be seen to clear it, so a
+   * refusal here kept the operator on a server they could not reach. Leaving is
+   * allowed, and leaving carries a STOP.
+   */
+  @Test
+  fun `offline and last seen armed, changing server is allowed and sends a stop`() {
+    val v = view(healthyStore(activeClient = me), 10_000, ConnectionState.CLOSED)
+    assertTrue(v.armed, "the retained activeClient still names this station")
+    assertFalse(v.changeServerRefused, "offline lockout: no disarm could ever clear this")
+    assertTrue(v.changeServerSendsStop)
+
+    val otherHolds = view(healthyStore(activeClient = "ui-other"), 10_000, ConnectionState.CLOSED)
+    assertFalse(otherHolds.changeServerRefused)
+    assertFalse(otherHolds.changeServerSendsStop, "not ours to stop on the way out")
+  }
 }

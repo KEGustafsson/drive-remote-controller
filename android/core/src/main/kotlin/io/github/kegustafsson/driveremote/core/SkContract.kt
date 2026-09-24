@@ -217,6 +217,20 @@ object SkContract {
    * link without letting a genuinely refused hold sit unreported.
    */
   const val HOLD_ENGAGE_GRACE_MS = 2000L
+
+  /**
+   * How long after the kill switch last meant STOP a tap on it still means STOP.
+   * Mirrors the browser's `KILL_SWITCH_STOP_HOLDOVER_MS` (sk-plugin/src/config.ts).
+   *
+   * A tap's meaning is decided when the operator reaches for the button, but it
+   * lands on whatever the button shows by then -- and the arbiter answers a STOP
+   * in milliseconds. So the second half of a double-tapped STOP, or a second
+   * person's STOP aimed at IN USE just as the holder disarmed, would otherwise
+   * land on DISARMED and ARM this station (in HOLD, engaging a hold). A STOP is
+   * universal and harmless when nothing is armed, so erring toward it costs only
+   * a deliberate arm waiting a second. See [KillSwitchTapPolicy].
+   */
+  const val KILL_SWITCH_STOP_HOLDOVER_MS = 1000L
 }
 
 /** Mirrors `ConnectionState` in `sk-plugin/src/skClient.ts`. */

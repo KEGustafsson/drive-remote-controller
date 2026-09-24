@@ -178,5 +178,28 @@ enum class AuthScheme(private val prefix: String) {
   companion object {
     /** Try in this order; the first that does not 401 is the one to keep. */
     val TRY_ORDER: List<AuthScheme> = listOf(BEARER, JWT)
+
+    /**
+     * Which scheme to present next, after a request sent with [refused] was
+     * answered 401/403 while the probe stood at [current].
+     *
+     * **It wraps.** The probe used to only climb, and a probe that cannot come
+     * back fails both ways round. Settled on the last scheme, a revoked token is
+     * only ever refused with THAT scheme, so [TokenHealth] -- which declares a
+     * token dead only once every scheme has been refused -- never does, and the
+     * station keeps presenting as able to command. And on a Bearer-only server a
+     * single stray refusal (a restart, a proxy blip) moved it to JWT for good,
+     * where the good token was then refused on every request and declared dead.
+     * Wrapping means every scheme is re-tried within [TokenHealth]'s budget, and
+     * one acceptance on the way round clears it.
+     *
+     * A refusal of a scheme the probe has already moved off changes nothing.
+     * Several sends are in flight at once, and they are built with whatever
+     * scheme stood when they left: without this, two refusals of the same
+     * unprobed scheme would advance and then wrap straight back to it.
+     */
+    fun nextAfterRefusal(current: AuthScheme, refused: AuthScheme): AuthScheme =
+      if (refused != current) current
+      else TRY_ORDER[(TRY_ORDER.indexOf(current) + 1) % TRY_ORDER.size]
   }
 }

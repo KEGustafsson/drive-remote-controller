@@ -8,7 +8,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import io.github.kegustafsson.driveremote.core.CommandSource
@@ -16,6 +19,7 @@ import io.github.kegustafsson.driveremote.core.ConnectionState
 import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DisplayDrivePosition
+import io.github.kegustafsson.driveremote.core.DrivePosition
 import io.github.kegustafsson.driveremote.core.HoldPhase
 import io.github.kegustafsson.driveremote.core.SkContract
 import io.github.kegustafsson.driveremote.core.StationView
@@ -30,6 +34,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * Two fail-safe properties that only exist once the screen is real: a press
@@ -109,6 +115,62 @@ class FailSafeControlsTest {
         onTheWayBack.contains(ThrusterDirection.STBD),
     )
     assertEquals(ThrusterDirection.OFF, reported.last())
+  }
+
+  /**
+   * Backgrounding releases every command, but a pause need not cancel the
+   * pointer: a contact held through it stayed lit, the readout saying FORWARD
+   * while the ViewModel was sending NEUTRAL. The release epoch the ViewModel
+   * bumps must release the contact on screen as well.
+   */
+  @Test
+  fun `a forced release lets go of a contact still held on screen`() {
+    val reported = mutableListOf<DrivePosition>()
+    val epoch = EpochHolder()
+    compose.setContent {
+      DriveRemoteTheme {
+        Box(Modifier.fillMaxSize()) {
+          ControlScreen(
+            view = armed,
+            thrusterMode = ThrusterMode.MANUAL,
+            trimDeg = 0.0,
+            authError = null,
+            onArm = {},
+            onDisarm = {},
+            onThrusterModeChange = {},
+            onThrusterDirectionChange = {},
+            onTrim = {},
+            onPortChange = { reported += it },
+            onStbdChange = {},
+            onChangeServer = {},
+            releaseEpoch = epoch.value,
+          )
+        }
+      }
+    }
+    compose.waitForIdle()
+
+    compose.onAllNodesWithContentDescription("FWD", useUnmergedTree = true)[0].performTouchInput {
+      down(center)
+    }
+    compose.waitForIdle()
+    assertEquals("the press itself was not reported", DrivePosition.FORWARD, reported.last())
+    compose.onNodeWithText("FORWARD").assertExists()
+
+    // The app is paused; releaseAllControls() bumps the epoch. The pointer is
+    // never cancelled and never lifted.
+    compose.runOnUiThread { epoch.value += 1 }
+    compose.waitForIdle()
+
+    assertEquals(DrivePosition.NEUTRAL, reported.last())
+    compose.onNodeWithText("FORWARD").assertDoesNotExist()
+
+    // And the finger still on the glass does not press again by itself.
+    compose.onAllNodesWithContentDescription("FWD", useUnmergedTree = true)[0].performTouchInput {
+      moveBy(Offset(0f, 1f))
+    }
+    compose.waitForIdle()
+    assertEquals(DrivePosition.NEUTRAL, reported.last())
   }
 
   // ---- The kill switch's tap ---------------------------------------------
@@ -191,6 +253,37 @@ class FailSafeControlsTest {
     assertEquals(1, disarmTaps)
     assertEquals(0, armTaps)
   }
+
+  /**
+   * Double-tap STOP. The first tap disarms, the arbiter's release comes back and
+   * the button flips to DISARMED, and the second tap -- aimed at STOP -- lands on
+   * it. Decided from the screen alone that tap ARMED the station, and in HOLD an
+   * arm is a hold request. Within the holdover it must still be a stop.
+   */
+  @Test
+  fun `the second tap of a double-tapped STOP does not arm`() {
+    var armTaps = 0
+    var disarmTaps = 0
+    val shown = ViewHolder(armed)
+    compose.showKillSwitch(shown, onArm = { armTaps++ }, onDisarm = { disarmTaps++ })
+
+    compose.onNodeWithContentDescription("ARMED", substring = true).performClick()
+    assertEquals(1, disarmTaps)
+
+    // activeClient "" arrives: the button now offers an arm.
+    compose.runOnUiThread { shown.value = readyToArm }
+    compose.waitForIdle()
+    ShadowSystemClock.advanceBy(Duration.ofMillis(200))
+    compose.onNodeWithContentDescription("DISARMED", substring = true).performClick()
+
+    assertEquals("the second tap of a STOP armed the station", 0, armTaps)
+    assertEquals(2, disarmTaps)
+
+    // A deliberate arm after the holdover still works.
+    ShadowSystemClock.advanceBy(Duration.ofMillis(SkContract.KILL_SWITCH_STOP_HOLDOVER_MS))
+    compose.onNodeWithContentDescription("DISARMED", substring = true).performClick()
+    assertEquals("the arm was lost for good", 1, armTaps)
+  }
 }
 
 private const val FailSafeReferencePhone = "w360dp-h780dp-xxhdpi"
@@ -232,8 +325,22 @@ private fun ComposeContentTestRule.showThruster(
   return mode
 }
 
+private class EpochHolder {
+  var value by mutableStateOf(0)
+}
+
+private class ViewHolder(initial: StationView) {
+  var value by mutableStateOf(initial)
+}
+
 private fun ComposeContentTestRule.showKillSwitch(
   view: StationView,
+  onArm: () -> Unit,
+  onDisarm: () -> Unit,
+) = showKillSwitch(ViewHolder(view), onArm, onDisarm)
+
+private fun ComposeContentTestRule.showKillSwitch(
+  view: ViewHolder,
   onArm: () -> Unit,
   onDisarm: () -> Unit,
 ) {
@@ -241,7 +348,7 @@ private fun ComposeContentTestRule.showKillSwitch(
     DriveRemoteTheme {
       Box(Modifier.fillMaxSize()) {
         ControlScreen(
-          view = view,
+          view = view.value,
           thrusterMode = ThrusterMode.MANUAL,
           trimDeg = 0.0,
           authError = null,

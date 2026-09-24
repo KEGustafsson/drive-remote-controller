@@ -859,7 +859,9 @@ reversal dwells against the same shared last-thrust history (§6.3).
 
 **Nothing derived is shown as live when it cannot be confirmed.** Lamps grey out
 when the socket is down or when the unit that publishes them has gone quiet, and
-the kill switch renders a distinct OFFLINE state while disconnected rather than
+the kill switch renders a distinct OFFLINE state while disconnected — or while
+the socket reads open but the plugin's 250 ms `activeClient` republish has
+stopped arriving on it — rather than
 a confident ARMED — or a false DISARMED: the socket is only the read side, and
 the intent heartbeat keeps POSTing over HTTP, so the tab may still genuinely
 hold the token. The OFFLINE tap therefore stays live and always means STOP;

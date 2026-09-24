@@ -190,7 +190,7 @@ when you set it will not see it.
 ```
 
 On Windows use `.\gradlew.bat`. `:core:test` prints its own total
-(`core: 178 tests, 178 passed, 0 failed, 0 skipped`) so a run can be quoted in
+(`core: 204 tests, 204 passed, 0 failed, 0 skipped`) so a run can be quoted in
 the journal the same way `pio test` and `npm test` are. Gradle caches an
 unchanged suite; add `--rerun-tasks` when you want the count printed again.
 
@@ -829,7 +829,9 @@ OFFLINE panel on the STOP button at every single launch, for the few hundred
 milliseconds the first WebSocket took to open. A warning that always fires is
 one the operator stops reading. Saying it calmly is safe here and provably so:
 arming requires liveness, liveness requires an open socket, and `changeServer`
-refuses while armed — so no station can be armed or commanding before its first
+refuses while armed on a live link — and offline, where "armed" is only the
+retained last value no disarm could visibly clear, leaves with a disarm and
+stops the heartbeat — so no station can be armed or commanding before its first
 open. `LinkPhaseTest` holds the rule, including that a drop mid-session gets no
 grace at all.
 
@@ -853,8 +855,8 @@ That is a real milestone and still a long way short of "it works".
 
 | | |
 |---|---|
-| `core/` | **Verified.** 178 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 75 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `core/` | **Verified.** 204 tests, `./gradlew :core:test`, no warnings. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 90 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |

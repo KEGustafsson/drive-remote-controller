@@ -25,7 +25,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 class IntentPoster(private val httpClient: OkHttpClient) {
 
-  /** Which auth scheme the server accepted, sticky once one works. */
+  /**
+   * Which auth scheme to present. Stays put while it works; on a refusal it
+   * moves on, wrapping round ([AuthScheme.nextAfterRefusal]).
+   */
   private var schemeIndex = 0
   private var authTarget: Pair<ServerAddress, String?>? = null
 
@@ -36,12 +39,9 @@ class IntentPoster(private val httpClient: OkHttpClient) {
    * Teardown's final intent is sent outside the send lane, so the operator can
    * pick a new server while a request to the old one is still in flight. Its
    * reply says nothing about the server the station is on now -- and acting on
-   * it is not harmless. A stale 401 advancing [schemeIndex] would leave a
-   * Bearer-only server permanently probed as JWT, with no way back: the index
-   * only climbs, the target no longer changes, and because `TokenHealth` now
-   * requires EVERY scheme to have been refused, a token that is never tried
-   * with Bearer can never be declared dead either. The station would sit
-   * refused forever, reporting that it was retrying.
+   * it is not harmless: a stale 401 would move the new server's probe, and
+   * count against its token in `TokenHealth`, on the strength of a refusal
+   * from somewhere else.
    */
   private var authGeneration = 0
 
@@ -53,7 +53,7 @@ class IntentPoster(private val httpClient: OkHttpClient) {
    * concurrent. Without this the fields are ordinary unsynchronised mutable
    * state: there is no happens-before between one worker bumping the generation
    * and another comparing against it, so the generation guard could be defeated
-   * by exactly the interleaving it was added to prevent — and `schemeIndex += 1`
+   * by exactly the interleaving it was added to prevent — and moving `schemeIndex`
    * is a read-modify-write that can simply lose an update.
    *
    * A plain lock rather than a coroutine `Mutex` because every critical section
@@ -163,11 +163,16 @@ class IntentPoster(private val httpClient: OkHttpClient) {
                   Result.Failed("reply from a previous server, ignored")
                 code in 200..299 -> Result.Ok(myGeneration)
                 code == 401 || code == 403 -> {
-                  // Try the other auth scheme once before calling it a
-                  // credentials problem: signalk-server has historically
-                  // accepted only "JWT <token>" on some versions (issue #715).
-                  if (token != null && schemeIndex < AuthScheme.TRY_ORDER.lastIndex) {
-                    schemeIndex += 1
+                  // Try the other auth scheme before calling it a credentials
+                  // problem: signalk-server has historically accepted only
+                  // "JWT <token>" on some versions (issue #715). The probe
+                  // WRAPS, so every scheme is retried within TokenHealth's
+                  // budget -- see AuthScheme.nextAfterRefusal for why a probe
+                  // that only climbs can neither kill a revoked token nor
+                  // recover a good one from a stray refusal.
+                  if (schemeUsed != null) {
+                    schemeIndex =
+                      AuthScheme.TRY_ORDER.indexOf(AuthScheme.nextAfterRefusal(scheme(), schemeUsed))
                   }
                   Result.Unauthorized(code, schemeUsed, myGeneration)
                 }

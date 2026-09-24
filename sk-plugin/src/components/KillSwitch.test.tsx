@@ -230,6 +230,33 @@ describe('KillSwitch: a tap aimed at STOP stays a STOP', () => {
     });
   }
 
+  // A tap held over as STOP restarts the window: hammering STOP at a pace just
+  // under the hold-over must never reach ARM, however long it goes on.
+  it('hammered STOP taps never reach ARM', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const onArm = vi.fn();
+    const onDisarm = vi.fn();
+    const { rerender } = render(
+      <KillSwitch {...base} armed foreignControl={false} onArm={onArm} onDisarm={onDisarm} />,
+    );
+    rerender(
+      <KillSwitch
+        {...base}
+        armed={false}
+        foreignControl={false}
+        onArm={onArm}
+        onDisarm={onDisarm}
+      />,
+    );
+    for (let i = 0; i < 6; i++) {
+      now += KILL_SWITCH_STOP_HOLDOVER_MS - 100;
+      fireEvent.click(killButton());
+    }
+    expect(onArm).not.toHaveBeenCalled();
+    expect(onDisarm).toHaveBeenCalledTimes(6);
+  });
+
   it('arms normally once the hold-over has passed', () => {
     let now = 10_000;
     vi.spyOn(performance, 'now').mockImplementation(() => now);

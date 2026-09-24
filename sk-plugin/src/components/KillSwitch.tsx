@@ -125,6 +125,9 @@ export function KillSwitch({
     const endedAt = stopEndedAtRef.current;
     const stillStop =
       endedAt !== null && runtimeNowMs() - endedAt < KILL_SWITCH_STOP_HOLDOVER_MS;
+    // A tap held over as STOP restarts the window, so hammered STOP taps at
+    // any pace under the holdover never reach ARM, however many there are.
+    if (stillStop && !disarms) stopEndedAtRef.current = runtimeNowMs();
     if (disarms || stillStop) onDisarm();
     else onArm();
   };

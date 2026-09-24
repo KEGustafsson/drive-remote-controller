@@ -7309,3 +7309,76 @@ walked, least of all the one saying a MANUAL command must still stop within
 but not yet running.
 
 Documentation only; no code changed.
+
+## 2026-09-24 — Whole-repository review, round two: what the latches missed
+
+Five parallel reviews (drive firmware, thruster firmware, plugin server,
+browser UI, Android), every finding traced in code and most reproduced before
+anything changed. Each fix below came with a test that failed first.
+
+**Firmware.**
+- *Short-circuit `&&` over a tuple's watchdogs* (RX `SkCommandIn`, HH
+  `SkThrusterIn`): the first stale member stopped the chain, so the rest were
+  never polled and never latched. After 2^31 ms of silence `ElapsedMs` reads
+  their old stamps as age 0, and a month-old command could come back the moment
+  the first member's path updated. `control_core::AllLive` polls every member,
+  then combines.
+- *Fail-off heartbeat* on core 0 used plain subtraction and could read a
+  heartbeat stamped after its own clock read as ~49 days stale, releasing the
+  outputs of a healthy task. Now `ElapsedMs`, both units.
+- *Re-engage latch was keyed on last tick's winner.* A remote armed in HOLD but
+  outranked (plugin under TX, or TX under local ENGAGE) escaped it when its link
+  dropped, and its retained `enabled` handed the FSM an unpressed engage edge
+  once the link healed. The latch is now per source: armed in HOLD and gone
+  stale latches, whoever was in command.
+- *MANUAL -> HOLD skipped the heading arm gate*: MANUAL waives it, and a mode
+  flip is no FSM engage edge, so a stale heading got a dead-reckoned base and
+  steered until `coast_max`. `FsmInputs::hold_mode_entered` re-applies the gate;
+  the flip now waits in `ARMED_IDLE` exactly as a direct arm into HOLD does.
+- Cross-mode dwell was measured from the last ON tick (1840 ms, not 1850); the
+  thrust history is now stamped on the first OFF tick. MANUAL with a zero dwell
+  no longer flashes `reversalPending`. A future-stamped GNSS fix is retried next
+  tick instead of rejected and marked applied. `sensors.headingHold.fsmState`
+  got a `config.h` constant.
+
+**Plugin server.** Browser page loads (a fresh `clientId` each) could push a
+phone's remembered arm total out of the 32-entry counter memory, after which a
+reordered pre-tap heartbeat re-granted the token with no press; sessionless
+entries are now evicted first, and the comment that said a lost arm memory
+"never" grants is corrected. A record whose first packet carried no numeric
+`disarmReq` spent its first STOP as a baseline; it is now scored like the
+no-record path. The backwards-wall-clock route test never actually armed and so
+passed on `Date.now()`; it now arms and asserts it.
+
+**Both stations: a tap aimed at STOP stays a STOP.** The kill switch decided a
+tap's meaning from the screen when the click fired. A double-tapped STOP's
+second tap landed on DISARMED and armed -- in HOLD that is the hold request.
+For `KILL_SWITCH_STOP_HOLDOVER_MS` (1000) after the button last meant STOP a tap
+still stops, and a tap held over that way restarts the window, so hammering STOP
+never eventually arms. The cost: a deliberate take-over (tap IN USE, then arm)
+needs a one-second pause between the taps.
+
+**Browser UI.** A socket open but silent (no FIN) showed a confident ARMED; the
+plugin's 250 ms `activeClient` republish is now the freshness signal (OFFLINE
+after 1500 ms, reconnect after 5 s), and a value from before the current socket
+opened never counts. Held heading, reversal notice and the Port/Starboard lamps
+no longer show frozen values as live. POSTs keep a deadline without
+`AbortSignal.timeout`.
+
+**Android.** The auth-scheme probe only climbed, so a token revoked after the
+probe settled on JWT was never declared dead (and one stray 401 on a
+Bearer-only server doomed a good token); it now wraps. `SkStream` ignored a
+server close frame and sat OPEN for 20-40 s. Change-server was refused on a
+retained offline `armed`; offline it now sends STOP and proceeds. Current
+heading and reversal notice are gated on HH liveness. One Keystore hiccup no
+longer mints and persists a new device identity. A contact held through
+backgrounding no longer stays lit while NEUTRAL is sent.
+
+**Left for the owner** (reported, not changed): releasing local ENGAGE hands
+the thruster to an armed remote rather than disarming (thruster invariant 6
+wording vs fixed precedence); trim resets when the read socket drops
+(`!connected`), which the silent-socket fix now also triggers; Android STOP
+fires on lift, not touch-down; POST failures are not surfaced on Android.
+
+Not on hardware: none of this has been flashed. Suites: native 295, plugin 319,
+core 204, app 90; all three firmwares build.

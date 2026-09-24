@@ -209,12 +209,42 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
         // some signalk-server versions accept only "JWT <token>" rather than
         // "Bearer <token>" (issue #715). Advance once and retry immediately
         // rather than backing off on what is really a handshake mismatch.
-        if (response?.code == 401 && token != null && schemeIndex < AuthScheme.TRY_ORDER.lastIndex) {
-          schemeIndex += 1
-          _connectionState.value = ConnectionState.CONNECTING
-          openSocket()
-          return@launch
+        if (response?.code == 401 && token != null) {
+          if (schemeIndex < AuthScheme.TRY_ORDER.lastIndex) {
+            schemeIndex += 1
+            _connectionState.value = ConnectionState.CONNECTING
+            openSocket()
+            return@launch
+          }
+          // Refused on the last scheme too: wrap round and back off, rather than
+          // staying on it for good. A probe that only climbs is stranded by ONE
+          // stray 401 on a Bearer-only server -- a restart, say -- and the
+          // stream would then retry the wrong scheme forever. See
+          // AuthScheme.nextAfterRefusal, which the intent poster uses.
+          schemeIndex = 0
         }
+        this@SkStream.webSocket = null
+        _connectionState.value = ConnectionState.CLOSED
+        scheduleReconnect(myGeneration)
+      }
+    }
+
+    /**
+     * The SERVER has started closing: it will send nothing more.
+     *
+     * Without this the link sat OPEN with nothing arriving. OkHttp stops reading
+     * once the peer's close frame is in, and [onClosed] only fires after this
+     * side answers with its own close -- which nothing here did. So a server
+     * restart left the station reporting a live link, reconnecting nothing, until
+     * a write or ping finally failed some 20-40 s later. Answered here, and the
+     * link reported down and a reconnect scheduled at once. Generation-guarded
+     * like every other callback; [onClosed] still arrives afterwards and finds the
+     * reconnect already scheduled.
+     */
+    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+      webSocket.close(NORMAL_CLOSURE, null)
+      scope.launch {
+        if (myGeneration != generation) return@launch
         this@SkStream.webSocket = null
         _connectionState.value = ConnectionState.CLOSED
         scheduleReconnect(myGeneration)

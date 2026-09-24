@@ -2,6 +2,7 @@ package io.github.kegustafsson.driveremote.core
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -172,5 +173,96 @@ class TokenHealthTest {
     // this one, so it is pinned here.
     val worstCaseMs = TokenHealth.REJECTIONS_BEFORE_DEAD * SkContract.PERIODIC_REFRESH_MS
     assertTrue(worstCaseMs <= 1000, "token death takes ${worstCaseMs}ms to detect")
+  }
+
+  /**
+   * The probe and the verdict together, as the intent poster drives them: each
+   * refusal is recorded against the scheme the request carried, and moves the
+   * probe with [AuthScheme.nextAfterRefusal]. Returns how many requests it took
+   * to declare the token dead, or null if it never was.
+   */
+  private fun sendsUntilDead(
+    startAt: AuthScheme,
+    budget: Int,
+    accepts: (AuthScheme) -> Boolean,
+  ): Int? {
+    var scheme = startAt
+    var h = TokenHealth()
+    repeat(budget) { i ->
+      if (accepts(scheme)) {
+        h = h.accepted()
+      } else {
+        h = h.rejected(scheme)
+        scheme = AuthScheme.nextAfterRefusal(scheme, scheme)
+      }
+      if (h.isDead) return i + 1
+    }
+    return null
+  }
+
+  /**
+   * The defect. The probe used to only climb, so once it had settled on the
+   * last scheme a revoked token was refused with that scheme alone -- forever.
+   * [TokenHealth] needs EVERY scheme refused, so the token was never declared
+   * dead and the station kept presenting as able to command.
+   */
+  @Test
+  fun `a revoked token dies even when the probe had settled on the last scheme`() {
+    for (settled in AuthScheme.TRY_ORDER) {
+      val sends = sendsUntilDead(startAt = settled, budget = 20) { false }
+      assertEquals(
+        TokenHealth.REJECTIONS_BEFORE_DEAD,
+        sends,
+        "probe settled on $settled: a revoked token must be declared dead within the budget",
+      )
+    }
+  }
+
+  /**
+   * The other half. On a Bearer-only server one stray refusal (a restart, a
+   * proxy blip) moved a climb-only probe to JWT for good, and the good token was
+   * then refused on every request until it was declared dead.
+   */
+  @Test
+  fun `one stray refusal on a Bearer-only server does not strand the probe`() {
+    var scheme = AuthScheme.BEARER
+    var h = TokenHealth().rejected(scheme)
+    scheme = AuthScheme.nextAfterRefusal(scheme, AuthScheme.BEARER)
+    repeat(50) {
+      if (scheme == AuthScheme.BEARER) {
+        h = h.accepted()
+      } else {
+        h = h.rejected(scheme)
+        scheme = AuthScheme.nextAfterRefusal(scheme, scheme)
+      }
+      assertFalse(h.isDead, "a working Bearer token was declared dead")
+    }
+    assertEquals(AuthScheme.BEARER, scheme)
+    assertEquals(TokenHealth.HEALTHY, h)
+  }
+
+  @Test
+  fun `a working token on either scheme is found from any starting point`() {
+    for (good in AuthScheme.TRY_ORDER) {
+      for (start in AuthScheme.TRY_ORDER) {
+        assertNull(sendsUntilDead(startAt = start, budget = 50) { it == good })
+      }
+    }
+  }
+
+  /**
+   * Several sends are in flight at once, each built with the scheme that stood
+   * when it left. A late refusal of a scheme the probe has already moved off
+   * must not move it again -- with wrapping, that would carry it straight back
+   * to the scheme that was just refused.
+   */
+  @Test
+  fun `a refusal of a scheme already moved off does not move the probe`() {
+    val first = AuthScheme.TRY_ORDER.first()
+    val second = AuthScheme.nextAfterRefusal(first, first)
+    assertEquals(AuthScheme.TRY_ORDER[1], second)
+    assertEquals(second, AuthScheme.nextAfterRefusal(second, first))
+    // ...while a refusal of the current last scheme wraps to the first.
+    assertEquals(first, AuthScheme.nextAfterRefusal(AuthScheme.TRY_ORDER.last(), AuthScheme.TRY_ORDER.last()))
   }
 }

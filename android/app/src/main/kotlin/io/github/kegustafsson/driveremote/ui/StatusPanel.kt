@@ -237,29 +237,43 @@ fun StatusPanel(
       // deliberate, occasional act, and a control that ends the session has no
       // business sitting where a thumb can find it during a manoeuvre.
       //
-      // Inert while armed rather than hidden. Disconnecting armed would leave
-      // this station holding the arm token until the arbiter stale-evicts it,
-      // with the operator already on a screen that shows no controls -- armed,
-      // still commanding, and unable to see or stop it. Saying so is more use
-      // than a button that has silently vanished.
+      // Inert while armed on a live link rather than hidden. Disconnecting armed
+      // would leave this station holding the arm token until the arbiter
+      // stale-evicts it, with the operator already on a screen that shows no
+      // controls -- armed, still commanding, and unable to see or stop it.
+      // Saying so is more use than a button that has silently vanished.
+      //
+      // NOT inert offline: there "armed" is only the last-known activeClient,
+      // which no disarm could visibly clear, and refusing on it locked the
+      // operator onto a server they could not reach. Offline the button leaves
+      // with a STOP instead (StationView.changeServerSendsStop), and says so.
+      val refused = view.changeServerRefused
       Box(
         Modifier.fillMaxWidth()
           .padding(top = helm.size(10.dp))
           .clip(RoundedCornerShape(10.dp))
-          .background(if (view.armed) DriveColors.disarmed.copy(alpha = 0.4f) else DriveColors.surface)
-          .clickable(enabled = !view.armed, onClick = onChangeServer)
+          .background(if (refused) DriveColors.disarmed.copy(alpha = 0.4f) else DriveColors.surface)
+          .clickable(enabled = !refused, onClick = onChangeServer)
           .padding(vertical = helm.size(12.dp))
           .semantics {
             role = Role.Button
             contentDescription =
-              if (view.armed) "Disconnect, unavailable while armed" else "Disconnect and change server"
+              when {
+                refused -> "Disconnect, unavailable while armed"
+                view.changeServerSendsStop -> "Stop, disconnect and change server"
+                else -> "Disconnect and change server"
+              }
           },
         contentAlignment = Alignment.Center,
       ) {
         Text(
-          if (view.armed) "Disarm to change server" else "Disconnect / change server",
+          when {
+            refused -> "Disarm to change server"
+            view.changeServerSendsStop -> "STOP + change server"
+            else -> "Disconnect / change server"
+          },
           fontSize = helm.text(13.sp),
-          color = if (view.armed) DriveColors.inkMuted else DriveColors.ink,
+          color = if (refused) DriveColors.inkMuted else DriveColors.ink,
         )
       }
     }
