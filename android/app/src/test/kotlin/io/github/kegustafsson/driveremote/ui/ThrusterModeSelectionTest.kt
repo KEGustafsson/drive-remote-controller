@@ -324,6 +324,46 @@ class ThrusterModeSelectionTest {
   }
 
   /**
+   * MANUAL, and HH refusing this station -- a local ENGAGE release latched it
+   * out until it STOPs and ARMs again. The arbiter still hands it the token, so
+   * it reads armed and its contacts light under a thumb; nothing else on the
+   * panel said the thruster was ignoring them.
+   */
+  @Test
+  fun `a MANUAL station HH is refusing is told so, with the remedy`() {
+    compose.showControlScreen(mode = ThrusterMode.MANUAL, view = manualRefused)
+    compose.onNodeWithText(ManualRefusedAlarm).assertExists()
+  }
+
+  @Test
+  fun `a faulted unit in MANUAL is named as one`() {
+    compose.showControlScreen(
+      mode = ThrusterMode.MANUAL,
+      view = manualRefused.copy(hhFsmState = SkContract.HH_FSM_FAULT, manualRefusal = HoldStall.UNIT_FAULT),
+    )
+    compose.onNodeWithText("THRUSTER REFUSED — UNIT FAULT").assertExists()
+  }
+
+  /** Armed in MANUAL with HH taking the commands: no band. */
+  @Test
+  fun `an ordinary armed MANUAL panel has no refusal band`() {
+    compose.showControlScreen(
+      mode = ThrusterMode.MANUAL,
+      view = holding.copy(hhMode = "manual", holdPhase = HoldPhase.IDLE),
+    )
+    compose.onAllNodesWithText("THRUSTER REFUSED", substring = true).fetchSemanticsNodes().let {
+      assertEquals(0, it.size)
+    }
+  }
+
+  /** The band is MANUAL's: a refusal carried into HOLD is the hold band's to report. */
+  @Test
+  fun `the MANUAL refusal band is not drawn in HOLD`() {
+    compose.showControlScreen(mode = ThrusterMode.HOLD, view = manualRefused)
+    compose.onNodeWithText(ManualRefusedAlarm).assertDoesNotExist()
+  }
+
+  /**
    * Armed, but HH is not answering: the same controls are inert for a
    * completely different reason, so "arm to thrust" would point the operator at
    * the one control already doing its job. The kill switch names the real
@@ -524,6 +564,23 @@ private val holdRefused =
     hhFsmState = SkContract.HH_FSM_DISARMED,
     holdPhase = HoldPhase.NOT_ENGAGING,
     holdStall = HoldStall.REFUSED,
+  )
+
+/** The MANUAL refusal band, as the owner worded it. */
+private const val ManualRefusedAlarm = "THRUSTER REFUSED — RE-ARM TO COMMAND"
+
+/**
+ * Armed in MANUAL, and HH reporting DISARMED past the grace window: refusing
+ * this station. See StationView.manualRefusal.
+ */
+private val manualRefused =
+  holding.copy(
+    driveCommandable = true,
+    hhArmed = false,
+    hhMode = "manual",
+    hhFsmState = SkContract.HH_FSM_DISARMED,
+    holdPhase = HoldPhase.IDLE,
+    manualRefusal = HoldStall.REFUSED,
   )
 
 /** Holding the token, but the thruster unit has stopped answering. */

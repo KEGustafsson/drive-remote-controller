@@ -1,6 +1,7 @@
 package io.github.kegustafsson.driveremote.core
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
@@ -94,6 +95,83 @@ class KillSwitchTapPolicyTest {
     for (t in listOf(0L, 10L, 5_000L, 50_000L)) {
       assertEquals(KillSwitchTap.DISARM, policy.onTap(meansStop = true, nowMs = t))
     }
+  }
+
+  // ---- The gesture: a STOP on the way down, an ARM on the way up -----------
+
+  @Test
+  fun `a press on a button that means stop disarms at once`() {
+    val policy = KillSwitchTapPolicy()
+    assertEquals(KillSwitchTap.DISARM, policy.onPress(meansStop = true, nowMs = 0))
+  }
+
+  @Test
+  fun `a press on a button that offers an arm sends nothing yet`() {
+    val policy = KillSwitchTapPolicy()
+    assertNull(policy.onPress(meansStop = false, nowMs = 0))
+    assertEquals(KillSwitchTap.ARM, policy.onRelease(meansStop = false, nowMs = 80, inside = true))
+  }
+
+  /** The defect: the lift of a STOP gesture, long after the holdover, armed. */
+  @Test
+  fun `the lift of a stop gesture sends nothing, however long it was held`() {
+    val policy = KillSwitchTapPolicy()
+    policy.observe(meansStop = true, nowMs = 0)
+    assertEquals(KillSwitchTap.DISARM, policy.onPress(meansStop = true, nowMs = 0))
+    // The arbiter's release lands while the finger is still down.
+    policy.observe(meansStop = false, nowMs = 40)
+    assertNull(policy.onRelease(meansStop = false, nowMs = 40 + 3 * holdover, inside = true))
+  }
+
+  @Test
+  fun `an arm lifted outside the button sends nothing`() {
+    val policy = KillSwitchTapPolicy()
+    assertNull(policy.onPress(meansStop = false, nowMs = 0))
+    assertNull(policy.onRelease(meansStop = false, nowMs = 100, inside = false))
+  }
+
+  /** Someone else armed while the finger was down: the lift is a STOP, not an arm. */
+  @Test
+  fun `an arm whose button came to mean stop mid-press lifts as a stop`() {
+    val policy = KillSwitchTapPolicy()
+    assertNull(policy.onPress(meansStop = false, nowMs = 0))
+    policy.observe(meansStop = true, nowMs = 50)
+    assertEquals(KillSwitchTap.DISARM, policy.onRelease(meansStop = true, nowMs = 90, inside = true))
+  }
+
+  /** A press held over as a STOP fires on the way down and restarts the window. */
+  @Test
+  fun `a held-over press stops on the way down and restarts the holdover`() {
+    val policy = KillSwitchTapPolicy()
+    policy.observe(meansStop = true, nowMs = 0)
+    policy.observe(meansStop = false, nowMs = 1_000)
+    val first = 1_000 + holdover - 1
+    assertEquals(KillSwitchTap.DISARM, policy.onPress(meansStop = false, nowMs = first))
+    assertNull(policy.onRelease(meansStop = false, nowMs = first + 50, inside = true))
+    // Restarted from that press, not from the flip: still a STOP just inside it...
+    assertEquals(KillSwitchTap.DISARM, policy.onPress(meansStop = false, nowMs = first + holdover - 1))
+    assertNull(policy.onRelease(meansStop = false, nowMs = first + holdover, inside = true))
+    // ...and an arm once a whole holdover has passed after the last STOP press.
+    val later = first + 2 * holdover
+    assertNull(policy.onPress(meansStop = false, nowMs = later))
+    assertEquals(KillSwitchTap.ARM, policy.onRelease(meansStop = false, nowMs = later + 50, inside = true))
+  }
+
+  /** A release with no press in front of it -- a gesture begun elsewhere -- is nothing. */
+  @Test
+  fun `a release without a press sends nothing`() {
+    assertNull(KillSwitchTapPolicy().onRelease(meansStop = false, nowMs = 0, inside = true))
+  }
+
+  /** The two ways in share one clock: a finger STOP holds over an accessibility click. */
+  @Test
+  fun `a pressed stop holds over a following accessibility click`() {
+    val policy = KillSwitchTapPolicy()
+    policy.observe(meansStop = true, nowMs = 0)
+    assertEquals(KillSwitchTap.DISARM, policy.onPress(meansStop = true, nowMs = 0))
+    policy.observe(meansStop = false, nowMs = 30)
+    assertNull(policy.onRelease(meansStop = false, nowMs = 60, inside = true))
+    assertEquals(KillSwitchTap.DISARM, policy.onTap(meansStop = false, nowMs = 400))
   }
 
   @Test

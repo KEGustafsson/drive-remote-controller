@@ -4,6 +4,8 @@ import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,7 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.input.pointer.isOutOfBounds
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -108,7 +113,7 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
   val helm = LocalHelmScale.current
   val foreign = view.controlState == ControlState.OTHER
   val label: String
-  val sub: String
+  var sub: String
   val colour: Color
 
   when {
@@ -168,6 +173,24 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
   // anything.
   val canOfferArm = view.connected && !view.armed && !foreign && view.canArm
 
+  // Commands not reaching the boat is said HERE, on the button, and not only on
+  // the COMMANDS lamp: this is what the operator reads before trusting a tap to
+  // do anything, and "DISARMED -- tap to arm" over a path that reaches nothing
+  // is a healthy face on a broken one (a stopped plugin answering 503, a refused
+  // token, no network). It replaces the line rather than adding one, so the
+  // button grows by at most the line's wrap. What a tap DOES is unchanged and
+  // still said: an ARM stays on offer -- a retry is harmless, and if it lands
+  // the path is back -- and a STOP stays a STOP.
+  view.commandsNotReaching?.let { failing ->
+    sub =
+      "$failing · " +
+        when {
+          canOfferArm -> "tap to arm"
+          view.armed && view.connected -> "tap to disarm"
+          else -> "tap to STOP"
+        }
+  }
+
   // ...and a tap aimed at STOP stays a STOP. Deciding from what is on screen
   // when the click fires is not enough: double-tap STOP, the arbiter's release
   // is back in milliseconds, the button flips to "tap to arm", and the second
@@ -178,10 +201,18 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
   val meansStop = !canOfferArm
   val tapPolicy = remember { KillSwitchTapPolicy() }
   SideEffect { tapPolicy.observe(meansStop, SystemClock.elapsedRealtime()) }
-  val onTap: () -> Unit = {
-    when (tapPolicy.onTap(meansStop, SystemClock.elapsedRealtime())) {
-      KillSwitchTap.ARM -> onArm()
-      KillSwitchTap.DISARM -> onDisarm()
+
+  // Read through rememberUpdatedState so the gesture loop below, which is keyed
+  // on nothing and so never restarts mid-press, still sees what the button
+  // means NOW and calls the current callbacks.
+  val currentMeansStop by rememberUpdatedState(meansStop)
+  val currentOnArm by rememberUpdatedState(onArm)
+  val currentOnDisarm by rememberUpdatedState(onDisarm)
+  val act: (KillSwitchTap?) -> Unit = { tap ->
+    when (tap) {
+      KillSwitchTap.ARM -> currentOnArm()
+      KillSwitchTap.DISARM -> currentOnDisarm()
+      null -> Unit
     }
   }
 
@@ -190,11 +221,50 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
       .fillMaxWidth()
       .clip(RoundedCornerShape(12.dp))
       .background(colour)
-      .clickable(onClick = onTap)
+      // Not `clickable`, which acts on the LIFT and cancels when the finger
+      // slides off: a thumb that lands on STOP and skids away -- the ordinary
+      // way a hand meets a button on a moving boat -- sent nothing at all. The
+      // gesture's meaning is fixed at touch-down instead (KillSwitchTapPolicy's
+      // onPress / onRelease): a STOP goes out on the way down and the rest of
+      // that gesture is spent, so its lift can never arm; an ARM waits for a
+      // lift inside the button and a slide-off sends nothing.
+      .pointerInput(Unit) {
+        awaitEachGesture {
+          val down = awaitFirstDown(requireUnconsumed = false)
+          down.consume()
+          act(tapPolicy.onPress(currentMeansStop, SystemClock.elapsedRealtime()))
+          var liftedInside = false
+          try {
+            while (true) {
+              val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+              if (!change.pressed) {
+                liftedInside = !change.isOutOfBounds(size, extendedTouchPadding)
+                change.consume()
+                break
+              }
+              // Slid off: the gesture is over as far as an ARM is concerned,
+              // exactly as `clickable` treats it. A STOP has already gone.
+              if (change.isOutOfBounds(size, extendedTouchPadding)) break
+              change.consume()
+            }
+          } finally {
+            // Also reached on cancellation -- the button leaving the screen
+            // mid-press -- with liftedInside false, which sends nothing.
+            act(tapPolicy.onRelease(currentMeansStop, SystemClock.elapsedRealtime(), liftedInside))
+          }
+        }
+      }
       .padding(vertical = helm.size(18.dp))
-      .semantics {
+      // The same button for TalkBack's double-tap and switch access, which
+      // arrive as a semantics click rather than as pointers. A whole tap at
+      // once, through the same policy -- so the STOP holdover holds there too.
+      .semantics(mergeDescendants = true) {
         role = Role.Button
         contentDescription = "$label. $sub"
+        onClick {
+          act(tapPolicy.onTap(currentMeansStop, SystemClock.elapsedRealtime()))
+          true
+        }
       },
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
@@ -590,7 +660,7 @@ fun ThrusterControl(
       view.holdPhase == HoldPhase.NOT_ENGAGING &&
       view.holdStall != HoldStall.OTHER_SOURCE
     ) {
-      Text(
+      RefusalBand(
         when (view.holdStall) {
           HoldStall.UNIT_FAULT -> "NOT HOLDING — UNIT FAULT"
           HoldStall.NO_REFERENCE -> "NOT HOLDING — NO HEADING FIX"
@@ -598,21 +668,21 @@ fun ThrusterControl(
           // Including HH saying nothing at all: state the fact, and the one
           // remedy that is safe to suggest whatever the cause.
           else -> "NOT HOLDING — CHECK THE UNIT"
-        },
-        fontSize = helm.text(13.sp),
-        fontWeight = FontWeight.Bold,
-        color = DriveColors.ink,
-        // Padding, then the band, then padding: the first is the gap above the
-        // band, the second is the space inside it. Chained the other way round
-        // the band would be drawn over the gap. One line, on purpose -- this
-        // panel sits in the screen's natural-height chrome, so anything that
-        // wraps here comes out of the drive bank's reservation.
-        modifier =
-          Modifier.padding(top = helm.size(6.dp))
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(DriveColors.bad)
-            .padding(horizontal = helm.size(8.dp), vertical = helm.size(4.dp)),
+        }
+      )
+    }
+
+    // The same refusal in MANUAL, where nothing used to say it. A local ENGAGE
+    // release latches every armed remote out of HH until it STOPs and ARMs again,
+    // and the arbiter -- which cannot see that latch -- still hands this station
+    // the token: it read armed, its PORT/STBD contacts lit under a thumb, and the
+    // thruster did nothing. StationView.manualRefusal is the same machinery and
+    // the same grace window as the hold phase above, so it never flashes on an
+    // ordinary arm; it names only a refusal (HH DISARMED) or a fault.
+    if (mode == ThrusterMode.MANUAL && view.manualRefusal != HoldStall.NONE) {
+      RefusalBand(
+        if (view.manualRefusal == HoldStall.UNIT_FAULT) "THRUSTER REFUSED — UNIT FAULT"
+        else "THRUSTER REFUSED — RE-ARM TO COMMAND"
       )
     }
 
@@ -633,6 +703,32 @@ fun ThrusterControl(
       )
     }
   }
+}
+
+/**
+ * The thruster panel's red band: HH is not doing what this station asked, and
+ * what to do about it.
+ */
+@Composable
+private fun RefusalBand(text: String) {
+  val helm = LocalHelmScale.current
+  Text(
+    text,
+    fontSize = helm.text(13.sp),
+    fontWeight = FontWeight.Bold,
+    color = DriveColors.ink,
+    // Padding, then the band, then padding: the first is the gap above the
+    // band, the second is the space inside it. Chained the other way round
+    // the band would be drawn over the gap. One line, on purpose -- this
+    // panel sits in the screen's natural-height chrome, so anything that
+    // wraps here comes out of the drive bank's reservation.
+    modifier =
+      Modifier.padding(top = helm.size(6.dp))
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(6.dp))
+        .background(DriveColors.bad)
+        .padding(horizontal = helm.size(8.dp), vertical = helm.size(4.dp)),
+  )
 }
 
 /**

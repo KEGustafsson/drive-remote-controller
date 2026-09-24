@@ -380,6 +380,83 @@ class StationViewTest {
     assertEquals(HoldPhase.ENGAGED, v.holdPhase)
   }
 
+  // ---- MANUAL: HH refusing an armed station -------------------------------
+
+  /** Armed in MANUAL since [askedAtMs], with HH reporting [fsmState]. */
+  private fun manualView(fsmState: String?, askedAtMs: Long, nowMs: Long, hhSource: String = "none"):
+    StationView {
+    val store = healthyStore(nowMs = nowMs, activeClient = me)
+    store.apply(
+      listOfNotNull(
+        SkContract.HH_MODE to "manual",
+        SkContract.HH_SOURCE to hhSource,
+        fsmState?.let { SkContract.HH_FSM_STATE to it },
+      ),
+      nowMs,
+    )
+    return deriveStationView(store, ConnectionState.OPEN, me, nowMs, manualRequestedSinceMs = askedAtMs)
+  }
+
+  /**
+   * A local ENGAGE release latches every armed remote out until it STOPs and
+   * ARMs again. The arbiter still hands this station the token, so it reads
+   * armed and its contacts light under a thumb -- while HH, reporting DISARMED,
+   * does nothing with any of it.
+   */
+  @Test
+  fun `MANUAL armed with HH reporting DISARMED past the grace is a refusal`() {
+    val v = manualView(SkContract.HH_FSM_DISARMED, askedAtMs = 0, nowMs = SkContract.HOLD_ENGAGE_GRACE_MS)
+    assertTrue(v.thrusterCommandable, "the arbiter's half still says commandable")
+    assertEquals(HoldStall.REFUSED, v.manualRefusal)
+  }
+
+  /** HH reports DISARMED for the round trip after every arm: that is not a refusal. */
+  @Test
+  fun `inside the grace a DISARMED report is not yet a refusal`() {
+    val v = manualView(SkContract.HH_FSM_DISARMED, askedAtMs = 0, nowMs = SkContract.HOLD_ENGAGE_GRACE_MS - 1)
+    assertEquals(HoldStall.NONE, v.manualRefusal)
+  }
+
+  @Test
+  fun `HH armed in MANUAL is no refusal`() {
+    for (state in listOf(SkContract.HH_FSM_HOLDING, SkContract.HH_FSM_ARMED_IDLE)) {
+      assertEquals(HoldStall.NONE, manualView(state, askedAtMs = 0, nowMs = 10_000).manualRefusal, state)
+    }
+  }
+
+  @Test
+  fun `a thruster another source controls is no refusal`() {
+    val v = manualView(SkContract.HH_FSM_DISARMED, askedAtMs = 0, nowMs = 10_000, hhSource = "local")
+    assertEquals("local switch", v.thrusterOverriddenBy)
+    assertEquals(HoldStall.NONE, v.manualRefusal)
+  }
+
+  @Test
+  fun `a faulted unit refuses MANUAL too`() {
+    assertEquals(
+      HoldStall.UNIT_FAULT,
+      manualView(SkContract.HH_FSM_FAULT, askedAtMs = 0, nowMs = 10_000).manualRefusal,
+    )
+  }
+
+  /** No FSM state -- an older HH, or nothing arrived yet -- is no evidence of refusal. */
+  @Test
+  fun `no FSM state, or one this build does not know, raises no MANUAL alarm`() {
+    assertEquals(HoldStall.NONE, manualView(null, askedAtMs = 0, nowMs = 10_000).manualRefusal)
+    assertEquals(HoldStall.NONE, manualView("COASTING", askedAtMs = 0, nowMs = 10_000).manualRefusal)
+  }
+
+  @Test
+  fun `a station not asking in MANUAL has no MANUAL diagnostics`() {
+    val store = healthyStore(nowMs = 10_000, activeClient = me)
+    store.apply(listOf(SkContract.HH_FSM_STATE to SkContract.HH_FSM_DISARMED), 10_000)
+    assertEquals(HoldStall.NONE, view(store, 10_000).manualRefusal)
+    // Asking, but not holding the token: nothing it says reaches HH anyway.
+    val noToken =
+      deriveStationView(healthyStore(nowMs = 10_000), ConnectionState.OPEN, me, 10_000, manualRequestedSinceMs = 0)
+    assertEquals(HoldStall.NONE, noToken.manualRefusal)
+  }
+
   @Test
   fun `reversal interlock is surfaced so a dead-looking thruster is explained`() {
     val store = healthyStore(nowMs = 10_000, activeClient = me)

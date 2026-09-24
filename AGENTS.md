@@ -97,8 +97,8 @@ cd esp32 && pio run -e tx_shesp32|rx_shesp32|hh_shesp32 # build
 cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 321 cases
 cd sk-plugin && npm run build               # -> public/
-cd android && ./gradlew :core:test          # pure Kotlin core, 204 cases
-cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 92 cases (needs SDK)
+cd android && ./gradlew :core:test          # pure Kotlin core, 240 cases
+cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 110 cases (needs SDK)
 cd android && ./gradlew :app:assembleDebug  # needs an Android SDK
 ```
 

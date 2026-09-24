@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.kegustafsson.driveremote.core.CommandSource
+import io.github.kegustafsson.driveremote.core.CommandsTone
 import io.github.kegustafsson.driveremote.core.ConnectionState
 import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.ControlState
@@ -144,6 +145,29 @@ fun StatusPanel(
         modifier = Modifier.weight(1f),
       )
 
+      // Whether this station's commands are actually landing, from the outcome
+      // of its own intent POSTs -- the browser's Commands lamp, same place in the
+      // summary, same wording. In the collapsed summary because a command path
+      // that reaches nothing is a fault the operator must be told, not detail.
+      //
+      // Never dimmed, unlike the browser's copy: the reading does not come from
+      // the stream, it comes from the HTTP path, which is independent of it --
+      // and "the stream is down but commands still land" is precisely the case
+      // where this lamp is the one telling the operator their STOP still works.
+      val commands = view.commands
+      Lamp(
+        title = "COMMANDS",
+        reading = commands.value,
+        colour =
+          when (commands.tone) {
+            CommandsTone.GOOD -> DriveColors.good
+            CommandsTone.NEUTRAL -> DriveColors.neutral
+            CommandsTone.BAD -> DriveColors.bad
+          },
+        dimmed = false,
+        modifier = Modifier.weight(1f),
+      )
+
       Lamp(
         title = "CONTROL",
         reading =
@@ -158,7 +182,7 @@ fun StatusPanel(
       )
 
       // Chevron and version share one column so the version costs no WIDTH --
-      // the two lamps beside it are weight(1f) and would give up space for it.
+      // the lamps beside it are weight(1f) and would give up space for it.
       // Height is the cheaper axis here: this row is inside the telemetry
       // region, which scrolls and commands nothing.
       Column(

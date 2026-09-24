@@ -186,6 +186,93 @@ fun holdStallOf(hhFsmState: String?, thrusterOverridden: Boolean): HoldStall =
   }
 
 /**
+ * Is HH refusing this station's MANUAL commands, and why? [HoldStall.NONE] when
+ * it is not, or when this station cannot tell.
+ *
+ * The MANUAL twin of [holdPhaseOf] + [holdStallOf], built from the same parts
+ * and the same window. HH can refuse an armed remote that the ARBITER still
+ * lets hold the token: a local ENGAGE release latches every armed remote out
+ * until it has been seen to STOP and ARM again (SAFETY.md thruster invariant
+ * 9), and a faulted unit refuses thrust outright. In HOLD the hold-phase band
+ * already says so; in MANUAL nothing did -- the station read armed, its
+ * PORT/STBD contacts lit under a thumb, and the thruster did nothing. A control
+ * that cannot move its machine presented as one that can.
+ *
+ * Deliberately narrower than the HOLD case:
+ *
+ * - Only [HoldStall.REFUSED] (`DISARMED`) and [HoldStall.UNIT_FAULT] (`FAULT`).
+ *   `ARMED_IDLE` is not a refusal in MANUAL -- MANUAL needs no heading fix --
+ *   and a missing or unrecognised FSM state is no evidence of one: an HH that
+ *   predates the path, or has not published yet, must not raise an alarm.
+ * - Not while another source owns the thruster: the "controlled by ..." note
+ *   already says so, and it is not a fault.
+ * - Not inside [SkContract.HOLD_ENGAGE_GRACE_MS] of the request starting. HH
+ *   reports DISARMED for the round trip after every arm, and a band there
+ *   would fire on every arm -- the noise that teaches an operator to ignore it.
+ *
+ * [requestedForMs] is how long this station has been able to command the
+ * thruster with MANUAL selected, or null when it is not.
+ */
+fun manualRefusalOf(
+  thrusterCommandable: Boolean,
+  thrusterOverridden: Boolean,
+  hhFsmState: String?,
+  requestedForMs: Long?,
+): HoldStall {
+  if (requestedForMs == null || !thrusterCommandable || thrusterOverridden) return HoldStall.NONE
+  if (requestedForMs < SkContract.HOLD_ENGAGE_GRACE_MS) return HoldStall.NONE
+  return when (val stall = holdStallOf(hhFsmState, thrusterOverridden = false)) {
+    HoldStall.REFUSED,
+    HoldStall.UNIT_FAULT -> stall
+    else -> HoldStall.NONE
+  }
+}
+
+/**
+ * Must the heading trim be dropped to 0 now? Owner decision, 2026-09-24:
+ * **the trim is kept when the live-data stream drops, and reset only when the
+ * hold ends.**
+ *
+ * The trim is RELATIVE to the heading HH captured when the hold engaged, so
+ * dropping it to 0 is not a neutral act: it swings the boat back by the whole
+ * offset with nobody touching anything. It used to happen whenever this
+ * station's read socket dropped -- even when only the WebSocket had gone and
+ * the intents, which travel over HTTP, were still steering the hold.
+ *
+ * Reset when:
+ *  - [mode] is not HOLD -- always. There is no hold for a trim to belong to.
+ *  - [connected], and this station is not [armed] or HH is not answering. The
+ *    hold has genuinely ended, or cannot be running, and a later hold must
+ *    begin at "hold the captured heading", never at an offset dialled in
+ *    before.
+ *
+ * NOT while disconnected, and that is the point. Liveness is judged on arrival,
+ * so with the socket down HH reads as not answering and `armed` is only
+ * last-known -- neither says anything about the hold, which may well still be
+ * running on the intents this station keeps posting. The trim is kept and keeps
+ * being SENT; only adjusting it is frozen (the steps are inert while the
+ * thruster is not commandable). If HH really has gone, the arbiter zeroes the
+ * trim it publishes on its own: `_refreshUnitLiveness` in
+ * `sk-plugin/arbiter.cjs` sets the holder's `trimDeg = 0` on HH's falling edge,
+ * and `_thrusterCommandable()` masks it to 0 until this station is seen asking
+ * for the safe tuple (off AND no trim) with HH live again -- which the
+ * connected half of this rule then provides.
+ *
+ * [hhAnswering] is the verdict on evidence from the socket as it is NOW; see
+ * [StationView.hhNotAnswering] for why that is not simply `hhLiveness == LIVE`.
+ */
+fun trimMustReset(
+  mode: ThrusterMode,
+  connected: Boolean,
+  armed: Boolean,
+  hhAnswering: Boolean,
+): Boolean = mode != ThrusterMode.HOLD || (connected && (!armed || !hhAnswering))
+
+/** This command with [trimMustReset] applied -- the trim dropped when it must be, else unchanged. */
+fun ThrusterCommand.trimGovernedBy(view: StationView): ThrusterCommand =
+  if (view.trimMustReset(mode)) untrimmed() else this
+
+/**
  * Everything the UI needs to draw itself, derived in one pure place.
  *
  * The Compose layer renders this and nothing else -- it performs no liveness
@@ -295,6 +382,30 @@ data class StationView(
 
   /** Why, when [holdPhase] is [HoldPhase.NOT_ENGAGING]. */
   val holdStall: HoldStall = HoldStall.NONE,
+
+  /**
+   * HH refusing this station's MANUAL commands: [HoldStall.REFUSED] or
+   * [HoldStall.UNIT_FAULT], else [HoldStall.NONE]. See [manualRefusalOf].
+   */
+  val manualRefusal: HoldStall = HoldStall.NONE,
+
+  /**
+   * Is [hhLiveness] a verdict on evidence from the socket as it is NOW?
+   *
+   * False only in the moments after the read socket (re)opens, before HH's
+   * telemetry has had [SkContract.TELEMETRY_STALE_MS] to arrive: the arrival
+   * stamps in the store are from before the drop, so HH reads STALE purely
+   * because this station was not listening. That is the socket's fact, not
+   * HH's, and it must not be acted on as HH going away -- see [hhNotAnswering].
+   * Defaults to true, the answer for a caller that does not track the open.
+   */
+  val hhVerdictSettled: Boolean = true,
+
+  /**
+   * The outcome of this station's last intent POST: whether its commands --
+   * STOP included -- are actually reaching the boat. See [IntentStatus].
+   */
+  val intentStatus: IntentStatus = IntentStatus.UNKNOWN,
 ) {
   val armed: Boolean
     get() = controlState == ControlState.YOU
@@ -324,6 +435,33 @@ data class StationView(
    */
   val changeServerSendsStop: Boolean
     get() = armed && !connected
+
+  /**
+   * HH is positively not answering on a live link: connected, the verdict
+   * settled on post-(re)connect evidence ([hhVerdictSettled]), and not LIVE.
+   *
+   * Narrower than `!readyToArm(hhLiveness)` on purpose. That is also true while
+   * the socket is down and for the first moments after it comes back, and in
+   * neither case has anything been heard from HH that says it has gone.
+   */
+  val hhNotAnswering: Boolean
+    get() = connected && hhVerdictSettled && !readyToArm(hhLiveness)
+
+  /** [trimMustReset] for this view. */
+  fun trimMustReset(mode: ThrusterMode): Boolean =
+    trimMustReset(mode = mode, connected = connected, armed = armed, hhAnswering = !hhNotAnswering)
+
+  /** What the COMMANDS lamp shows. See [commandsIndication]. */
+  val commands: CommandsIndication
+    get() = commandsIndication(intentStatus)
+
+  /**
+   * The kill switch's warning when this station's commands are not reaching the
+   * boat, or null when they are (or nothing has been answered yet). See
+   * [commandsNotReachingLine].
+   */
+  val commandsNotReaching: String?
+    get() = commandsNotReachingLine(intentStatus)
 
   /**
    * Which units are not answering, named for the operator.
@@ -404,6 +542,21 @@ fun deriveStationView(
    * not track it gets no hold diagnostics rather than a false alarm.
    */
   holdRequestedSinceMs: Long? = null,
+  /**
+   * When this station's current MANUAL request began -- able to command the
+   * thruster with MANUAL selected -- on the same clock as [nowMs]; null when it
+   * is not making one.
+   * The MANUAL counterpart of [holdRequestedSinceMs]; see [manualRefusalOf].
+   */
+  manualRequestedSinceMs: Long? = null,
+  /**
+   * When the read socket last opened, on the same clock as [nowMs]; null if
+   * that is not tracked. See [StationView.hhVerdictSettled]. Defaults to null,
+   * which reads every verdict as settled -- the pre-existing behaviour.
+   */
+  streamOpenedAtMs: Long? = null,
+  /** The last intent POST's outcome. See [IntentStatus]. */
+  intentStatus: IntentStatus = IntentStatus.UNKNOWN,
 ): StationView {
   val rxLiveness =
     evaluateLiveness(
@@ -479,6 +632,14 @@ fun deriveStationView(
       hhMode = store.stringOrNull(SkContract.HH_MODE),
       thrusterState = store.stringOrNull(SkContract.HH_THRUSTER_STATE),
       hhFsmState = store.stringOrNull(SkContract.HH_FSM_STATE),
+      hhVerdictSettled =
+        hhVerdictSettledOf(
+          connectionState = connectionState,
+          nowMs = nowMs,
+          streamOpenedAtMs = streamOpenedAtMs,
+          hhTelemetryAtMs = store.receivedAtMs(SkContract.HH_LINK_UP),
+        ),
+      intentStatus = intentStatus,
     )
 
   val holdPhase =
@@ -495,8 +656,37 @@ fun deriveStationView(
       } else {
         HoldStall.NONE
       },
+    manualRefusal =
+      manualRefusalOf(
+        thrusterCommandable = view.thrusterCommandable,
+        thrusterOverridden = view.thrusterOverriddenBy != null,
+        hhFsmState = view.hhFsmState,
+        requestedForMs = manualRequestedSinceMs?.let { nowMs - it },
+      ),
   )
 }
+
+/**
+ * [StationView.hhVerdictSettled] from the facts: settled unless the socket is
+ * open, opened less than [SkContract.TELEMETRY_STALE_MS] ago, and HH's newest
+ * telemetry predates that open.
+ *
+ * Only HH's own telemetry counts as fresh evidence, not the arbiter's
+ * `plugin.hhLive`: Signal K hands a new subscriber each path's RETAINED value,
+ * so a verdict arriving just after the open may have been written long before
+ * it. A unit that is really gone is still called gone -- one staleness window
+ * after the open, which is the same patience a unit that never appeared gets.
+ */
+fun hhVerdictSettledOf(
+  connectionState: ConnectionState,
+  nowMs: Long,
+  streamOpenedAtMs: Long?,
+  hhTelemetryAtMs: Long?,
+): Boolean =
+  connectionState != ConnectionState.OPEN ||
+    streamOpenedAtMs == null ||
+    nowMs - streamOpenedAtMs >= SkContract.TELEMETRY_STALE_MS ||
+    (hhTelemetryAtMs != null && hhTelemetryAtMs >= streamOpenedAtMs)
 
 private fun overrideNote(commandable: Boolean, source: CommandSource): String? =
   if (commandable && source.overridesThisApp) source.label else null

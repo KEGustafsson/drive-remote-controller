@@ -87,6 +87,9 @@ the firmware core with no ESP32 attached.
 |---|---|---|
 | `DriveCommand.kt` | `pure/driveCommand.ts` | the forward/reverse truth table; both pressed ⇒ NEUTRAL |
 | `TrimOffset.kt` | `pure/trimOffset.ts` | the relative, clamped heading-trim accumulator |
+| `StationView.kt` | `App.tsx`, `pure/holdPhase.ts`, `pure/trimReset.ts` | everything the screen draws; the hold phase, the MANUAL refusal, and when the trim is reset (`trimMustReset`) |
+| `KillSwitchTapPolicy.kt` | `KillSwitch.tsx` | what a kill-switch gesture means: the STOP holdover, a STOP on touch-down, an ARM on the lift |
+| `IntentStatus.kt` | `pure/intentStatus.ts` | whether this station's intent POSTs are reaching the boat, and how that is said |
 | `Liveness.kt` | `pure/rxLiveness.ts` | whether a unit is present — on **arrival**, never on a value |
 | `Sources.kt` | `pure/sources.ts` | fixed precedence local > TX > plugin |
 | `ControlState.kt` | `App.tsx` | armed state from `activeClient`; per-machine commandability |
@@ -637,6 +640,69 @@ the band cannot push the drive contacts below their floor on the smallest
 supported window. The browser UI carries the same rule, in the same words
 (`sk-plugin/src/pure/holdPhase.ts`).
 
+**MANUAL gets the same refusal band.** HH can refuse an armed station that the
+arbiter still lets hold the token — a local ENGAGE release latches every armed
+remote out until it STOPs and ARMs again — and in MANUAL nothing used to say so:
+the station read armed, its PORT/STBD contacts lit under a thumb, and the
+thruster did nothing. `StationView.manualRefusal` is the hold-phase machinery
+applied to MANUAL, with the same `HOLD_ENGAGE_GRACE_MS` window from the arm:
+past it, HH reporting `DISARMED` shows `THRUSTER REFUSED — RE-ARM TO COMMAND`,
+and `FAULT` shows `THRUSTER REFUSED — UNIT FAULT`. `ARMED_IDLE` is not a
+refusal in MANUAL, a missing or unknown FSM state is no evidence of one, and a
+thruster another source owns is left to the `controlled by …` note.
+
+**The trim is kept when the live-data stream drops, and reset only when the
+hold ends** (owner decision, 2026-09-24). The trim is relative to the heading HH
+captured, so dropping it to 0 swings the boat back by the whole offset with
+nobody touching anything — which is what used to happen whenever the read
+socket dropped, even with the intents still steering the hold over HTTP. The
+rule is `trimMustReset` in `StationView.kt`: reset when the mode is not HOLD,
+or when — **on a live link** — this station is not armed or HH is not
+answering. Offline nothing is reset: armed-ness is last-known and HH liveness is
+arrival-based, so neither says anything about the hold. The trim is kept, kept
+in every intent, and frozen (the trim steps follow `thrusterCommandable`, which
+is false offline). The first moments after a reconnect count as offline too,
+until HH's first frame arrives or `TELEMETRY_STALE_MS` passes
+(`StationView.hhVerdictSettled`) — the store's arrival stamps are from before
+the drop, and reading those as HH going away would reset the trim on the way
+back from every outage. If HH really has gone, the arbiter zeroes and
+quarantines the trim it publishes on its own (`_refreshUnitLiveness` and
+`_thrusterCommandable` in `arbiter.cjs`), and the connected half of the rule
+then sends the 0 that lifts the quarantine.
+
+**The kill switch's gesture means what it meant at touch-down.** It is not a
+`clickable`, which acts on the lift and cancels when the finger slides off — a
+thumb that landed on STOP and skidded away sent nothing at all. A STOP goes out
+on the way **down**, and the rest of that gesture is spent: the arbiter's
+release flips the button to "tap to arm" while the finger is still there, and
+lifting it — however much later — can never arm. An ARM is the deliberate
+direction and waits for a lift inside the button; sliding off sends nothing.
+Both halves go through `KillSwitchTapPolicy`, so the STOP holdover (a tap within
+`KILL_SWITCH_STOP_HOLDOVER_MS` of the button last meaning STOP is still a STOP)
+applies on touch-down exactly as it did to a click. TalkBack's double-tap and
+switch access arrive as a semantics click, not as pointers, and take the same
+policy through `onTap`. `FailSafeControlsTest` injects the pointers: STOP on
+down with no lift, a STOP gesture's late lift, ARM only on a lift inside, a
+slide-off, and the accessibility click.
+
+**Commands that are not reaching the boat are said, on the kill switch.** Every
+intent POST's outcome is classified as the browser classifies it
+(`IntentStatus.kt`, a port of `pure/intentStatus.ts`: 2xx ok, 401/403 refused,
+503 plugin not running, anything else — no response, a timeout, another status —
+not reaching the boat) and kept in `UiState`. A **COMMANDS** lamp in the
+collapsed summary says it in the browser's words (`reaching boat`, `BLOCKED —
+plugin not running`, `NOT REACHING BOAT`; `BLOCKED — login refused` where the
+browser says "log in", which is not a remedy this station has). Unlike the
+browser's lamp it is not dimmed while the stream is down: it measures the HTTP
+path, not the stream, and "the stream is down but commands still land" is the
+case where it is the one telling the operator a STOP still works. More
+importantly, the kill switch's own line changes: under a stopped plugin
+DISARMED reads `commands not reaching boat — plugin stopped · tap to arm`
+rather than a healthy `tap to arm`. What a tap does is unchanged — an ARM stays on
+offer (a retry is harmless) and a STOP stays a STOP. Before the first answer the
+lamp reads a neutral `unconfirmed` and the kill switch says nothing extra, so
+there is no warning at every launch.
+
 ### Scaling to the screen it is on
 
 Resolution is not the variable. Compose cancels density out, so a 1080p and a
@@ -863,8 +929,8 @@ That is a real milestone and still a long way short of "it works".
 
 | | |
 |---|---|
-| `core/` | **Verified.** 204 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 92 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `core/` | **Verified.** 240 tests, `./gradlew :core:test`, no warnings. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 110 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |
@@ -1016,6 +1082,15 @@ commands anything in earnest.
   What is still covered by reasoning alone is the lifecycle and ordering in
   `StationViewModel`: `onBackgrounded`, the `intentMutex` send lane, and the
   release-before-close order in `teardown`.
+- **Three behaviours from 2026-09-24 are proven only on the JVM.** The kill
+  switch's touch-down STOP is exercised with pointers Robolectric injects, not a
+  thumb on glass — in particular a STOP whose finger skids off the button, the
+  case the change exists for. The kept trim across a dropped stream is a pure
+  rule (`TrimPolicyTest`) wired into `StationViewModel.refreshView`, whose
+  wiring is reasoned rather than tested, and no socket has been dropped under a
+  real trimmed hold to watch the heading not move. And the COMMANDS lamp and the
+  kill switch's "commands not reaching boat" line have been rendered by the
+  suite, never provoked against a stopped plugin on the boat.
 - **Token revocation has never been exercised against a real server.** The
   recovery path below is reasoned and its pure part is tested; no token has
   actually been withdrawn in the Signal K admin UI to watch the app return to

@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -27,6 +28,8 @@ import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DisplayDrivePosition
 import io.github.kegustafsson.driveremote.core.HoldPhase
+import io.github.kegustafsson.driveremote.core.HoldStall
+import io.github.kegustafsson.driveremote.core.IntentStatus
 import io.github.kegustafsson.driveremote.core.SkContract
 import io.github.kegustafsson.driveremote.core.StationView
 import io.github.kegustafsson.driveremote.core.ThrusterMode
@@ -213,6 +216,52 @@ class LayoutFloorsTest {
   fun `no off-screen warning on a small phone with large text`() {
     compose.showControlScreen(fontScale = 2.0f)
     compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
+  }
+
+  // ---- Lines that appear when something is wrong ------------------------
+
+  /**
+   * The kill switch names a command path that is not reaching the boat on its
+   * own secondary line -- which is `sp` text on the button at the top of the
+   * chrome, and wraps where "tap to disarm" did not. It appears exactly when the
+   * operator most needs everything below it, so it is measured at the worst
+   * font scale on the smallest supported viewport rather than assumed to fit.
+   */
+  @Test
+  @Config(sdk = [35], qualifiers = MinimumSupportedScreen)
+  fun `a commands-not-reaching kill switch keeps every floor at large text`() {
+    compose.showControlScreen(view = commandsBlocked, fontScale = 2.0f)
+    compose.onNodeWithContentDescription(BlockedLine, substring = true).assertExists()
+    compose.assertContactFloors()
+  }
+
+  @Test
+  @Config(sdk = [35], qualifiers = SmallPhone)
+  fun `a commands-not-reaching kill switch pushes nothing off a small phone at large text`() {
+    compose.showControlScreen(view = commandsBlocked, fontScale = 2.0f)
+    compose.onNodeWithContentDescription(BlockedLine, substring = true).assertExists()
+    compose.assertContactFloors()
+    compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
+  }
+
+  /** The MANUAL refusal band is one more line in the thruster panel's chrome. */
+  @Test
+  @Config(sdk = [35], qualifiers = MinimumSupportedScreen)
+  fun `the MANUAL refusal band keeps every floor at large text`() {
+    compose.showControlScreen(view = manualRefused, fontScale = 2.0f)
+    compose.onNodeWithText(ManualRefusedBand, useUnmergedTree = true).assertExists()
+    compose.assertContactFloors()
+  }
+
+  @Test
+  @Config(sdk = [35], qualifiers = SmallPhone)
+  fun `the MANUAL refusal band and a failing command path together still keep every floor`() {
+    compose.showControlScreen(
+      view = manualRefused.copy(intentStatus = IntentStatus.NETWORK),
+      fontScale = 2.0f,
+    )
+    compose.onNodeWithText(ManualRefusedBand, useUnmergedTree = true).assertExists()
+    compose.assertContactFloors()
   }
 
   @Test
@@ -702,6 +751,30 @@ private fun ComposeContentTestRule.assertDriveContactsAtLeast(floor: Dp) {
       )
     }
   }
+}
+
+/** What the kill switch says when this station's POSTs are answered 503. */
+private const val BlockedLine = "commands not reaching boat — plugin stopped"
+
+/** The MANUAL refusal band's wording. */
+private const val ManualRefusedBand = "THRUSTER REFUSED — RE-ARM TO COMMAND"
+
+/** Armed and live, but the plugin answers every intent POST with a 503. */
+private val commandsBlocked by lazy { armedAndLive.copy(intentStatus = IntentStatus.UNAVAILABLE) }
+
+/**
+ * Armed and live in MANUAL, with HH refusing: DISARMED since a local ENGAGE
+ * release latched this station out. Every contact is still live on screen,
+ * which is why the band's cost is measured against them.
+ */
+private val manualRefused by lazy {
+  armedAndLive.copy(
+    hhArmed = false,
+    hhMode = "manual",
+    hhFsmState = SkContract.HH_FSM_DISARMED,
+    holdPhase = HoldPhase.IDLE,
+    manualRefusal = HoldStall.REFUSED,
+  )
 }
 
 /**

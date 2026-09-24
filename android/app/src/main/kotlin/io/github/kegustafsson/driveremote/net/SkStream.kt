@@ -113,6 +113,18 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
   var targetSetAtMs: Long = SystemClock.elapsedRealtime()
     private set
 
+  /**
+   * elapsedRealtime when the socket last OPENED -- every open, reconnects
+   * included -- or null if it has not opened since the target was set.
+   *
+   * What lets the view tell "HH has gone" from "this station has only just
+   * started listening again": for a moment after a reconnect every arrival stamp
+   * in [store] predates the drop. See
+   * [io.github.kegustafsson.driveremote.core.StationView.hhVerdictSettled].
+   */
+  var openedAtMs: Long? = null
+    private set
+
   /** (Re)point the stream at a server. Safe to call repeatedly. */
   fun connect(address: ServerAddress, token: String?) {
     closedByCaller = false
@@ -132,6 +144,7 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
     backoff.reset()
     everConnected = false
     targetSetAtMs = SystemClock.elapsedRealtime()
+    openedAtMs = null
     openSocket()
   }
 
@@ -183,6 +196,9 @@ class SkStream(private val httpClient: OkHttpClient, private val scope: Coroutin
         if (myGeneration != generation) return@launch
         backoff.reset()
         everConnected = true
+        // Before the state flips, so the refresh that the flip triggers already
+        // reads this open's time rather than the previous one's.
+        openedAtMs = SystemClock.elapsedRealtime()
         _connectionState.value = ConnectionState.OPEN
         // The only frame this app ever sends.
         webSocket.send(SkDelta.buildSubscribeMessage())

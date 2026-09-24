@@ -98,8 +98,17 @@ class IntentPoster(private val httpClient: OkHttpClient) {
       override val generation: Int,
     ) : Verdict
 
-    /** Transport failure, or any other status. */
-    data class Failed(val reason: String) : Result
+    /**
+     * Transport failure, or any other status.
+     *
+     * [code] is the HTTP status when one arrived, null when none did -- what
+     * [io.github.kegustafsson.driveremote.core.classifyIntentOutcome] needs to
+     * tell a stopped plugin (503) from no network at all. [generation] is the
+     * session it was sent under, so a failure from a server this station has
+     * since left is not reported against the one it is on now; null for a reply
+     * already known to be from a previous server, which is evidence of nothing.
+     */
+    data class Failed(val reason: String, val code: Int? = null, val generation: Int? = null) : Result
   }
 
   /**
@@ -176,11 +185,13 @@ class IntentPoster(private val httpClient: OkHttpClient) {
                   }
                   Result.Unauthorized(code, schemeUsed, myGeneration)
                 }
-                else -> Result.Failed("intent POST $code")
+                else -> Result.Failed("intent POST $code", code = code, generation = myGeneration)
               }
             }
           },
-          onFailure = { Result.Failed(it.message ?: it::class.java.simpleName) },
+          onFailure = {
+            Result.Failed(it.message ?: it::class.java.simpleName, generation = myGeneration)
+          },
         )
     }
 
