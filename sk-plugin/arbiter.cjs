@@ -661,10 +661,13 @@ class ArmArbiter {
     // CONSUMED without being granted: the operator pressed STOP, so their intent
     // was to stop, and re-arming afterwards needs a fresh press. That is the
     // edge-not-level rule, not a special case.
-    const disarmEdge =
-      disarmReq !== null &&
-      rec.lastDisarmReq !== null &&
-      disarmReq > rec.lastDisarmReq;
+    //
+    // A record whose first packet carried no disarm total has no baseline of
+    // its own; it is scored against what the no-record path above would have
+    // used (the remembered total, else 0), so that STOP still fires rather than
+    // being quietly spent as a baseline.
+    const disarmBaseline = rec.lastDisarmReq ?? this._rememberedDisarmReq(clientId);
+    const disarmEdge = disarmReq !== null && disarmReq > disarmBaseline;
     if (disarmEdge) {
       // Universal disarm: any client releases the token, whoever holds it.
       this.holder = null;
@@ -810,12 +813,19 @@ class ArmArbiter {
    * recognised as the SAME station resuming rather than a new one arriving.
    *
    * Bounded like _clients, and insertion-ordered so the oldest memory is the
-   * one dropped. Losing a DISARM memory is not dangerous: that station's next
+   * one dropped -- but a station that sends a session generation is dropped
+   * only once no sessionless one is left. A browser mints a new clientId every
+   * page load, so its entries are never needed again, and letting 32 reloads
+   * push out a phone's memory is what makes losing it reachable at all.
+   *
+   * Losing a DISARM memory is not dangerous: that station's next
    * re-registration is treated as a first sighting again, and a STOP that fires
-   * when it need not is never the dangerous direction. Losing an ARM memory is
-   * the residual of the bound documented on _sessionWatermark, and it costs a
-   * fresh press at worst -- never a granted one, because a first sighting can
-   * only ever raise the arm baseline (below).
+   * when it need not is never the dangerous direction. Losing an ARM memory IS:
+   * the re-registration's baseline then comes from whichever packet arrives
+   * first, so a delayed pre-tap heartbeat followed by the current one reads as
+   * a fresh tap and re-grants the token with no press. That is the residual of
+   * the bound documented on _sessionWatermark, and preferring sessionless
+   * victims confines it to more than 32 distinct sessioned stations.
    *
    * THE TWO COUNTERS AGE DIFFERENTLY, and the asymmetry is the safety property:
    *
@@ -853,7 +863,14 @@ class ArmArbiter {
       this._counterMemory.size >= MAX_TRACKED_CLIENTS &&
       !this._counterMemory.has(clientId)
     ) {
-      this._counterMemory.delete(this._counterMemory.keys().next().value);
+      let victim = this._counterMemory.keys().next().value;
+      for (const id of this._counterMemory.keys()) {
+        if (!this._sessionWatermark.has(id)) {
+          victim = id;
+          break;
+        }
+      }
+      this._counterMemory.delete(victim);
     }
     // delete-then-set moves this entry to the back of the insertion order, so
     // the map ages by last use rather than by first sighting.

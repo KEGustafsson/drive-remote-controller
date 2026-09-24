@@ -382,6 +382,11 @@ constexpr const char* kSkHhArmedPath = "control.remoteController.hh.armed";
 constexpr const char* kSkHhLinkUpPath = "control.remoteController.hh.linkUp";
 constexpr const char* kSkHhReversalPendingPath =
     "control.remoteController.hh.reversalPending";
+// The FSM phase, as ControlTask::StateName() spells it: "DISARMED",
+// "ARMED_IDLE", "HOLDING", "FAULT". Both stations read it to tell a running
+// hold from an armed-but-idle one, so the path and those four strings are
+// mirrored in sk-plugin/src/config.ts and android/core/.../SkContract.kt.
+constexpr const char* kSkHhFsmStatePath = "sensors.headingHold.fsmState";
 
 // Both TX and the plugin (sk-plugin/) publish on value-change plus this periodic
 // refresh, so RX's per-source link_watchdog always has something recent to

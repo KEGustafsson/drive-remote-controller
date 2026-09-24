@@ -351,10 +351,27 @@ describe('registerWithRouter', () => {
       port: 'neutral', stbd: 'neutral', thruster: 'off',
       thrusterMode: 'manual', trimDeg: 0,
     });
+    // Arms from rest (the arbiter grants no arm edge on a commanding packet),
+    // then commands forward -- and proves it is armed, or the final assertion
+    // below would hold whichever clock index.cjs used.
     callHandler(handler, {
       clientId: 'clock-test', seq: 2, armReq: 1, disarmReq: 0,
+      port: 'neutral', stbd: 'neutral', thruster: 'off',
+      thrusterMode: 'manual', trimDeg: 0,
+    });
+    callHandler(handler, {
+      clientId: 'clock-test', seq: 3, armReq: 1, disarmReq: 0,
       port: 'forward', stbd: 'neutral', thruster: 'off',
       thrusterMode: 'manual', trimDeg: 0,
+    });
+    const armed = app.handleMessage.mock.calls.at(-1)?.[1];
+    expect(
+      Object.fromEntries(
+        armed.updates[0].values.map(({ path, value }: { path: string; value: unknown }) => [path, value]),
+      ),
+    ).toMatchObject({
+      'control.remoteController.plugin.enabled': true,
+      'control.remoteController.plugin.port.command': 'forward',
     });
 
     // A civil-clock correction must not create a negative age and preserve

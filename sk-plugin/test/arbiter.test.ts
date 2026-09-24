@@ -489,6 +489,45 @@ describe('ArmArbiter: malformed intents are ignored', () => {
     expect(a.state().enabled).toBe(false);
   });
 
+  // A phone's remembered arm total must outlive a burst of browser page loads.
+  // Each reload mints a new clientId and so a new memory entry; when those
+  // pushed the phone's entry out, its re-registration took its arm baseline
+  // from whichever packet came first -- and a delayed pre-tap heartbeat ahead
+  // of the current one read as a fresh tap, re-granting the token unpressed.
+  it('a burst of sessionless clients cannot push out a sessioned station\'s arm memory', () => {
+    const a = makeArbiter();
+    a.onIntent(intent('phone', { session: 7, seq: 1, armReq: 0 }), 0);
+    a.onIntent(intent('phone', { session: 7, seq: 2, armReq: 1 }), 10);
+    expect(a.state().activeClient).toBe('phone');
+    a.onIntent(intent('other', { disarmReq: 1 }), 20); // someone presses STOP
+    expect(a.state().enabled).toBe(false);
+
+    a.tick(2000); // the phone went quiet and is evicted
+    for (let i = 0; i < MAX_TRACKED_CLIENTS + 8; i++) {
+      a.onIntent(intent(`reload-${i}`), 2100);
+    }
+    a.tick(4000);
+
+    // The phone's link recovers: a delayed pre-tap packet, then the current one.
+    a.onIntent(intent('phone', { session: 7, seq: 1, armReq: 0 }), 4100);
+    a.onIntent(intent('phone', { session: 7, seq: 50, armReq: 1 }), 4110);
+    expect(a.state()).toMatchObject({ enabled: false, activeClient: '' });
+  });
+
+  // A station whose first packet carried no numeric disarm total must still be
+  // able to STOP on its next one -- the no-record path already scores such a
+  // packet against 0, and the with-record path must not instead spend it as a
+  // baseline.
+  it('a STOP after a first packet without a disarm total still stops', () => {
+    const a = makeArbiter();
+    a.onIntent(intent('A', { armReq: 0 }), 0);
+    a.onIntent(intent('A', { armReq: 1 }), 10);
+    expect(a.state().activeClient).toBe('A');
+    a.onIntent(intent('C', { disarmReq: undefined }), 20);
+    a.onIntent(intent('C', { disarmReq: 1 }), 30);
+    expect(a.state()).toMatchObject({ enabled: false, activeClient: '' });
+  });
+
   // An established client must keep being served after the cap is reached --
   // the cap refuses NEW records, it does not stop updating existing ones.
   it('keeps updating clients it already tracks once the table is full', () => {
@@ -1057,11 +1096,12 @@ describe('ArmArbiter: two units, one ARM', () => {
     expect(a.state()).toMatchObject({ enabled: false, port: 'neutral', activeClient: '' });
   });
 
-  // Session ids are UNORDERED -- a uuid per launch -- so "different from the one
-  // on record" cannot mean "newer". An old process's POST delayed past the new
-  // process's first POST would otherwise read as yet another restart, wipe the
-  // new session's record and republish the DEAD process's command. A heartbeat
-  // from a process that has already exited must never move a machine.
+  // Session generations are ORDERED, so a packet from a generation below the
+  // one on record is from a process that has already been replaced. An old
+  // process's POST delayed past the new process's first POST must not read as
+  // yet another restart, wipe the new session's record and republish the DEAD
+  // process's command. A heartbeat from a process that has already exited must
+  // never move a machine.
   it('rejects a late packet from a session that has been replaced', () => {
     const a = bareArbiter();
     a.onRxTelemetry(0);
