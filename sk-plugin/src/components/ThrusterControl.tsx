@@ -74,6 +74,14 @@ interface ThrusterControlProps {
   /** Why, when [holdPhase] is 'not-engaging'. */
   holdStall: HoldStall;
 
+  /**
+   * MANUAL's counterpart (pure/holdPhase.ts `manualRefusal`): HH is refusing
+   * the arm this station holds -- 'refused' or 'unit-fault' -- or 'none'. Armed
+   * in MANUAL with HH latched out, the contacts still light under a finger and
+   * the thruster does nothing; this is what says so.
+   */
+  manualStall?: HoldStall;
+
   /** Source label when a higher-precedence station owns the thruster. */
   overriddenBy?: string;
 
@@ -97,6 +105,7 @@ export function ThrusterControl({
   holdsControl,
   holdPhase,
   holdStall,
+  manualStall = 'none',
   overriddenBy,
   reversalPending,
 }: ThrusterControlProps) {
@@ -203,6 +212,13 @@ export function ThrusterControl({
             aria-live="polite"
           >
             {direction === 'off' ? 'OFF' : direction.toUpperCase()}
+            {armed && !overriddenBy && manualStall !== 'none' && (
+              <span className="thruster-control__alarm" role="alert">
+                {manualStall === 'unit-fault'
+                  ? 'thruster refused — thruster unit fault'
+                  : 'thruster refused — disarm and re-arm to command'}
+              </span>
+            )}
             {preArm && (
               <span className="thruster-control__note" role="status">
                 {' '}

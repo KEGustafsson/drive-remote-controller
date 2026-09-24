@@ -219,6 +219,15 @@ only when it *is* that holder. Concretely:
   The second tap must come at least a second after the button stopped meaning
   STOP: until then a tap is still a STOP, so a double-tapped stop, or a stop
   aimed at *IN USE* just as the holder disarmed, can never arm this device.
+- **STOP acts on touch-down; ARM on lift.** What a press means is fixed the
+  moment the finger lands. If it means STOP it is sent right then, so a hurried
+  stop whose finger slides off the button still stops — and that press can
+  never arm, however long it is held or whatever the button shows when it
+  lifts. If it means ARM nothing happens until the finger lifts on the button,
+  so sliding off still cancels an arm you did not mean. Keyboard and
+  screen-reader activation are decided when they land, by the same rule. The
+  rule is pure (`src/pure/killSwitchGesture.ts`), and the Android station
+  carries the same one.
 - **Fail-safe:** if the holder's tab closes or its WiFi drops, its heartbeat
   stops and the token auto-releases (→ disarmed, both drives NEUTRAL).
 - **Arming only from rest.** An arm press is granted only on a packet that
@@ -248,8 +257,21 @@ same arm token as the drives, in one explicitly-selected mode:
   needs no seed (a press is always well-defined) and no "not commanding"
   sentinel (0 says it); it is clamped to ±45° and the unit slews toward
   `captured heading + trim` at a bounded rate. The app opens in MANUAL — trim is
-  an after-arming action, so the trim resets to 0 whenever the thruster is not
-  commandable and arming never swings the boat to a pre-dialled offset.
+  an after-arming action, so the trim resets to 0 **when the hold ends**:
+  leaving HOLD, or — while the live-data stream is up — this app no longer
+  holding the token, or the heading-hold unit no longer answering. Arming
+  therefore never swings the boat to a pre-dialled offset. It is deliberately
+  **not** reset when only this app's own live-data stream drops or goes silent:
+  commands still travel over HTTP, the hold is still running, and because the
+  trim is relative, zeroing it would turn the boat back by up to 45° with
+  nobody touching anything. While the stream is down the trim is kept and kept
+  being sent, and the trim buttons are frozen (you cannot trim against a heading
+  you cannot see). A unit that genuinely dies meanwhile is caught by the plugin,
+  which zeroes the trim server-side and will not restart the hold until this app
+  sends 0. The rule is pure (`src/pure/trimReset.ts`); the "unit no longer
+  answering" leg only counts once it has held for a full unit-liveness window on
+  a live stream, because both edges of a stream outage can briefly read that way
+  on their own.
 
 **Pick the mode before you arm.** The MANUAL/HOLD chooser stays live while
 disarmed — it commands nothing, it only decides which gate the *next* arm opens,
@@ -284,6 +306,16 @@ when HH has said nothing. A thruster the local switch or TX owns is not reported
 here at all — the "controlled by …" note already says it, and it is not a fault.
 The rule is pure (`src/pure/holdPhase.ts`), the clock is `useHoldPhase`, and the
 Android station carries the same one in the same words.
+
+**MANUAL says so too when the unit refuses the arm.** Releasing the unit's own
+engage switch latches every armed remote out until it disarms and re-arms, and
+the unit then reports `DISARMED` while this app still holds the token — the
+PORT/STBD buttons would still light under a finger while the thruster did
+nothing. So armed in MANUAL, once `HOLD_ENGAGE_GRACE_MS` has passed since the
+arm, a red band reads "thruster refused — disarm and re-arm to command" for
+`DISARMED`, or "thruster refused — thruster unit fault" for `FAULT`. `ARMED_IDLE`
+is where an armed MANUAL unit rests, so it is never flagged; nor is a thruster
+another source owns (`manualRefusal` in `src/pure/holdPhase.ts`).
 
 Authority is the same rule as the drives: the unit's own engage switch wins
 unconditionally, then TX, then this app — and the app says "controlled by TX
@@ -385,6 +417,7 @@ never greys and its disarm is never gated, because stopping must always work.
 - `src/pure/driveCommand.test.ts` — the pure command-mapping logic, mirroring `test_drive_command.cpp`'s coverage.
 - `src/pure/writeAccess.test.ts` — the pure mapping from the server's `/skServer/loginStatus` answer to whether commands can actually be published (the secured-server silent-drop guard above).
 - `src/pure/sources.test.ts` — the pure RX-source parsing/labelling used by the "controlled by …" per-drive note and the multi-controller warning.
+- `src/pure/killSwitchGesture.test.ts`, `src/pure/trimReset.test.ts`, `src/pure/holdPhase.test.ts` — the kill switch's touch-down rule, when the heading trim resets, and what the thruster panel calls a fault, each as a pure table.
 - `src/hooks/useMomentaryButton.test.tsx` — per-button press/release/cancel/multi-pointer/tab-hidden/blur behavior in isolation.
 - `src/skClient.test.ts` — the WebSocket wire protocol (subscribe scoping, the read-only guarantee that no `updates` message is ever sent, reconnect) against a **real** `ws` server, not a mock.
 - `src/App.test.tsx` — component-level interaction tests (arm/disarm via the real arbiter, IN-USE lockout, two-tap takeover, single presses, true simultaneous multi-touch across different buttons) against a real `ws` server running the real arbiter.

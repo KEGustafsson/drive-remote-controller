@@ -381,3 +381,36 @@ describe('ThrusterControl mode switch', () => {
     expect(screen.getByText('MANUAL')).toHaveAttribute('aria-pressed', 'false');
   });
 });
+
+// Armed in MANUAL with HH latched out (a release of its own ENGAGE), the
+// contacts still light under a finger and the thruster does nothing. The
+// refusal is stated, as a HOLD refusal is.
+describe('ThrusterControl: a MANUAL arm HH is refusing', () => {
+  it('states the refusal and the remedy', () => {
+    renderControl({ mode: 'manual', manualStall: 'refused' });
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'thruster refused — disarm and re-arm to command',
+    );
+  });
+
+  it('names a unit fault as such', () => {
+    renderControl({ mode: 'manual', manualStall: 'unit-fault' });
+    expect(screen.getByRole('alert')).toHaveTextContent('thruster refused — thruster unit fault');
+  });
+
+  it('shows no band when HH is taking commands', () => {
+    renderControl({ mode: 'manual', manualStall: 'none' });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('defers to the override note when somebody else owns the thruster', () => {
+    renderControl({ mode: 'manual', manualStall: 'refused', overriddenBy: 'TX remote' });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText(/controlled by TX remote/)).toBeInTheDocument();
+  });
+
+  it('shows no band while the thruster is not commandable', () => {
+    renderControl({ mode: 'manual', manualStall: 'refused', armed: false });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});

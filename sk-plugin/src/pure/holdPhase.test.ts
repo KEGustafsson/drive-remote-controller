@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { HOLD_ENGAGE_GRACE_MS } from '../config';
-import { evaluateHoldPhase, holdEngagedFrom, holdStallReason } from './holdPhase';
+import {
+  evaluateHoldPhase,
+  holdEngagedFrom,
+  holdStallReason,
+  manualRefusal,
+} from './holdPhase';
 
 /**
  * The window exists so that the state EVERY arm passes through is not drawn as
@@ -96,5 +101,51 @@ describe('holdEngagedFrom', () => {
     // published: the ARCHITECTURE.md §9 pair is what this UI used before.
     expect(holdEngagedFrom(true, 'hold', undefined, true)).toBe(true);
     expect(holdEngagedFrom(true, 'hold', null, true)).toBe(true);
+  });
+});
+
+/**
+ * MANUAL has no hold to fail, but HH can still refuse the station: a release of
+ * its own ENGAGE input latches every armed remote out until it re-arms, and HH
+ * then reports DISARMED while this station still holds the token.
+ */
+describe('manualRefusal', () => {
+  const asking = {
+    thrusterCommandable: true,
+    requestedForMs: HOLD_ENGAGE_GRACE_MS,
+    hhFsmState: 'DISARMED',
+    overridden: false,
+  };
+
+  it('reports a refusal once HH has stayed DISARMED past the window', () => {
+    expect(manualRefusal(asking)).toBe('refused');
+  });
+
+  it('holds its peace inside the window -- every arm starts from DISARMED', () => {
+    expect(manualRefusal({ ...asking, requestedForMs: 0 })).toBe('none');
+    expect(manualRefusal({ ...asking, requestedForMs: HOLD_ENGAGE_GRACE_MS - 1 })).toBe('none');
+  });
+
+  it('names a unit fault as such', () => {
+    expect(manualRefusal({ ...asking, hhFsmState: 'FAULT' })).toBe('unit-fault');
+  });
+
+  it('does not flag an armed unit: ARMED_IDLE is MANUAL at rest, HOLDING is running', () => {
+    expect(manualRefusal({ ...asking, hhFsmState: 'ARMED_IDLE' })).toBe('none');
+    expect(manualRefusal({ ...asking, hhFsmState: 'HOLDING' })).toBe('none');
+  });
+
+  it('does not guess from a state it does not know, or from none at all', () => {
+    expect(manualRefusal({ ...asking, hhFsmState: 'SOMETHING_NEW' })).toBe('none');
+    expect(manualRefusal({ ...asking, hhFsmState: undefined })).toBe('none');
+  });
+
+  it('defers to the override note when somebody else owns the thruster', () => {
+    expect(manualRefusal({ ...asking, overridden: true })).toBe('none');
+  });
+
+  it('says nothing when this station is not asking, or cannot command', () => {
+    expect(manualRefusal({ ...asking, requestedForMs: null })).toBe('none');
+    expect(manualRefusal({ ...asking, thrusterCommandable: false })).toBe('none');
   });
 });

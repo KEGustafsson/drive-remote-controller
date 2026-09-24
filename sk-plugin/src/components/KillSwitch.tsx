@@ -1,5 +1,14 @@
-import { useLayoutEffect, useRef } from 'react';
-import { KILL_SWITCH_STOP_HOLDOVER_MS } from '../config';
+import { useLayoutEffect, useRef, type MouseEvent } from 'react';
+import {
+  killClick,
+  killPointerCancel,
+  killPointerDown,
+  killTapMeaning,
+  NO_GESTURE,
+  type KillGesture,
+  type KillGestureStep,
+  type KillTapMeaning,
+} from '../pure/killSwitchGesture';
 import type { RxLiveness } from '../pure/rxLiveness';
 import { runtimeNowMs } from '../pure/runtimeClock';
 
@@ -67,6 +76,15 @@ interface KillSwitchProps {
  * best it is the stop that mattered. Arming while offline is still
  * impossible -- the only offline action is STOP.
  *
+ * A STOP ACTS ON TOUCH-DOWN. A click fires on lift, and only if the pointer
+ * comes up inside the button, so a hurried STOP whose finger slid off used to
+ * send nothing. A pointer down that means STOP now stops there and then, and
+ * that gesture can never arm: its click is swallowed. A pointer down that
+ * means ARM does nothing -- ARM still waits for the click, so sliding off
+ * cancels an arm nobody meant. A keyboard or assistive activation (a click
+ * with no pointer down behind it) is decided at the click. The rule, and why a
+ * swallow can never outlive its gesture, is pure/killSwitchGesture.ts.
+ *
  * A TAP AIMED AT STOP STAYS A STOP. What a tap means is decided when the
  * operator reaches for the button, but the click lands on whatever is shown
  * by then -- and the arbiter answers a STOP within milliseconds. So for
@@ -121,16 +139,31 @@ export function KillSwitch({
     prevDisarmsRef.current = disarms;
   }, [disarms]);
 
-  const onTap = () => {
-    const endedAt = stopEndedAtRef.current;
-    const stillStop =
-      endedAt !== null && runtimeNowMs() - endedAt < KILL_SWITCH_STOP_HOLDOVER_MS;
-    // A tap held over as STOP restarts the window, so hammered STOP taps at
-    // any pace under the holdover never reach ARM, however many there are.
-    if (stillStop && !disarms) stopEndedAtRef.current = runtimeNowMs();
-    if (disarms || stillStop) onDisarm();
-    else onArm();
+  // What a tap means right now, by the holdover policy. A tap held over as
+  // STOP restarts the window, so hammered STOP taps at any pace under the
+  // holdover never reach ARM, however many there are.
+  const decide = (): KillTapMeaning => {
+    const now = runtimeNowMs();
+    const { meaning, restartHoldover } = killTapMeaning(disarms, stopEndedAtRef.current, now);
+    if (restartHoldover) stopEndedAtRef.current = now;
+    return meaning;
   };
+
+  // The gesture in progress: whether its STOP already went out on the way
+  // down, so its click must not act again. A ref, not state -- the click that
+  // reads it follows the pointer down within the same interaction, before any
+  // re-render could be relied on.
+  const gestureRef = useRef<KillGesture>(NO_GESTURE);
+  const apply = ({ gesture, fire }: KillGestureStep) => {
+    gestureRef.current = gesture;
+    if (fire === 'stop') onDisarm();
+    else if (fire === 'arm') onArm();
+  };
+  const onPointerDown = () => apply(killPointerDown(decide()));
+  const onPointerCancel = () => apply(killPointerCancel());
+  const onClick = (e: MouseEvent<HTMLButtonElement>) =>
+    apply(killClick(gestureRef.current, e.detail, decide));
+  const gestureHandlers = { onPointerDown, onPointerCancel, onClick };
 
   if (!connected) {
     return (
@@ -138,7 +171,7 @@ export function KillSwitch({
         type="button"
         className="kill-switch kill-switch--offline"
         aria-pressed={false}
-        onClick={onTap}
+        {...gestureHandlers}
       >
         <span className="kill-switch__state">OFFLINE</span>
         <span className="kill-switch__hint">
@@ -199,7 +232,7 @@ export function KillSwitch({
       type="button"
       className={`kill-switch ${stateClass}`}
       aria-pressed={armed}
-      onClick={onTap}
+      {...gestureHandlers}
     >
       <span className="kill-switch__state">{stateLabel}</span>
       <span className="kill-switch__hint">{hint}</span>

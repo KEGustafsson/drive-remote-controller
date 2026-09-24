@@ -77,6 +77,12 @@ export interface ArbiterHarness {
    */
   stallConnections: () => void;
   /**
+   * Undo stallConnections: the same sockets start hearing the server again,
+   * with no reconnect -- the link came back before the client's silence
+   * watchdog gave up on it. Messages sent while stalled stay lost.
+   */
+  resumeConnections: () => void;
+  /**
    * Stop simulating the RX unit: no more telemetry deltas. Models the board
    * being switched off / losing WiFi -- note that NOTHING announces this, no
    * "RX is gone" message exists; its absence is the only evidence, which is
@@ -146,7 +152,7 @@ export async function startArbiterServer(
   }
 
   // Sockets that are still open but no longer hear anything (stallConnections).
-  const stalled = new WeakSet<WsSocket>();
+  let stalled = new WeakSet<WsSocket>();
   function sendAll(msg: string) {
     for (const ws of sockets) {
       if (ws.readyState === ws.OPEN && !stalled.has(ws)) ws.send(msg);
@@ -295,6 +301,9 @@ export async function startArbiterServer(
     },
     stallConnections: () => {
       for (const ws of sockets) stalled.add(ws);
+    },
+    resumeConnections: () => {
+      stalled = new WeakSet<WsSocket>();
     },
     close: () => {
       clearInterval(stateTimer);

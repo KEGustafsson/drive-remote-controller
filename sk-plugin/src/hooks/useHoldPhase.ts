@@ -3,6 +3,7 @@ import { RX_TELEMETRY_POLL_MS } from '../config';
 import {
   evaluateHoldPhase,
   holdStallReason,
+  manualRefusal,
   type HoldPhase,
   type HoldStall,
 } from '../pure/holdPhase';
@@ -34,6 +35,45 @@ export function useHoldPhase(
   hhFsmState: unknown,
   overridden: boolean,
 ): HoldStatus {
+  const requestedForMs = useRequestedForMs(requesting);
+
+  const phase = evaluateHoldPhase({
+    thrusterCommandable: requesting,
+    holdEngaged,
+    requestedForMs,
+  });
+
+  return {
+    phase,
+    stall:
+      phase === 'not-engaging' ? holdStallReason(hhFsmState, overridden) : 'none',
+  };
+}
+
+/**
+ * MANUAL's counterpart: is HH refusing the arm this station holds? The rule is
+ * pure/manualRefusal (holdPhase.ts); the window and its clock are the same ones
+ * useHoldPhase uses.
+ *
+ * @param requesting MANUAL selected AND this station able to command the
+ *   thruster -- armed in MANUAL is the request.
+ */
+export function useManualRefusal(
+  requesting: boolean,
+  hhFsmState: unknown,
+  overridden: boolean,
+): HoldStall {
+  const requestedForMs = useRequestedForMs(requesting);
+  return manualRefusal({
+    thrusterCommandable: requesting,
+    requestedForMs,
+    hhFsmState,
+    overridden,
+  });
+}
+
+/** How long `requesting` has been continuously true, ms; null while it is not. */
+function useRequestedForMs(requesting: boolean): number | null {
   const [now, setNow] = useState(() => runtimeNowMs());
   const [since, setSince] = useState<number | null>(null);
 
@@ -51,17 +91,7 @@ export function useHoldPhase(
     setSince(requesting ? runtimeNowMs() : null);
   }, [requesting]);
 
-  const phase = evaluateHoldPhase({
-    thrusterCommandable: requesting,
-    holdEngaged,
-    // Clamped for the same reason the liveness age is: a throttled background
-    // tab's timer can lag a stamp taken from the same clock.
-    requestedForMs: since === null ? null : Math.max(0, now - since),
-  });
-
-  return {
-    phase,
-    stall:
-      phase === 'not-engaging' ? holdStallReason(hhFsmState, overridden) : 'none',
-  };
+  // Clamped for the same reason the liveness age is: a throttled background
+  // tab's timer can lag a stamp taken from the same clock.
+  return since === null ? null : Math.max(0, now - since);
 }
