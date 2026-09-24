@@ -1,5 +1,6 @@
 #include "heading/control_step.h"
 
+#include "common/elapsed_ms.h"
 #include "heading/angle_math.h"
 #include "heading/setpoint.h"
 
@@ -58,7 +59,14 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   // sample (avoid reapplying the same fix's correction gain repeatedly
   // between server pushes).
   heading_filter_.Predict(r_dps_, in.dt_s);
-  if (in.gnss.valid && in.gnss.t_ms != last_applied_gnss_t_ms_) {
+  // A fix stamped AFTER this tick's clock read is not bad data: the SK
+  // listener stamps HH's own millis() on the loop task, and its callback can
+  // land between the control task reading now_ms and snapshotting the heading
+  // (common/elapsed_ms.h). Correct() would reject it as ~49 days old, and
+  // marking it applied would then drop that fix for good. Leave it unapplied
+  // instead; next tick it is in the past and goes through normally.
+  if (in.gnss.valid && in.gnss.t_ms != last_applied_gnss_t_ms_ &&
+      !IsFutureTimestamp(in.now_ms, in.gnss.t_ms)) {
     heading_filter_.Correct(in.gnss, in.now_ms);
     last_applied_gnss_t_ms_ = in.gnss.t_ms;
   }
@@ -101,23 +109,27 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   ThrusterArbitrationResult cmd_in =
       ArbitrateThruster(local_engage, tx, plugin);
 
-  // Arm the latch for a source that was HOLDING the thruster on the previous
-  // tick and has now gone STALE -- a link that dropped, not a decision. A
-  // deliberate enabled=false is not latched (the station is present and said
-  // stop, so its next arm is already a fresh press), and neither is the local
-  // ENGAGE taking over, which is a human at the unit rather than a lost
-  // station. Read from the PREVIOUS tick's arbitration: by the time a source
-  // goes stale it is no longer in this tick's result.
-  if (prev_remote_source_ == ActiveSource::kTx &&
-      prev_remote_mode_ == ThrusterMode::kHold && !in.tx.live) {
+  // Arm the latch for a source that was ARMED IN HOLD on the previous tick --
+  // live, enabled (after its own latch) and publishing hold -- and has now gone
+  // STALE: a link that dropped, not a decision. Judged PER SOURCE, whoever was
+  // in command: a source outranked by TX or by the local ENGAGE is still armed
+  // in HOLD with a retained enabled=true, and the moment whatever outranked it
+  // lets go, that retained value would qualify it and hand the FSM a rising
+  // edge nobody pressed. A deliberate enabled=false is not latched (the station
+  // is present and said stop, so its next arm is already a fresh press), and
+  // the local ENGAGE taking over latches nothing by itself -- a live station
+  // that is merely outranked is still there to disarm. Read from the PREVIOUS
+  // tick: by the time a source goes stale it no longer qualifies this tick.
+  if (prev_tx_armed_in_hold_ && !in.tx.live) {
     tx_reengage_blocked_ = true;
   }
-  if (prev_remote_source_ == ActiveSource::kPlugin &&
-      prev_remote_mode_ == ThrusterMode::kHold && !in.plugin.live) {
+  if (prev_plugin_armed_in_hold_ && !in.plugin.live) {
     plugin_reengage_blocked_ = true;
   }
-  prev_remote_source_ = cmd_in.source;
-  prev_remote_mode_ = cmd_in.mode;
+  prev_tx_armed_in_hold_ =
+      tx.live && tx.enabled && tx.mode == ThrusterMode::kHold;
+  prev_plugin_armed_in_hold_ =
+      plugin.live && plugin.enabled && plugin.mode == ThrusterMode::kHold;
 
   const bool manual_mode = cmd_in.mode == ThrusterMode::kManual;
 
@@ -141,6 +153,15 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   // Likewise the coast timers, which exist to disengage a hold that has lost
   // its reference. There is nothing to coast in manual mode.
   fsm_in.heading_age_ms = manual_mode ? 0 : heading_age_ms;
+  // ...which is exactly why a MANUAL session that flips to HOLD has to meet the
+  // arm gate THEN: it reached HOLDING with the gate waived, and the mode change
+  // is no FSM engage edge. Without this, a flip with a stale heading (inside
+  // coast_max) captured a dead-reckoned base and steered on it until coast_max.
+  // The FSM re-applies heading_ok_to_arm on this tick (FsmInputs::
+  // hold_mode_entered), so the flip behaves as a direct arm into HOLD does.
+  const bool entering_hold_mode =
+      cmd_in.mode == ThrusterMode::kHold && prev_mode_ == ThrusterMode::kManual;
+  fsm_in.hold_mode_entered = entering_hold_mode;
 
   FsmState state = safety_fsm_.Update(fsm_in);
 
@@ -176,13 +197,13 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   // which gate asked. Each gate still applies its OWN dwell to this shared
   // history, which is what preserves the deliberate HOLD/MANUAL asymmetry
   // (config.h): MANUAL's dwell is 0, so it still reverses immediately.
-  const bool entering_hold_mode =
-      cmd_in.mode == ThrusterMode::kHold && prev_mode_ == ThrusterMode::kManual;
   if (cmd_in.mode != prev_mode_) {
     if (manual_mode) {
-      manual_thrust_.Reset(in.now_ms, last_thrust_dir_, last_thrust_end_ms_);
+      manual_thrust_.Reset(in.now_ms, last_thrust_dir_,
+                           ThrustEndedMs(in.now_ms));
     } else {
-      switcher_.Reset(in.now_ms, last_thrust_dir_, last_thrust_end_ms_);
+      switcher_.Reset(in.now_ms, last_thrust_dir_,
+                      ThrustEndedMs(in.now_ms));
     }
     prev_mode_ = cmd_in.mode;
   }
@@ -240,7 +261,8 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
       // Seeded for the same reason as the mode-change reset above: a hold
       // entered shortly after a manual thrust (disarm, re-arm in HOLD) must
       // still wait out the interlock against that thrust.
-      switcher_.Reset(in.now_ms, last_thrust_dir_, last_thrust_end_ms_);
+      switcher_.Reset(in.now_ms, last_thrust_dir_,
+                      ThrustEndedMs(in.now_ms));
     }
     // A remotely commanded TRIM offsets the setpoint from the captured base
     // and the setpoint slews toward it at a bounded rate. The trim is relative
@@ -274,14 +296,18 @@ ControlStep::Outputs ControlStep::Step(const Inputs& in) {
   switcher_.TrackDuty(dir != Cmd::kOff, in.now_ms);
 
   // Shared last-thrust history, taken from the ACTUAL emitted direction so it
-  // spans both gates, every mode change and every disarm. While a direction is
-  // being driven this keeps advancing, so the instant thrust stops it holds the
-  // moment it stopped -- which is what the next gate's reversal dwell is
-  // measured from. Recorded AFTER the gates have run, so the seeding above
-  // always sees the previous tick's state, never this tick's.
+  // spans both gates, every mode change and every disarm. The end is stamped
+  // on the first OFF tick after a thrust -- when the lines physically dropped,
+  // the same instant the Switcher starts timing its own reversals -- which is
+  // what the next gate's reversal dwell is measured from. Recorded AFTER the
+  // gates have run, so the seeding above always sees the previous tick's
+  // state, never this tick's (see ThrustEndedMs() for the tick in between).
   if (dir != Cmd::kOff) {
     last_thrust_dir_ = dir;
+    thrusting_ = true;
+  } else if (thrusting_) {
     last_thrust_end_ms_ = in.now_ms;
+    thrusting_ = false;
   }
 
   Outputs out;

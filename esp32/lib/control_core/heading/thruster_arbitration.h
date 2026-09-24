@@ -115,9 +115,9 @@ inline Cmd ThrusterCmdFromSkString(const char* s) {
 // trip costs one 250 ms gap in a command the operator is already watching.
 // HOLD is the opposite: an autonomous loop against a setpoint HH captured for
 // itself, with nobody at a button. Dropping it costs the whole hold, because a
-// source that goes stale while it was the authoritative HOLD commander arms the
-// re-engage latch (control_step.h, SAFETY.md thruster invariant 9) -- permanent
-// until that station is seen live and DISARMED. So HOLD buys headroom against
+// source that goes stale while it is armed in HOLD arms the re-engage latch
+// (control_step.h, SAFETY.md thruster invariant 9) -- permanent until that
+// station is seen live and DISARMED. So HOLD buys headroom against
 // transport jitter and MANUAL buys promptness, and neither number is the other
 // one's default.
 //

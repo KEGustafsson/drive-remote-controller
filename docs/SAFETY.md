@@ -149,9 +149,12 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
    restarts silently because a sensor recovered. For a remote station the
    engage edge is its `enabled` flag going false then true, and a link outage
    cannot manufacture one: a station whose link to HH went stale while it was
-   engaging HOLD is refused when the link returns, however its retained
+   armed in HOLD is refused when the link returns, however its retained
    `enabled` reads, until HH has seen it live and *disabled* — the operator
-   must disarm and re-arm. HH boots in that same refused state for both remote
+   must disarm and re-arm. That holds whether or not it was the station in
+   command: one outranked by TX or by the local ENGAGE carries the same
+   retained `enabled`, and would engage the moment whatever outranked it let
+   go. HH boots in that same refused state for both remote
    sources, so a station left armed across an HH power-cycle cannot engage a
    hold at boot either. MANUAL deliberately resumes after a link blip, exactly
    as a held shift switch does at RX: a momentary button is the operator's

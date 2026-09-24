@@ -183,6 +183,38 @@ void test_coast_max_disengages_to_armed_idle_and_requires_fresh_engage() {
   TEST_ASSERT_EQUAL(FsmState::kHolding, fsm.Update(in));
 }
 
+// MANUAL reaches HOLDING with the heading gate waived; the tick the mode flips
+// to HOLD re-applies it. A bad heading parks the FSM in ARMED_IDLE with the
+// request still pending -- the direct-arm wait -- and a good one then promotes
+// with JustEnteredHolding(), so the caller captures a fresh setpoint.
+void test_hold_mode_entered_reapplies_the_heading_gate() {
+  SafetyFsm fsm(TestCfg());
+  FsmInputs in = Healthy(true);  // MANUAL: gate waived by the caller
+  TEST_ASSERT_EQUAL(FsmState::kHolding, fsm.Update(in));
+
+  in.heading_ok_to_arm = false;  // HOLD's real verdict: stale heading
+  in.heading_age_ms = 5000;      // inside coast_max -- coast would not catch it
+  in.hold_mode_entered = true;
+  TEST_ASSERT_EQUAL(FsmState::kArmedIdle, fsm.Update(in));
+  in.hold_mode_entered = false;
+  TEST_ASSERT_EQUAL(FsmState::kArmedIdle, fsm.Update(in));
+
+  in.heading_ok_to_arm = true;
+  in.heading_age_ms = 0;
+  TEST_ASSERT_EQUAL(FsmState::kHolding, fsm.Update(in));
+  TEST_ASSERT_TRUE(fsm.JustEnteredHolding());
+}
+
+// With a good heading the flip changes nothing: still HOLDING, no re-entry.
+void test_hold_mode_entered_with_good_heading_keeps_holding() {
+  SafetyFsm fsm(TestCfg());
+  FsmInputs in = Healthy(true);
+  fsm.Update(in);
+  in.hold_mode_entered = true;
+  TEST_ASSERT_EQUAL(FsmState::kHolding, fsm.Update(in));
+  TEST_ASSERT_FALSE(fsm.JustEnteredHolding());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -198,5 +230,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_fresh_engage_edge_resumes_holding_after_fault_recovery);
   RUN_TEST(test_coast_warning_between_warn_and_max_keeps_holding);
   RUN_TEST(test_coast_max_disengages_to_armed_idle_and_requires_fresh_engage);
+  RUN_TEST(test_hold_mode_entered_reapplies_the_heading_gate);
+  RUN_TEST(test_hold_mode_entered_with_good_heading_keeps_holding);
   return UNITY_END();
 }

@@ -343,7 +343,7 @@ Three things are adapted per mode, and only these three:
 
 | Precondition | HOLD | MANUAL | Reason |
 |---|---|---|---|
-| Good-heading arm gate | required | not required | The gate exists so the loop never steers against a heading it cannot trust. Manual consults no heading — the operator's eyes are the reference. |
+| Good-heading arm gate | required | not required | The gate exists so the loop never steers against a heading it cannot trust. Manual consults no heading — the operator's eyes are the reference. A MANUAL session switched to HOLD meets the gate at the switch, exactly as an arm into HOLD does: on a stale heading it waits in `ARMED_IDLE` and engages once the heading is good. |
 | GNSS coast timers | active | inert | Nothing is being held, so there is nothing to coast. |
 | Source staleness window | 2000 ms | 1000 ms | What a false "source gone" costs. A manual command is a momentary button with the operator watching: it must stop promptly when a station vanishes, and a false trip costs one 250 ms gap. A hold is autonomous, and losing it arms the re-engage latch (SAFETY.md thruster invariant 9) — permanent until someone disarms and re-arms. So HOLD buys headroom against transport jitter. `kThrusterHoldSourceStalenessMs` / `kThrusterManualSourceStalenessMs`. |
 

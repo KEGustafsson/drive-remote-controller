@@ -183,8 +183,11 @@ class ControlStep {
   // thrusting with nobody having touched anything. The station never asked
   // twice; the link merely healed.
   //
-  // So a source that was the AUTHORITATIVE HOLD commander when its link
-  // dropped is latched out: its `enabled` is forced false before arbitration
+  // So a source that was ARMED IN HOLD when its link dropped is latched out --
+  // whether or not it was the one in command at the time. An outranked source
+  // (TX above it, or the local ENGAGE) carries the same retained enabled=true,
+  // and would supply the same unpressed edge the moment whatever outranked it
+  // let go. Its `enabled` is forced false before arbitration
   // sees it, and the latch clears only when that station has been observed
   // live and DISARMED -- proof a human took it out of arm, so its next
   // `enabled=true` is a deliberate fresh arm rather than a retained value
@@ -221,11 +224,12 @@ class ControlStep {
   // be re-armed, which is the case that must not be silent.
   bool tx_reengage_blocked_ = true;
   bool plugin_reengage_blocked_ = true;
-  // Which source was authoritative on the PREVIOUS tick, and in which mode.
-  // The latch is armed from these, not from this tick's arbitration: on the
-  // tick a source goes stale it is already gone from the result.
-  ActiveSource prev_remote_source_ = ActiveSource::kNone;
-  ThrusterMode prev_remote_mode_ = ThrusterMode::kHold;
+  // Whether each source was armed in HOLD (live, enabled after its latch, mode
+  // hold) on the PREVIOUS tick, regardless of who won arbitration. The latch is
+  // armed from these, not from this tick's values: on the tick a source goes
+  // stale it no longer qualifies.
+  bool prev_tx_armed_in_hold_ = false;
+  bool prev_plugin_armed_in_hold_ = false;
 
   // The direction the THRUSTER was last actually driven in, and when that
   // thrust last stopped -- tracked from the emitted output, so it spans both
@@ -234,8 +238,20 @@ class ControlStep {
   // nothing about which software gate produced the previous thrust. Whichever
   // gate takes over is seeded from these (see Step()), so its reversal dwell is
   // measured against what the motor actually did, not against a fresh zero.
+  //
+  // The end is stamped at the FIRST OFF TICK after a thrust -- the moment the
+  // lines actually dropped and the coast began -- which is the same instant
+  // the Switcher times its own reversals from (it enters OFF on that tick).
+  // Stamping the last ON tick instead made every carried dwell one control
+  // tick short. `thrusting_` is the previous tick's output; while it is set the
+  // thrust has not ended yet, and a gate seeded on this tick takes now_ms as
+  // the end (ThrustEndedMs()).
   Cmd last_thrust_dir_ = Cmd::kOff;
   uint32_t last_thrust_end_ms_ = 0;
+  bool thrusting_ = false;
+  uint32_t ThrustEndedMs(uint32_t now_ms) const {
+    return thrusting_ ? now_ms : last_thrust_end_ms_;
+  }
 
   uint32_t last_applied_gnss_t_ms_ = 0;
   uint32_t last_yaw_update_ms_ = 0;

@@ -147,6 +147,20 @@ void test_zero_dwell_allows_immediate_reversal() {
   TEST_ASSERT_TRUE(m.Update(Cmd::kStbd, 1) == Cmd::kStbd);
 }
 
+// With no dwell nothing is ever WITHHELD, so reversal_pending must never read
+// true -- including on the one forced-OFF tick of a direct flick, which is the
+// structural interlock, not a wait. SAFETY.md thruster invariant 7: with MANUAL
+// at 0, reversalPending never publishes in manual mode.
+void test_zero_dwell_never_reports_a_reversal_pending() {
+  ManualThrust m(0.0f);
+  m.Reset(0);
+  m.Update(Cmd::kPort, 0);
+  TEST_ASSERT_TRUE(m.Update(Cmd::kStbd, 10) == Cmd::kOff);
+  TEST_ASSERT_FALSE(m.reversal_pending());
+  TEST_ASSERT_TRUE(m.Update(Cmd::kStbd, 20) == Cmd::kStbd);
+  TEST_ASSERT_FALSE(m.reversal_pending());
+}
+
 void test_negative_or_nan_dwell_is_treated_as_zero_not_forever() {
   // A corrupted config value must not silently make reversal impossible.
   ManualThrust neg(-5.0f);
@@ -178,6 +192,7 @@ int main(int, char**) {
   RUN_TEST(test_first_thrust_after_reset_is_never_delayed);
   RUN_TEST(test_reset_while_thrusting_drops_the_output);
   RUN_TEST(test_zero_dwell_allows_immediate_reversal);
+  RUN_TEST(test_zero_dwell_never_reports_a_reversal_pending);
   RUN_TEST(test_negative_or_nan_dwell_is_treated_as_zero_not_forever);
   return UNITY_END();
 }

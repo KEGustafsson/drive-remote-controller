@@ -35,6 +35,15 @@ FsmState SafetyFsm::Update(const FsmInputs& in) {
     state_ = FsmState::kArmedIdle;
   }
 
+  // A hold starting from MANUAL (see FsmInputs::hold_mode_entered) must pass
+  // the same heading gate as an arm. Returning to ARMED_IDLE without clearing
+  // hold_requested_ makes it exactly the direct-arm case: nothing was holding
+  // a heading to interrupt, so it waits and promotes once the heading is good.
+  if (in.hold_mode_entered && state_ == FsmState::kHolding &&
+      !in.heading_ok_to_arm) {
+    state_ = FsmState::kArmedIdle;
+  }
+
   if (state_ == FsmState::kArmedIdle) {
     coast_warning_ = false;
     if (hold_requested_ && in.heading_ok_to_arm) {
