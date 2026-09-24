@@ -144,7 +144,7 @@ jobs:
           persist-credentials: false
 
       - if: matrix.language == 'java-kotlin'
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: "21"
@@ -161,7 +161,7 @@ jobs:
         name: Install PlatformIO
         run: pip install --upgrade platformio
 
-      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
+      - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -207,6 +207,6 @@ jobs:
         working-directory: esp32
         run: pio test -e native --without-testing
 
-      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
+      - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v3
         with:
           category: /language:${{ matrix.language }}
