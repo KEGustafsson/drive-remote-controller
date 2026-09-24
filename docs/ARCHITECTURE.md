@@ -429,12 +429,22 @@ The trim magnitude is clamped to `kMaxTrimDeg` (±45°).
   trim or a mode change.
 - **Arm-first, then trim.** Arming holds the captured heading (trim 0); trimming
   is a deliberate action taken afterward. **Every** station enforces this by
-  resetting its trim to 0 whenever the thruster is not commandable from it, so
-  arming never swings the boat to an offset dialled in earlier. The condition is
+  resetting its trim to 0 when the hold ends, so arming never swings the boat
+  to an offset dialled in earlier. The condition is
   `control_core::TrimHoldAllowed` (HOLD mode, this station enabled, HH answering)
   — stated once in the pure core because all three stations owe it and each
   implements it in its own language: TX in its sample loop, the plugin in
-  `App.tsx`, the Android station in `StationViewModel`. TX originally omitted the
+  `src/pure/trimReset.ts`, the Android station in `StationView.trimMustReset`.
+  The two network stations apply the *station enabled* and *HH answering* terms
+  only while their live-data stream is up (owner decision 2026-09-24): those are
+  verdicts read off that stream, and a station that has only lost sight of the
+  boat is still commanding over HTTP, so zeroing a relative trim then would turn
+  the boat by up to `kMaxTrimDeg` with nobody touching anything. While blind
+  they keep sending the trim and freeze the trim buttons; the arbiter zeroes and
+  quarantines the trim itself if HH really drops (`_refreshUnitLiveness`,
+  `_maybeRelease`). *HH answering* counts as lost only after HH has read
+  not-live for a full liveness window on a live stream, because both edges of a
+  stream outage briefly read that way. TX originally omitted the
   *station enabled* term, and on TX the enable switch **is** the arm, so a trim
   dialled in while disarmed was applied by the act of arming.
 
@@ -879,6 +889,14 @@ a confident ARMED — or a false DISARMED: the socket is only the read side, and
 the intent heartbeat keeps POSTing over HTTP, so the tab may still genuinely
 hold the token. The OFFLINE tap therefore stays live and always means STOP;
 disarm is never gated on the read socket's health (SAFETY.md).
+
+On both stations a kill-switch gesture's meaning is fixed at **touch-down**: a
+press that means STOP (or lands within the 1 s holdover after the button last
+meant STOP) disarms on the down and its lift can never arm, so a hurried STOP
+that slides off the button still stops; ARM acts on the lift inside the button,
+so sliding off cancels an unintended arm. Keyboard and accessibility activation
+go through the same policy (`pure/killSwitchGesture.ts`,
+`core/KillSwitchTapPolicy.kt`).
 
 Screenshots of every operating state are in
 [sk-plugin/README.md](../sk-plugin/README.md), captured from the real built app driving
