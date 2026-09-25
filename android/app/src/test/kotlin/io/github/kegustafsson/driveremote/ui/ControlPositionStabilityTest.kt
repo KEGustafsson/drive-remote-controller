@@ -160,6 +160,63 @@ class ControlPositionStabilityTest {
     compose.assertSameGeometryAfter(armed.copy(thrusterOverriddenBy = CommandSource.TX.label))
   }
 
+  /**
+   * At the owner's 1.3x the longest notice, "reversing — waiting for the
+   * thruster interlock", is wider than the panel on a 360 dp phone. Every
+   * notice must fit its reservation there, wrapped or not.
+   */
+  @Test
+  fun `every thruster notice fits its line at the owner's font scale`() {
+    compose.assertSameGeometry(armed, armed.copy(reversalPending = true), fontScale = 1.3f)
+    compose.assertSameGeometryAfter(armed.copy(thrusterOverriddenBy = CommandSource.LOCAL.label))
+    compose.assertSameGeometryAfter(manualRefused.copy(manualRefusal = HoldStall.UNIT_FAULT))
+    compose.assertSameGeometryAfter(manualRefused)
+  }
+
+  /** Reserved from the messages themselves, so double text holds too. */
+  @Test
+  fun `every thruster notice fits its line at double system text`() {
+    compose.assertSameGeometry(armed, armed.copy(reversalPending = true), fontScale = 2.0f)
+    compose.assertSameGeometryAfter(armed.copy(thrusterOverriddenBy = CommandSource.LOCAL.label))
+    compose.assertSameGeometryAfter(manualRefused)
+  }
+
+  /** "controlled by local switch" is wider than a drive column at 1.3x. */
+  @Test
+  fun `the longest drive override fits its line at the owner's font scale`() {
+    compose.assertSameGeometry(
+      armed,
+      armed.copy(portOverriddenBy = CommandSource.LOCAL.label, stbdOverriddenBy = CommandSource.TX.label),
+      fontScale = 1.3f,
+    )
+  }
+
+  @Test
+  fun `the HOLD refusal bands fit their line at the owner's font scale`() {
+    compose.assertSameGeometry(
+      holding,
+      holding.copy(holdPhase = HoldPhase.NOT_ENGAGING, holdStall = HoldStall.REFUSED),
+      mode = ThrusterMode.HOLD,
+      fontScale = 1.3f,
+    )
+    compose.assertSameGeometryAfter(
+      holding.copy(holdPhase = HoldPhase.NOT_ENGAGING, holdStall = HoldStall.NO_REFERENCE)
+    )
+    compose.assertSameGeometryAfter(
+      holding.copy(holdPhase = HoldPhase.NOT_ENGAGING, holdStall = HoldStall.UNIT_FAULT)
+    )
+  }
+
+  /** The kill switch's longest lines, at the owner's font scale. */
+  @Test
+  fun `the kill switch's longest lines fit their reservation at the owner's font scale`() {
+    compose.assertSameGeometry(disarmed, disarmed.copy(controlState = ControlState.OTHER), fontScale = 1.3f)
+    compose.assertSameGeometryAfter(armed.copy(intentStatus = IntentStatus.UNAVAILABLE))
+    compose.assertSameGeometryAfter(
+      armed.copy(rxLiveness = UnitLiveness.STALE, hhLiveness = UnitLiveness.STALE)
+    )
+  }
+
   @Test
   fun `the MANUAL refusal band appearing moves nothing`() {
     compose.assertSameGeometry(armed, manualRefused)
@@ -324,6 +381,10 @@ private val disarmed =
     hhArmed = false,
     hhFsmState = SkContract.HH_FSM_DISARMED,
   )
+
+/** Armed and holding, by HH's own report. */
+private val holding =
+  armed.copy(hhMode = "hold", hhFsmState = SkContract.HH_FSM_HOLDING, holdPhase = HoldPhase.ENGAGED)
 
 /** Armed in MANUAL with HH refusing this station: the red band. */
 private val manualRefused =

@@ -98,7 +98,7 @@ cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 377 cases
 cd sk-plugin && npm run build               # -> public/
 cd android && ./gradlew :core:test          # pure Kotlin core, 256 cases
-cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 143 cases (needs SDK)
+cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 148 cases (needs SDK)
 cd android && ./gradlew :app:assembleDebug  # needs an Android SDK
 ```
 
@@ -274,7 +274,8 @@ property on that screen — if you change the control layout, run that suite.**
 font scale may place them. Arming used to move both drives a line, because a
 note under the thruster existed only while disarmed. Every state-dependent
 message now has its room reserved in every state (`ReservedLines` in
-`Controls.kt`), the status bar is a row of fixed-name lamps, and
+`Controls.kt`, sized by drawing every message the slot can hold invisibly --
+a line count is right at one font scale and wrong at the next), the status bar is a row of fixed-name lamps, and
 `ControlPositionStabilityTest` asserts identical bounds across arm, faults,
 notices and mode. Do not add a line that appears only in some states anywhere
 in the portrait stack -- the drive bank takes what the bar below it leaves, so

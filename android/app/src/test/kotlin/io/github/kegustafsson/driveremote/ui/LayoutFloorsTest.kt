@@ -295,7 +295,7 @@ class LayoutFloorsTest {
   @Config(sdk = [35], qualifiers = MinimumSupportedScreen)
   fun `the MANUAL refusal band keeps every floor at large text`() {
     compose.showControlScreen(view = manualRefused, fontScale = 2.0f)
-    compose.onNodeWithText(ManualRefusedBand, useUnmergedTree = true).assertExists()
+    compose.onNodeWithText(ManualRefusedBand).assertExists()
     compose.assertContactFloors()
   }
 
@@ -306,7 +306,7 @@ class LayoutFloorsTest {
       view = manualRefused.copy(intentStatus = IntentStatus.NETWORK),
       fontScale = 2.0f,
     )
-    compose.onNodeWithText(ManualRefusedBand, useUnmergedTree = true).assertExists()
+    compose.onNodeWithText(ManualRefusedBand).assertExists()
     compose.assertContactFloors()
   }
 

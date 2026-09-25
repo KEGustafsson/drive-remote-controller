@@ -7536,3 +7536,25 @@ A 640 dp render in this activity reserves a navigation bar and does not fit
 even at 1.0x, so the README shows 2.0x on the S25 instead.
 
 Not on glass. Suites: app 143 (+8 skipped renders).
+
+## 2026-09-25 — Reservations sized by their messages, not a line count (PR #13 review)
+
+CodeRabbit flagged that the thruster notice line reserved one line while
+"reversing — waiting for the thruster interlock" wraps at 1.3x on a 360 dp
+phone. Verified with new native-graphics cases at 1.3x before changing anything:
+the reversing notice and both refusal bands (MANUAL and HOLD) wrapped and moved
+the drives ~22 dp; the kill switch's longest lines happened to fit its two.
+
+The suggested fix (two lines) would be wrong again at 2.0x. `ReservedLines` now
+takes `alsoFits`: every message the slot can ever hold, drawn invisibly in the
+same style, so the reservation is the tallest of them at the real width and font
+scale. The thruster line reserves for all six refusal bands, each overriding
+source and the reversing notice; each drive's override line for every overriding
+source ("controlled by local switch" wraps too); the kill switch for every line
+`killSwitchFace` can produce, enumerated from that function, which the kill
+switch's wording now comes from. Placeholders are out of the merged (TalkBack)
+tree; the unmerged tree still lists them, so two band lookups moved to the merged
+tree.
+
+Cost: at 1.3x and above the thruster panel carries an empty second notice line.
+Suites: app 148 (+8 skipped renders); the 1.3x and 2.0x screenshots re-rendered.

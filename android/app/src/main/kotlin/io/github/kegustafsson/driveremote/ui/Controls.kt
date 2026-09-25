@@ -51,10 +51,12 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.TextUnit
+import io.github.kegustafsson.driveremote.core.CommandSource
 import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DrivePosition
 import io.github.kegustafsson.driveremote.core.HoldPhase
 import io.github.kegustafsson.driveremote.core.HoldStall
+import io.github.kegustafsson.driveremote.core.IntentStatus
 import io.github.kegustafsson.driveremote.core.KillSwitchTap
 import io.github.kegustafsson.driveremote.core.KillSwitchTapPolicy
 import io.github.kegustafsson.driveremote.core.LinkPhase
@@ -64,6 +66,7 @@ import io.github.kegustafsson.driveremote.core.ThrusterDirection
 import io.github.kegustafsson.driveremote.core.ThrusterMode
 import io.github.kegustafsson.driveremote.core.formatHeading
 import io.github.kegustafsson.driveremote.core.formatTrim
+import io.github.kegustafsson.driveremote.core.commandsNotReachingLine
 import io.github.kegustafsson.driveremote.core.fromSwitch
 
 /**
@@ -94,6 +97,9 @@ private fun Modifier.contactHeight(helm: HelmScale): Modifier =
     .heightIn(max = helm.size(ContactButtonMaxHeight))
     .fillMaxHeight()
 
+/** Identifies the kill switch whatever it currently says. */
+const val KillSwitchTag = "killSwitch"
+
 /**
  * The kill switch: arm/disarm, and the reasons arming is unavailable.
  *
@@ -120,91 +126,23 @@ private fun Modifier.contactHeight(helm: HelmScale): Modifier =
  * judged on the arbiter's publish ARRIVING, so an open socket that has gone
  * silent is OFFLINE too, not a confident ARMED over a boat it cannot see.
  */
-/** Identifies the kill switch whatever it currently says. */
-const val KillSwitchTag = "killSwitch"
-
 @Composable
 fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modifier: Modifier = Modifier) {
   val helm = LocalHelmScale.current
-  val foreign = view.controlState == ControlState.OTHER
-  val label: String
-  var sub: String
-  val colour: Color
-
-  when {
-    // Before OFFLINE, and only ever true before this session's stream is first live.
-    // Deliberately the DISARMED grey: the transition into DISARMED a moment
-    // later is then a change of words rather than a change of colour, which is
-    // what stops the launch reading as an alarm going off and clearing.
-    view.linkPhase == LinkPhase.CONNECTING -> {
-      label = "CONNECTING"
-      sub = "reaching the boat — disarm always works"
-      colour = DriveColors.disarmed
-    }
-    !view.connected -> {
-      label = "OFFLINE"
-      sub = "tap to STOP — disarm always works"
-      colour = DriveColors.warn
-    }
-    view.armed -> {
-      label = "ARMED"
-      sub =
-        if (view.missingUnits.isEmpty()) "tap to disarm"
-        else "tap to disarm · ${view.missingUnits.joinToString(" + ")} not responding"
-      colour = DriveColors.armed
-    }
-    foreign -> {
-      label = "IN USE"
-      sub = "another station is armed — tap to STOP it, then tap again to take over"
-      colour = DriveColors.warn
-    }
-    !view.canArm -> {
-      label = "CANNOT ARM"
-      sub = "${view.missingUnits.joinToString(" + ")} not responding"
-      colour = DriveColors.disarmed
-    }
-    else -> {
-      label = "DISARMED"
-      sub = "tap to arm"
-      colour = DriveColors.disarmed
-    }
-  }
-
-  // Arming is the narrow case; STOP is everything else.
-  //
-  // Stated this way round on purpose. The obvious phrasing -- disarm if
-  // `armed || foreign`, else arm -- reads its condition from `activeClient`,
-  // which is last-known telemetry from a store that deliberately keeps its
-  // values across a disconnect. Offline, or before the first delta has landed,
-  // that is a guess, and the tap it produced was a silent no-op: a browser could
-  // hold the arm while this phone's stream was down, and the button promising
-  // "tap to STOP -- disarm always works" did nothing at all.
-  //
-  // So an ARM is offered only from a state that positively supports one --
-  // connected, nobody holding the token, a unit answering -- and every other
-  // state taps through to disarm. A disarm nobody needed costs nothing: it is a
-  // universal stop, the arbiter takes it as an edge, and it travels over HTTP
-  // independently of the read socket. SAFETY.md: disarm is never gated on
-  // anything.
-  val canOfferArm = view.connected && !view.armed && !foreign && view.canArm
-
-  // Commands not reaching the boat is said HERE, on the button, and not only on
-  // the COMMANDS lamp: this is what the operator reads before trusting a tap to
-  // do anything, and "DISARMED -- tap to arm" over a path that reaches nothing
-  // is a healthy face on a broken one (a stopped plugin answering 503, a refused
-  // token, no network). It replaces the line rather than adding one, so the
-  // button grows by at most the line's wrap. What a tap DOES is unchanged and
-  // still said: an ARM stays on offer -- a retry is harmless, and if it lands
-  // the path is back -- and a STOP stays a STOP.
-  view.commandsNotReaching?.let { failing ->
-    sub =
-      "$failing · " +
-        when {
-          canOfferArm -> "tap to arm"
-          view.armed && view.connected -> "tap to disarm"
-          else -> "tap to STOP"
-        }
-  }
+  val face =
+    killSwitchFace(
+      linkPhase = view.linkPhase,
+      connected = view.connected,
+      armed = view.armed,
+      foreign = view.controlState == ControlState.OTHER,
+      canArm = view.canArm,
+      missingUnits = view.missingUnits,
+      commandsNotReaching = view.commandsNotReaching,
+    )
+  val label = face.label
+  val sub = face.sub
+  val colour = face.colour
+  val canOfferArm = face.canOfferArm
 
   // ...and a tap aimed at STOP stays a STOP. Deciding from what is on screen
   // when the click fires is not enough: double-tap STOP, the arbiter's release
@@ -291,16 +229,145 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
     // and moved every control below it, under a thumb, at the moment the
     // operator was reaching for one. The reservation is what keeps the screen
     // still; see ControlPositionStabilityTest.
-    ReservedLines(lines = 2, fontSize = helm.text(13.sp)) {
+    val subLine: @Composable (String) -> Unit = { text ->
       Text(
-        sub,
+        text,
         fontSize = helm.text(13.sp),
         color = DriveColors.ink.copy(alpha = 0.85f),
         textAlign = TextAlign.Center,
         modifier = Modifier.padding(horizontal = helm.size(12.dp)),
       )
     }
+    ReservedLines(
+      lines = 2,
+      fontSize = helm.text(13.sp),
+      alsoFits = { killSwitchLines.forEach { subLine(it) } },
+    ) {
+      subLine(sub)
+    }
   }
+}
+
+/** What the kill switch says and what a tap on it offers, for one state. */
+private class KillSwitchFace(
+  val label: String,
+  val sub: String,
+  val colour: Color,
+  val canOfferArm: Boolean,
+)
+
+/**
+ * The kill switch's words for a state -- pure, so [killSwitchLines] can ask it
+ * for every line it can ever show and the button can reserve room for the
+ * longest. A line that took only the room it needed made the button change
+ * height between states, and everything below it moved.
+ */
+private fun killSwitchFace(
+  linkPhase: LinkPhase,
+  connected: Boolean,
+  armed: Boolean,
+  foreign: Boolean,
+  canArm: Boolean,
+  missingUnits: List<String>,
+  commandsNotReaching: String?,
+): KillSwitchFace {
+  val label: String
+  var sub: String
+  val colour: Color
+
+  when {
+    // Before OFFLINE, and only ever true before this session's stream is first live.
+    // Deliberately the DISARMED grey: the transition into DISARMED a moment
+    // later is then a change of words rather than a change of colour, which is
+    // what stops the launch reading as an alarm going off and clearing.
+    linkPhase == LinkPhase.CONNECTING -> {
+      label = "CONNECTING"
+      sub = "reaching the boat — disarm always works"
+      colour = DriveColors.disarmed
+    }
+    !connected -> {
+      label = "OFFLINE"
+      sub = "tap to STOP — disarm always works"
+      colour = DriveColors.warn
+    }
+    armed -> {
+      label = "ARMED"
+      sub =
+        if (missingUnits.isEmpty()) "tap to disarm"
+        else "tap to disarm · ${missingUnits.joinToString(" + ")} not responding"
+      colour = DriveColors.armed
+    }
+    foreign -> {
+      label = "IN USE"
+      sub = "another station is armed — tap to STOP it, then tap again to take over"
+      colour = DriveColors.warn
+    }
+    !canArm -> {
+      label = "CANNOT ARM"
+      sub = "${missingUnits.joinToString(" + ")} not responding"
+      colour = DriveColors.disarmed
+    }
+    else -> {
+      label = "DISARMED"
+      sub = "tap to arm"
+      colour = DriveColors.disarmed
+    }
+  }
+
+  // Arming is the narrow case; STOP is everything else.
+  //
+  // Stated this way round on purpose. The obvious phrasing -- disarm if
+  // `armed || foreign`, else arm -- reads its condition from `activeClient`,
+  // which is last-known telemetry from a store that deliberately keeps its
+  // values across a disconnect. Offline, or before the first delta has landed,
+  // that is a guess, and the tap it produced was a silent no-op: a browser could
+  // hold the arm while this phone's stream was down, and the button promising
+  // "tap to STOP -- disarm always works" did nothing at all.
+  //
+  // So an ARM is offered only from a state that positively supports one --
+  // connected, nobody holding the token, a unit answering -- and every other
+  // state taps through to disarm. A disarm nobody needed costs nothing: it is a
+  // universal stop, the arbiter takes it as an edge, and it travels over HTTP
+  // independently of the read socket. SAFETY.md: disarm is never gated on
+  // anything.
+  val canOfferArm = connected && !armed && !foreign && canArm
+
+  // Commands not reaching the boat is said HERE, on the button, and not only on
+  // the COMMANDS lamp: this is what the operator reads before trusting a tap to
+  // do anything, and "DISARMED -- tap to arm" over a path that reaches nothing
+  // is a healthy face on a broken one (a stopped plugin answering 503, a refused
+  // token, no network). It replaces the line rather than adding one, so the
+  // button grows by at most the line's wrap. What a tap DOES is unchanged and
+  // still said: an ARM stays on offer -- a retry is harmless, and if it lands
+  // the path is back -- and a STOP stays a STOP.
+  commandsNotReaching?.let { failing ->
+    sub =
+      "$failing · " +
+        when {
+          canOfferArm -> "tap to arm"
+          armed && connected -> "tap to disarm"
+          else -> "tap to STOP"
+        }
+  }
+
+  return KillSwitchFace(label, sub, colour, canOfferArm)
+}
+
+/**
+ * Every line [killSwitchFace] can produce: each state, with both units named
+ * missing (the longest unit list), and with each way commands can fail to reach
+ * the boat. Enumerated from the function itself rather than written out, so a
+ * reworded or added line is reserved for without anyone remembering to.
+ */
+private val killSwitchLines: List<String> by lazy {
+  val bools = listOf(false, true)
+  buildList {
+    for (phase in LinkPhase.entries) for (connected in bools) for (armed in bools)
+      for (foreign in bools) for (canArm in bools)
+        for (missing in listOf(emptyList(), listOf("drive unit", "thruster unit")))
+          for (failing in listOf(null) + IntentStatus.entries.mapNotNull(::commandsNotReachingLine))
+            add(killSwitchFace(phase, connected, armed, foreign, canArm, missing, failing).sub)
+  }.distinct()
 }
 
 /**
@@ -323,6 +390,15 @@ private fun ReservedLines(
   contentAlignment: Alignment = Alignment.Center,
   /** Extra room above and below the reserved lines, for content drawn in a band. */
   reservePadding: Dp = 0.dp,
+  /**
+   * Every message this space can ever hold, drawn exactly as [content] would
+   * draw it, so the reservation is the tallest of them at this width and font
+   * scale. A line count alone is right at one font scale and wrong at another:
+   * at 1.3x on a 360 dp phone "reversing — waiting for the thruster interlock"
+   * takes two lines, and a one-line reservation moved the drives when it
+   * appeared. Drawn invisible, inert and out of the semantics tree.
+   */
+  alsoFits: @Composable () -> Unit = {},
   content: @Composable () -> Unit,
 ) {
   // One line height for the reservation and everything drawn in it, or the
@@ -340,6 +416,9 @@ private fun ReservedLines(
         minLines = lines,
         modifier = Modifier.padding(vertical = reservePadding).clearAndSetSemantics {},
       )
+      Box(Modifier.alpha(0f).clearAndSetSemantics {}, contentAlignment = contentAlignment) {
+        alsoFits()
+      }
       content()
     }
   }
@@ -453,18 +532,30 @@ fun DriveControl(
       lines = 1,
       fontSize = helm.text(12.sp),
       modifier = Modifier.padding(top = helm.size(4.dp)),
+      // "controlled by local switch" wraps in a drive column at 1.3x.
+      alsoFits = { OverridingSources.forEach { DriveOverrideNote(it) } },
     ) {
-      if (overriddenBy != null) {
-        Text(
-          "controlled by $overriddenBy",
-          fontSize = helm.text(12.sp),
-          color = DriveColors.warn,
-          textAlign = TextAlign.Center,
-        )
-      }
+      if (overriddenBy != null) DriveOverrideNote(overriddenBy)
     }
   }
 }
+
+@Composable
+private fun DriveOverrideNote(source: String) {
+  Text(
+    "controlled by $source",
+    fontSize = LocalHelmScale.current.text(12.sp),
+    color = DriveColors.warn,
+    textAlign = TextAlign.Center,
+  )
+}
+
+/**
+ * Every source name a "controlled by ..." note can carry: exactly those that
+ * outrank this app (StationView's override note is `source.label` for these).
+ */
+private val OverridingSources: List<String> =
+  CommandSource.entries.filter { it.overridesThisApp }.map { it.label }
 
 @Composable
 private fun ContactButton(
@@ -618,13 +709,18 @@ fun ThrusterControl(
       // The band's own inside padding, so reserving "one line" reserves room
       // for the band -- the tallest thing this line holds.
       reservePadding = helm.size(RefusalBandPadding),
+      alsoFits = {
+        ThrusterRefusals.forEach { RefusalBand(it) }
+        OverridingSources.forEach { NoticeText("controlled by $it") }
+        NoticeText(ReversingNotice)
+      },
     ) {
       val refusal = thrusterRefusal(view, mode)
       when {
         refusal != null -> RefusalBand(refusal)
         view.thrusterOverriddenBy != null ->
           NoticeText("controlled by ${view.thrusterOverriddenBy}")
-        view.reversalPending -> NoticeText("reversing — waiting for the thruster interlock")
+        view.reversalPending -> NoticeText(ReversingNotice)
       }
     }
   }
@@ -661,18 +757,30 @@ private fun thrusterRefusal(view: StationView, mode: ThrusterMode): String? =
       view.holdPhase == HoldPhase.NOT_ENGAGING &&
       view.holdStall != HoldStall.OTHER_SOURCE ->
       when (view.holdStall) {
-        HoldStall.UNIT_FAULT -> "NOT HOLDING — UNIT FAULT"
-        HoldStall.NO_REFERENCE -> "NOT HOLDING — NO HEADING FIX"
-        HoldStall.REFUSED -> "NOT HOLDING — RE-ARM TO ENGAGE"
+        HoldStall.UNIT_FAULT -> HoldUnitFault
+        HoldStall.NO_REFERENCE -> HoldNoReference
+        HoldStall.REFUSED -> HoldRefused
         // Including HH saying nothing at all: state the fact, and the one
         // remedy that is safe to suggest whatever the cause.
-        else -> "NOT HOLDING — CHECK THE UNIT"
+        else -> HoldCheckUnit
       }
     mode == ThrusterMode.MANUAL && view.manualRefusal != HoldStall.NONE ->
-      if (view.manualRefusal == HoldStall.UNIT_FAULT) "THRUSTER REFUSED — UNIT FAULT"
-      else "THRUSTER REFUSED — RE-ARM TO COMMAND"
+      if (view.manualRefusal == HoldStall.UNIT_FAULT) ManualUnitFault else ManualRefused
     else -> null
   }
+
+private const val HoldUnitFault = "NOT HOLDING — UNIT FAULT"
+private const val HoldNoReference = "NOT HOLDING — NO HEADING FIX"
+private const val HoldRefused = "NOT HOLDING — RE-ARM TO ENGAGE"
+private const val HoldCheckUnit = "NOT HOLDING — CHECK THE UNIT"
+private const val ManualUnitFault = "THRUSTER REFUSED — UNIT FAULT"
+private const val ManualRefused = "THRUSTER REFUSED — RE-ARM TO COMMAND"
+
+/** Every band [thrusterRefusal] can return, for the notice line's reservation. */
+private val ThrusterRefusals =
+  listOf(HoldUnitFault, HoldNoReference, HoldRefused, HoldCheckUnit, ManualUnitFault, ManualRefused)
+
+private const val ReversingNotice = "reversing — waiting for the thruster interlock"
 
 /** MANUAL's body: the PORT and STBD contacts, filling whatever height it is given. */
 @Composable
