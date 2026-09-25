@@ -1,5 +1,6 @@
 package io.github.kegustafsson.driveremote.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -221,7 +222,8 @@ private fun TallControlScreen(
   ControlSurface(
     modifier = Modifier.fillMaxSize().padding(gutter).then(overflow.viewport),
     bankMinHeight = helm.size(DriveBankMinHeight),
-    contactGrowth = helm.size(ContactButtonMaxHeight - ContactButtonMinHeight),
+    contactMinHeight = helm.size(ContactButtonMinHeight),
+    contactMaxHeight = helm.size(ContactButtonMaxHeight),
     gap = gutter,
     chrome = {
       KillSwitch(view = view, onArm = onArm, onDisarm = onDisarm)
@@ -231,17 +233,40 @@ private fun TallControlScreen(
       // overflow it reports -- which is correct, and does not oscillate: it
       // appears only when the bank is already cut off without it.
       ClippedNotice(overflow.clipped)
-
-      ThrusterControl(
+    },
+    // The thruster panel in its two pieces, so its body can be sized to exactly
+    // the drive contacts' height: see ControlSurface. The panel's surface is
+    // drawn behind both, and the padding here is the panel's own.
+    thrusterPanel = { Box(ThrusterPanelBackground) },
+    thrusterHeader = {
+      ThrusterHeader(
+        mode = thrusterMode,
+        onModeChange = onThrusterModeChange,
+        modifier =
+          Modifier.padding(
+            start = helm.size(ThrusterPanelPadding),
+            end = helm.size(ThrusterPanelPadding),
+            top = helm.size(ThrusterPanelPadding),
+          ),
+      )
+    },
+    thrusterBody = {
+      ThrusterBody(
         view = view,
         mode = thrusterMode,
         trimDeg = trimDeg,
-        onModeChange = onThrusterModeChange,
         onDirectionChange = onThrusterDirectionChange,
         onTrim = onTrim,
-        modifier = Modifier.padding(top = gutter).then(overflow.probe("thruster")),
+        modifier =
+          overflow.probe("thruster").padding(
+            start = helm.size(ThrusterPanelPadding),
+            end = helm.size(ThrusterPanelPadding),
+            top = helm.size(ThrusterBodyGap),
+            bottom = helm.size(ThrusterPanelPadding),
+          ),
       )
     },
+    thrusterBodyInset = helm.size(ThrusterBodyGap + ThrusterPanelPadding),
     bank = {
       // The tag is how LayoutFloorsTest measures the reservation itself rather
       // than inferring it from the buttons inside. The reservation is enforced
@@ -457,26 +482,29 @@ private fun EdgeControlScreen(
 /**
  * The vertical split, as a measure policy rather than as weights.
  *
- * What is wanted is an order of priority — the bank's floor first, then
- * telemetry's natural height, then the bank up to its ceiling, then whatever is
- * still left back to telemetry — and a `Column` cannot express it. `weight(1f)`
- * on telemetry pins the bank at its minimum and gives every spare pixel to the
- * lamps, which is the defect this replaces; `weight(1f)` on the bank does the
- * reverse and starves telemetry on a tall screen; and a `requiredHeightIn` in
- * the same chain as a `weight` grows nothing at all, because the required form
- * discards the exact minimum the weight handed down (see `Modifier.contactHeight`).
+ * What is wanted is an order of priority, and a `Column` cannot express it:
  *
- * So the three regions are measured here directly:
- *
- * - **chrome** — kill switch, the off-screen notice, the thruster block — takes
- *   its natural height. Nothing negotiates with it; the stop button is not a
- *   thing that gives way.
- * - **the bank** gets what is left after telemetry's natural height, clamped
- *   between [bankMinHeight] and the height at which its contacts would hit
- *   [ContactButtonMaxHeight]. Below the floor it keeps the floor and overflows
+ * - **chrome** -- the kill switch and the off-screen notice -- takes its natural
+ *   height. Nothing negotiates with it; the stop button is not a thing that
+ *   gives way.
+ * - **the three rows of contacts** -- the thruster's PORT/STBD, and the drives'
+ *   FWD and REV -- share what is left after telemetry's natural height, **one
+ *   height for all three**, between [contactMinHeight] and [contactMaxHeight].
+ *   They used to be two different answers: the thruster sat at its 88 dp floor
+ *   in the chrome while every spare pixel went to the drives, and the owner saw
+ *   two small buttons over four big ones. The drive bank still never drops
+ *   below [bankMinHeight]; below it the bank keeps the floor and overflows
  *   visibly, which is the failure the whole suite is built around.
  * - **telemetry** gets the remainder, which on a short screen is less than it
- *   wanted — it scrolls, and it is the only thing here that does.
+ *   wanted -- it scrolls, and it is the only thing here that does.
+ *
+ * The thruster panel arrives in pieces -- its surface, its header and its body
+ * -- so the body can be given exactly contact-plus-inset, which is what makes
+ * PORT/STBD the same height as FWD/REV rather than nearly. The drives' fixed
+ * part (label, readout) is derived from the bank's intrinsic height with its
+ * contacts at their floor, so it stays right as the text inflates with the font
+ * scale. HOLD's body can be taller than a contact at large font; it then keeps
+ * its own height, which is as close to equal as that screen allows.
  *
  * Intrinsics rather than a trial measure, because a `Measurable` may only be
  * measured once per pass; `maxIntrinsicHeight` asks the same question without
@@ -485,15 +513,29 @@ private fun EdgeControlScreen(
 @Composable
 private fun ControlSurface(
   bankMinHeight: Dp,
-  contactGrowth: Dp,
+  contactMinHeight: Dp,
+  contactMaxHeight: Dp,
   gap: Dp,
   chrome: @Composable () -> Unit,
+  thrusterPanel: @Composable () -> Unit,
+  thrusterHeader: @Composable () -> Unit,
+  thrusterBody: @Composable () -> Unit,
+  /** The body's padding above and below its contacts: the rest of it is contact. */
+  thrusterBodyInset: Dp,
   bank: @Composable () -> Unit,
   telemetry: @Composable () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  Layout(contents = listOf(chrome, bank, telemetry), modifier = modifier) { slots, constraints ->
-    val (chromeSlot, bankSlot, telemetrySlot) = slots
+  Layout(
+    contents = listOf(chrome, thrusterPanel, thrusterHeader, thrusterBody, bank, telemetry),
+    modifier = modifier,
+  ) { slots, constraints ->
+    val chromeSlot = slots[0]
+    val panelSlot = slots[1]
+    val headerSlot = slots[2]
+    val bodySlot = slots[3]
+    val bankSlot = slots[4]
+    val telemetrySlot = slots[5]
     val width = constraints.maxWidth
     val natural = Constraints(minWidth = width, maxWidth = width)
 
@@ -504,31 +546,43 @@ private fun ControlSurface(
     // had the thruster contacts at 80 dp, and what the drive-bank measurement in
     // LayoutFloorsTest catches.
     val gapPx = gap.roundToPx()
-    val chromeHeight = chromePlaceables.sumOf { it.height } + gapPx
+    val chromeHeight = chromePlaceables.sumOf { it.height }
 
+    val headerPlaceables = headerSlot.map { it.measure(natural) }
+    val headerHeight = headerPlaceables.sumOf { it.height }
+    val bodyWanted = bodySlot.sumOf { it.maxIntrinsicHeight(width) }
     val bankWanted = bankSlot.sumOf { it.maxIntrinsicHeight(width) }
     val telemetryWanted = telemetrySlot.sumOf { it.maxIntrinsicHeight(width) }
 
     val height =
       if (constraints.hasBoundedHeight) constraints.maxHeight
-      else chromeHeight + gapPx + bankWanted + telemetryWanted
+      else chromeHeight + 3 * gapPx + headerHeight + bodyWanted + bankWanted + telemetryWanted
 
-    val available = (height - chromeHeight - gapPx).coerceAtLeast(0)
+    val available = (height - chromeHeight - 3 * gapPx).coerceAtLeast(0)
 
-    // The bank as it measures with its contacts at their floor, plus the room
-    // those two contacts have left to grow. Derived rather than written down, so
-    // it stays right when the label and the readout inflate with the font scale.
-    val bankFloor = bankMinHeight.roundToPx()
-    val bankCeiling = (bankWanted + 2 * contactGrowth.roundToPx()).coerceAtLeast(bankFloor)
-    val bankHeight = (available - telemetryWanted).coerceIn(bankFloor, bankCeiling)
-    val telemetryHeight = (available - bankHeight).coerceAtLeast(0)
+    // One contact height for all three rows. The thruster body is contact
+    // plus a known inset; the bank's fixed part (label, readout) is what its
+    // wanted height leaves once its two contacts are taken out at their floor.
+    val contactMin = contactMinHeight.roundToPx()
+    val contactMax = contactMaxHeight.roundToPx()
+    val bodyInset = thrusterBodyInset.roundToPx()
+    val bankFixed = (bankWanted - 2 * contactMin).coerceAtLeast(0)
+    val contact =
+      ((available - telemetryWanted - headerHeight - bodyInset - bankFixed) / 3)
+        .coerceIn(contactMin, contactMax)
 
-    val bankPlaceables =
-      bankSlot.map { it.measure(natural.copy(minHeight = bankHeight, maxHeight = bankHeight)) }
-    val telemetryPlaceables =
-      telemetrySlot.map {
-        it.measure(natural.copy(minHeight = telemetryHeight, maxHeight = telemetryHeight))
-      }
+    // The body never goes below its own minimum -- the HOLD view can be taller
+    // than a contact at large font -- and the bank never below its floor.
+    val bodyHeight = maxOf(bodyWanted, bodyInset + contact)
+    val thrusterHeight = headerHeight + bodyHeight
+    val bankHeight = maxOf(bankMinHeight.roundToPx(), bankFixed + 2 * contact)
+    val telemetryHeight = (available - thrusterHeight - bankHeight).coerceAtLeast(0)
+
+    fun exact(h: Int) = natural.copy(minHeight = h, maxHeight = h)
+    val panelPlaceables = panelSlot.map { it.measure(exact(thrusterHeight)) }
+    val bodyPlaceables = bodySlot.map { it.measure(exact(bodyHeight)) }
+    val bankPlaceables = bankSlot.map { it.measure(exact(bankHeight)) }
+    val telemetryPlaceables = telemetrySlot.map { it.measure(exact(telemetryHeight)) }
 
     layout(width, height) {
       var y = 0
@@ -537,6 +591,10 @@ private fun ControlSurface(
         y += it.height
       }
       y += gapPx
+      panelPlaceables.forEach { it.place(0, y) }
+      headerPlaceables.forEach { it.place(0, y) }
+      bodyPlaceables.forEach { it.place(0, y + headerHeight) }
+      y += thrusterHeight + gapPx
       bankPlaceables.forEach { it.place(0, y) }
       y += bankHeight + gapPx
       telemetryPlaceables.forEach { it.place(0, y) }

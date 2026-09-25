@@ -615,77 +615,130 @@ fun ThrusterControl(
   modifier: Modifier = Modifier,
 ) {
   val helm = LocalHelmScale.current
-  val enabled = view.thrusterCommandable
-
   Column(
     modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(12.dp))
-      .background(DriveColors.surfaceRaised)
-      .testTag(ThrusterPanelTag)
-      .padding(helm.size(10.dp))
+      .then(ThrusterPanelBackground)
+      .padding(helm.size(ThrusterPanelPadding))
   ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-      Text(
-        "BOW THRUSTER",
-        fontSize = helm.text(13.sp),
-        color = DriveColors.inkMuted,
-        modifier = Modifier.weight(1f),
+    ThrusterHeader(mode, onModeChange)
+    ThrusterBody(
+      view = view,
+      mode = mode,
+      trimDeg = trimDeg,
+      onDirectionChange = onDirectionChange,
+      onTrim = onTrim,
+      modifier = Modifier.padding(top = helm.size(ThrusterBodyGap)),
+    )
+  }
+}
+
+/** The thruster panel's surface. Shared so the split phone layout draws the same one. */
+val ThrusterPanelBackground: Modifier =
+  Modifier.clip(RoundedCornerShape(12.dp)).background(DriveColors.surfaceRaised).testTag(ThrusterPanelTag)
+
+/** The panel's inside padding, and the gap between its header and its body, at the reference scale. */
+val ThrusterPanelPadding = 10.dp
+val ThrusterBodyGap = 8.dp
+
+/**
+ * The panel's title and the MANUAL/HOLD chooser.
+ *
+ * Its own composable because the phone arrangement lays the panel out in two
+ * pieces: this at its natural height, and [ThrusterBody] at exactly the height
+ * the drive contacts get, so the three rows of contacts are one size.
+ */
+@Composable
+fun ThrusterHeader(
+  mode: ThrusterMode,
+  onModeChange: (ThrusterMode) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val helm = LocalHelmScale.current
+  Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Text(
+      "BOW THRUSTER",
+      fontSize = helm.text(13.sp),
+      color = DriveColors.inkMuted,
+      modifier = Modifier.weight(1f),
+    )
+    // Always live -- see ThrusterControl's KDoc. Selecting a mode is not commanding.
+    ModeChip("MANUAL", mode == ThrusterMode.MANUAL) { onModeChange(ThrusterMode.MANUAL) }
+    ModeChip("HOLD", mode == ThrusterMode.HOLD) { onModeChange(ThrusterMode.HOLD) }
+  }
+}
+
+/**
+ * The panel's body: PORT/STBD in MANUAL, the heading readout and trim steps in
+ * HOLD, and the panel's notice drawn over either.
+ *
+ * It takes whatever height it is handed, and the live controls grow into it.
+ * Its own minimum is the taller of a contact's floor and the HOLD view, so
+ * switching mode can never make it shrink under a thumb.
+ */
+@Composable
+fun ThrusterBody(
+  view: StationView,
+  mode: ThrusterMode,
+  trimDeg: Double,
+  onDirectionChange: (ThrusterDirection) -> Unit,
+  onTrim: (Double) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val helm = LocalHelmScale.current
+  val enabled = view.thrusterCommandable
+  // One box, sized by BOTH modes' bodies whichever is showing, so switching
+  // mode -- which the chips allow at any time, armed or not -- moves nothing
+  // below this panel. MANUAL's contribution is its contacts' floor; HOLD's is
+  // the readout and the trim row, which are `sp` and so cannot be written down
+  // as a dp number that stays right at every font scale. It is measured
+  // instead: MANUAL carries an invisible, inert copy of the HOLD body purely
+  // for its size.
+  //
+  // Both sizing children are drawn in both modes, and the body that is live
+  // fills the box (matchParentSize) rather than sizing it -- so it grows with
+  // whatever the box is given, PORT/STBD and HOLD's trim steps alike.
+  Box(
+    modifier.fillMaxWidth(),
+    contentAlignment = Alignment.Center,
+  ) {
+    HoldBody(
+      view = view,
+      trimDeg = trimDeg,
+      enabled = enabled,
+      onTrim = {},
+      interactive = false,
+      modifier = Modifier.alpha(0f).clearAndSetSemantics {},
+    )
+    Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
+    if (mode == ThrusterMode.MANUAL) {
+      ManualBody(
+        enabled = enabled,
+        onDirectionChange = onDirectionChange,
+        modifier = Modifier.matchParentSize(),
       )
-      // Always live -- see the KDoc above. Selecting a mode is not commanding.
-      ModeChip("MANUAL", mode == ThrusterMode.MANUAL) { onModeChange(ThrusterMode.MANUAL) }
-      ModeChip("HOLD", mode == ThrusterMode.HOLD) { onModeChange(ThrusterMode.HOLD) }
+    } else {
+      HoldBody(
+        view = view,
+        trimDeg = trimDeg,
+        enabled = enabled,
+        onTrim = onTrim,
+        interactive = true,
+        grow = true,
+        modifier = Modifier.matchParentSize(),
+      )
     }
 
-    // One box, sized by BOTH modes' bodies whichever is showing, so switching
-    // mode -- which the chips allow at any time, armed or not -- moves nothing
-    // below this panel. MANUAL's contribution is its contacts' floor; HOLD's is
-    // the readout and the trim row, which are `sp` and so cannot be written down
-    // as a dp number that stays right at every font scale. It is measured
-    // instead: MANUAL carries an invisible, inert copy of the HOLD body purely
-    // for its size.
-    Box(
-      Modifier.fillMaxWidth().padding(top = helm.size(8.dp)),
-      contentAlignment = Alignment.Center,
-    ) {
-      if (mode == ThrusterMode.MANUAL) {
-        HoldBody(
-          view = view,
-          trimDeg = trimDeg,
-          enabled = enabled,
-          onTrim = {},
-          interactive = false,
-          modifier = Modifier.alpha(0f).clearAndSetSemantics {},
-        )
-        Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
-        ManualBody(
-          enabled = enabled,
-          onDirectionChange = onDirectionChange,
-          modifier = Modifier.matchParentSize(),
-        )
-      } else {
-        Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
-        HoldBody(
-          view = view,
-          trimDeg = trimDeg,
-          enabled = enabled,
-          onTrim = onTrim,
-          interactive = true,
-        )
-      }
-
-      // The panel's notice, drawn OVER the bottom of the body -- the PORT/STBD
-      // contacts in MANUAL, the trim row in HOLD -- and never beside it: in its
-      // own line it either moved the drives when it appeared or, held open in
-      // every state, sat as empty space under the contacts nearly all the time.
-      // matchParentSize, so however it wraps it cannot resize the panel.
-      thrusterNotice(view, mode)?.let { notice ->
-        Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomCenter) {
-          NoticeOverlay(notice.text, notice.tone)
-        }
+    // The panel's notice, drawn OVER the bottom of the body -- the PORT/STBD
+    // contacts in MANUAL, the trim row in HOLD -- and never beside it: in its
+    // own line it either moved the drives when it appeared or, held open in
+    // every state, sat as empty space under the contacts nearly all the time.
+    // matchParentSize, so however it wraps it cannot resize the panel.
+    thrusterNotice(view, mode)?.let { notice ->
+      Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomCenter) {
+        NoticeOverlay(notice.text, notice.tone)
       }
     }
-
   }
 }
 
@@ -814,11 +867,9 @@ private fun ManualBody(
   // round the gap came out of the button, and these contacts were silently
   // 80 dp until LayoutFloorsTest measured them.
   //
-  // It still does not grow into leftover space: this block sits in the
-  // screen's natural-height chrome, so there is no leftover here to grow INTO
-  // -- the leftover goes to the drives, which are the pair held through a
-  // manoeuvre. It scales, so on a tablet these are 128 dp rather than a
-  // phone-sized button marooned in a bigger panel.
+  // It grows with its box. On the phone the box is handed exactly the height
+  // the drive contacts get (ControlSurface), so PORT/STBD, FWD and REV are one
+  // size; in the other arrangements the box is its natural height.
   Row(modifier) {
     ContactButton(
       "PORT",
@@ -854,6 +905,12 @@ private fun HoldBody(
   enabled: Boolean,
   onTrim: (Double) -> Unit,
   interactive: Boolean,
+  /**
+   * Fill the height given and let the trim steps take what the readout does
+   * not. Only for the live body, which is handed its box's size; the sizing
+   * copy must stay natural, or it would measure as whatever it was offered.
+   */
+  grow: Boolean = false,
   modifier: Modifier = Modifier,
 ) {
   val helm = LocalHelmScale.current
@@ -925,8 +982,10 @@ private fun HoldBody(
     // wants a target it can tap, not a button it must hold for exactly the
     // right length of time.
     Row(
-      Modifier.fillMaxWidth().padding(top = helm.size(8.dp)),
-      horizontalArrangement = Arrangement.SpaceEvenly,
+      Modifier.fillMaxWidth()
+        .then(if (grow) Modifier.weight(1f) else Modifier)
+        .padding(top = helm.size(8.dp)),
+      horizontalArrangement = Arrangement.spacedBy(helm.size(8.dp)),
     ) {
       // From the contract rather than written out here: these mirror
       // config::kHeadingNudge*StepDeg, which is hand-synced three ways, and a
@@ -939,8 +998,17 @@ private fun HoldBody(
           SkContract.HEADING_TRIM_FINE_DEG,
           SkContract.HEADING_TRIM_COARSE_DEG,
         )
+      // Four equal steps across the width, as tall as the row: the same
+      // generous targets as the contacts rather than chips in a wide strip.
       for (step in steps) {
-        TrimButton(step, enabled, clickable = interactive) { onTrim(step) }
+        TrimButton(
+          step,
+          enabled,
+          clickable = interactive,
+          modifier = Modifier.weight(1f).then(if (grow) Modifier.fillMaxHeight() else Modifier),
+        ) {
+          onTrim(step)
+        }
       }
     }
   }
@@ -1017,15 +1085,17 @@ private fun TrimButton(
   step: Double,
   enabled: Boolean,
   clickable: Boolean = true,
+  modifier: Modifier = Modifier,
   onClick: () -> Unit,
 ) {
   val helm = LocalHelmScale.current
   Box(
-    Modifier.clip(RoundedCornerShape(8.dp))
+    modifier.clip(RoundedCornerShape(8.dp))
       .background(if (enabled) DriveColors.surface else DriveColors.disarmed.copy(alpha = 0.4f))
       .border(1.dp, DriveColors.border, RoundedCornerShape(8.dp))
       .clickable(enabled = enabled && clickable, onClick = onClick)
-      .padding(horizontal = helm.size(18.dp), vertical = helm.size(12.dp))
+      .padding(horizontal = helm.size(4.dp), vertical = helm.size(12.dp)),
+    contentAlignment = Alignment.Center,
   ) {
     Text(
       formatTrim(step) + "°",

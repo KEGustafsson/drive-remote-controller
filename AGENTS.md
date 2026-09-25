@@ -98,7 +98,7 @@ cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 377 cases
 cd sk-plugin && npm run build               # -> public/
 cd android && ./gradlew :core:test          # pure Kotlin core, 256 cases
-cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 156 cases (needs SDK)
+cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 161 cases (needs SDK)
 cd android && ./gradlew :app:assembleDebug  # needs an Android SDK
 ```
 
@@ -251,8 +251,12 @@ fixed.
 half a rule: the bank was pinned at its 280 dp minimum on every screen while
 telemetry — which commands nothing — held the `weight(1f)` and took every spare
 pixel, so a 10" tablet ran 88 dp buttons under a metre of lamps. Sizes come from
-`ui/HelmScale.kt`, the Kotlin twin of the browser UI's `--u`, and the leftover
-height goes to the drives (185 dp on the reference phone, 348 on a 10" tablet).
+`ui/HelmScale.kt`, the Kotlin twin of the browser UI's `--u`, and on the
+upright phone the leftover height is shared **equally** by the three rows of
+contacts -- thruster PORT/STBD, drive FWD, drive REV (160 dp each on the
+reference phone, 147 at the owner's 1.3x, 282 on a 10" tablet; owner's ask,
+`ContactBalanceTest`). The thruster panel is laid out in pieces there
+(`ThrusterHeader`, `ThrusterBody`) so its body gets exactly that height.
 The arrangement follows the window's shape: upright stacks (kill switch,
 thruster, drives side by side, telemetry under), landscape with room to stack
 moves telemetry into a sidebar like the browser UI's wide layout, and a wide but

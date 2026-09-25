@@ -7595,3 +7595,27 @@ and its height is part of the STOP target rather than blank space.
 thruster contacts at 1.0x and 1.3x, each notice lands on its control, and a
 press on a band still commands the contact. A `phone-notices` screenshot is
 added. Suites: app 156 (+9 skipped renders). Not on glass.
+
+## 2026-09-25 — The three rows of contacts, one size
+
+Owner: "Increase PORT and STBD & FWD & REV buttons. Make PORT & STBD and FWD &
+REV more balanced, same size." The thruster contacts sat at their 88 dp floor
+in the natural-height chrome while every spare pixel went to the drives --
+~94 dp over ~190 dp on the reference phone.
+
+`ControlSurface` now shares the leftover equally among the three rows (PORT/STBD,
+FWD, REV), between the contact floor and ceiling; the bank's 280 dp floor and
+the body's own minimum still win. First attempt derived the thruster's fixed
+part from its intrinsic height minus a contact floor and came out 3-9 dp off,
+because the body's minimum is the taller of a contact and the HOLD view. So on
+the phone the panel is laid out in pieces -- `ThrusterHeader` at natural
+height, `ThrusterBody` at exactly contact plus its known inset, the panel's
+surface drawn behind both -- and the rows are equal to the pixel: 160 dp each
+on the reference phone, 147 at 1.3x, 159 on a 411 dp phone at 1.3x, 282 on a
+10" tablet. Against `main` on the owner's S25 at 1.3x that is ~94 -> 147 dp for
+PORT/STBD and ~96 -> 147 for FWD/REV. HOLD's trim steps now fill their row as
+four equal buttons. The sidebar and edge arrangements keep `ThrusterControl`
+whole at its natural height.
+
+`ContactBalanceTest` (5, native graphics). Suites: app 161 (+9 skipped renders).
+Not on glass.
