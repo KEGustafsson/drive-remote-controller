@@ -98,7 +98,7 @@ cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 377 cases
 cd sk-plugin && npm run build               # -> public/
 cd android && ./gradlew :core:test          # pure Kotlin core, 256 cases
-cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 127 cases (needs SDK)
+cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 136 cases (needs SDK)
 cd android && ./gradlew :app:assembleDebug  # needs an Android SDK
 ```
 
@@ -274,9 +274,12 @@ property on that screen — if you change the control layout, run that suite.**
 font scale may place them. Arming used to move both drives a line, because a
 note under the thruster existed only while disarmed. Every state-dependent
 message now has its room reserved in every state (`ReservedLines` in
-`Controls.kt`), and `ControlPositionStabilityTest` asserts identical bounds
-across arm, faults, notices and mode. Do not add a line that appears only in
-some states above or inside the drive bank.
+`Controls.kt`), the status bar is a row of fixed-name lamps, and
+`ControlPositionStabilityTest` asserts identical bounds across arm, faults,
+notices and mode. Do not add a line that appears only in some states anywhere
+in the portrait stack -- the drive bank takes what the bar below it leaves, so
+even telemetry counts. That test runs with Robolectric's native graphics,
+because the default measures text at almost zero width and never wraps.
 
 Two things it cannot prove. The reference phone is modelled, not used:
 Robolectric knows the S25's density, not its system bars or cutout. And it

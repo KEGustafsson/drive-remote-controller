@@ -7470,16 +7470,30 @@ carrying an invisible, inert, semantics-cleared copy of the HOLD body for size.
 Reserved text uses a 1.3 em line height rather than Material's 24 sp, which is
 what pays for most of it: reference-phone drive contacts went 185 -> 167 dp.
 
-`ControlPositionStabilityTest` (10 cases) flips one composition between states
-and asserts identical bounds for the kill switch and every contact. Not yet in
-scope: the collapsed telemetry bar, whose readings wrap with their words and
-which adds a "not responding" line -- where the bank is above its floor that
-still resizes the drives. Four fixed-height designs were sketched for the owner
-to choose from; that choice closes it.
+`ControlPositionStabilityTest` flips one composition between states and asserts
+identical bounds for the kill switch and every contact.
+
+**Status bar: the owner chose option A of four sketches.** Five lamps, each a
+dot carrying ✓ – ! ✕ over a fixed short name (LINK, CMD, CTRL, DRV, THR), one
+height in every state. The old bar printed each reading ("connected", "reaching
+boat", "nobody armed"), which at 1.3x wrapped mid-word and wrapped differently
+per state, and added a "not responding" line on a fault; the drive bank takes
+what the bar leaves, so both resized the drives. A fault still reads without a
+tap -- red dot, ✕, name in red, plus the kill switch's line -- and the readings,
+the auth message and the app version moved to the detail view. Each lamp's
+reading is its TalkBack description.
+
+**Robolectric was never wrapping text.** Its default graphics measure "LINK" at
+4.5 px, so no suite had ever seen a line wrap. `ControlPositionStabilityTest` and
+the new `StatusBarTest` run in native graphics mode; there, against the old bar,
+6 of 14 stability cases fail -- including plain "arming moves nothing", the
+owner's report -- and all pass with the lamp row. `StatusBarTest` also checks no
+lamp name is clipped at 2.0x on a 360 dp phone (and goes red on a long name).
+The other layout suites still run in legacy mode; moving them is open.
 
 **Trade taken.** Reserved room is paid in every state. At 2.0x font on the
 640 dp budget phone the bottom ~24 dp of the drive bank now goes off screen and
 the clipped warning shows; floors still hold everywhere. The two no-overflow
 checks there run at 1.75x, the largest scale that fits.
 
-Not on glass. Suites: app 127 (was 118).
+Not on glass. Suites: app 136 (was 118); debug APK builds.

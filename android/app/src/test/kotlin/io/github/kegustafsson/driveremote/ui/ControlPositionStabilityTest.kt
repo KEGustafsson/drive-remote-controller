@@ -21,6 +21,7 @@ import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DisplayDrivePosition
 import io.github.kegustafsson.driveremote.core.HoldPhase
 import io.github.kegustafsson.driveremote.core.HoldStall
+import io.github.kegustafsson.driveremote.core.IntentStatus
 import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.SkContract
 import io.github.kegustafsson.driveremote.core.StationView
@@ -32,6 +33,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * Every live control stays exactly where it is when the state changes.
@@ -54,14 +56,18 @@ import org.robolectric.annotation.Config
  * rather than by rendering two screens and comparing: that is what catches a
  * layout that only settles differently on the second pass.
  *
- * Telemetry's collapsed status bar is NOT yet in scope here. Its lamp readings
- * wrap differently with what they say, and where the drive bank has grown past
- * its floor that still resizes the drives; the status bar is being redesigned
- * to a fixed height to close that. These cases hold the telemetry panel's
- * content constant so they test what has been fixed.
+ * The collapsed status bar is in scope too. The drive bank takes the height it
+ * leaves, and it used to carry each lamp's reading as wrapping text plus a line
+ * naming any quiet unit -- so a fault resized the drives wherever the bank had
+ * grown past its floor. It is now five lamps of fixed short names, the same
+ * height in every state.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = StableReferencePhone)
+// Real text measurement. Robolectric's default graphics give text almost no
+// width, so nothing ever wraps -- and a line that wraps in one state and not in
+// another is precisely what moved the controls.
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ControlPositionStabilityTest {
 
   @get:Rule val compose = createComposeRule()
@@ -89,19 +95,47 @@ class ControlPositionStabilityTest {
 
   /**
    * The kill switch's line grows to "tap to disarm · drive unit not
-   * responding" -- two lines at this font scale, where "tap to arm" is one.
-   *
-   * Only the chrome is compared: the status bar also names the quiet unit on a
-   * line of its own, which still resizes the drives below (see the class KDoc).
+   * responding" -- two lines at this font scale, where "tap to arm" is one --
+   * and the status bar's DRV lamp turns red.
    */
   @Test
-  fun `a unit going quiet while armed moves nothing above the drives`() {
+  fun `a unit going quiet while armed moves nothing`() {
+    compose.assertSameGeometry(armed, armed.copy(rxLiveness = UnitLiveness.STALE), fontScale = 1.3f)
+  }
+
+  /** The owner's comparison phone, where the bank is above its floor and a taller bar resized it. */
+  @Test
+  @Config(sdk = [35], qualifiers = TallerPhone)
+  fun `a unit going quiet moves nothing on a taller phone`() {
+    compose.assertSameGeometry(armed, armed.copy(hhLiveness = UnitLiveness.STALE), fontScale = 1.3f)
+  }
+
+  @Test
+  fun `commands failing moves nothing`() {
+    compose.assertSameGeometry(armed, armed.copy(intentStatus = IntentStatus.UNAVAILABLE), fontScale = 1.3f)
+  }
+
+  /** Link lost: the kill switch goes OFFLINE, every lamp but LINK and CMD dims. */
+  @Test
+  fun `losing the link moves nothing`() {
     compose.assertSameGeometry(
       armed,
-      armed.copy(rxLiveness = UnitLiveness.STALE),
+      armed.copy(
+        serverLive = false,
+        linkPhase = LinkPhase.OFFLINE,
+        connectionState = ConnectionState.CLOSED,
+        rxLiveness = UnitLiveness.OFFLINE,
+        hhLiveness = UnitLiveness.OFFLINE,
+        driveCommandable = false,
+        thrusterCommandable = false,
+      ),
       fontScale = 1.3f,
-      drives = false,
     )
+  }
+
+  @Test
+  fun `another station arming moves nothing`() {
+    compose.assertSameGeometry(disarmed, disarmed.copy(controlState = ControlState.OTHER), fontScale = 1.3f)
   }
 
   @Test
@@ -147,8 +181,7 @@ class ControlPositionStabilityTest {
     to: StationView,
     mode: ThrusterMode = ThrusterMode.MANUAL,
     fontScale: Float = 1f,
-    drives: Boolean = true,
-  ) = assertSameGeometry(from, to, mode, mode, fontScale, drives)
+  ) = assertSameGeometry(from, to, mode, mode, fontScale)
 
   private fun ComposeContentTestRule.assertSameGeometry(
     from: StationView,
@@ -156,12 +189,11 @@ class ControlPositionStabilityTest {
     fromMode: ThrusterMode,
     toMode: ThrusterMode,
     fontScale: Float = 1f,
-    drives: Boolean = true,
   ) {
     view = from
     mode = fromMode
     show(fontScale)
-    baseline = geometry(withThruster = true, withDrives = drives)
+    baseline = geometry(withThruster = true)
     view = to
     mode = toMode
     // The thruster's own contacts only exist in MANUAL, so a mode switch is
@@ -169,7 +201,7 @@ class ControlPositionStabilityTest {
     assertEquals(
       "a live control moved",
       baseline.filterKeys { fromMode == toMode || !it.startsWith("thruster") },
-      geometry(withThruster = fromMode == toMode, withDrives = drives),
+      geometry(withThruster = fromMode == toMode),
     )
   }
 
@@ -211,16 +243,11 @@ class ControlPositionStabilityTest {
    * Where every live control is. Found by substring so a greyed contact --
    * "FWD, unavailable" -- is the same entry as the live one.
    */
-  private fun ComposeContentTestRule.geometry(
-    withThruster: Boolean,
-    withDrives: Boolean = true,
-  ): Map<String, DpRect> {
+  private fun ComposeContentTestRule.geometry(withThruster: Boolean): Map<String, DpRect> {
     waitForIdle()
     return buildMap {
       put("killSwitch", onNodeWithTag(KillSwitchTag).getUnclippedBoundsInRoot())
-      val labels =
-        (if (withDrives) listOf("FWD", "REV") else emptyList()) +
-          if (withThruster) listOf("PORT", "STBD") else emptyList()
+      val labels = listOf("FWD", "REV") + if (withThruster) listOf("PORT", "STBD") else emptyList()
       for (label in labels) {
         val nodes = onAllNodesWithContentDescription(label, substring = true, useUnmergedTree = true)
         val found = nodes.fetchSemanticsNodes().size
@@ -244,11 +271,7 @@ private const val StableReferencePhone = "w360dp-h780dp-xxhdpi"
  */
 private const val TallerPhone = "w411dp-h846dp-xxhdpi"
 
-/**
- * Armed, both units answering, nothing overriding. The telemetry panel's lamps
- * are held to readings that match [disarmed]'s in length, so the comparison is
- * of the controls rather than of the status bar (see the class KDoc).
- */
+/** Armed, both units answering, nothing overriding. */
 private val armed =
   StationView(
     connectionState = ConnectionState.OPEN,

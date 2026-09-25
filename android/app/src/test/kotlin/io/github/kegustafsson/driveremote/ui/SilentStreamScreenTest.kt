@@ -132,8 +132,8 @@ class SilentStreamScreenTest {
   @Test
   fun `the LINK lamp says no data is arriving, and CONTROL is not claimed`() {
     compose.show(silentView())
-    compose.onNodeWithText("no data from server").assertExists()
-    compose.onNodeWithText("connected").assertDoesNotExist()
+    compose.onNodeWithContentDescription("LINK: no data from server").assertExists()
+    compose.onNodeWithContentDescription("LINK: connected").assertDoesNotExist()
     // "this app" is still the reading -- the retained activeClient -- but only
     // dimmed; the kill switch, not this lamp, is what says ARMED, and it doesn't.
     compose.onNodeWithContentDescription("ARMED. ", substring = true).assertDoesNotExist()
