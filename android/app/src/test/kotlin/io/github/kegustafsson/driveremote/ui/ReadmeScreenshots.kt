@@ -103,6 +103,13 @@ class ReadmeScreenshots {
     compose.save("phone-drive-unit-silent")
   }
 
+  /** Notices drawn over the controls they concern: TX has port, thruster reversing. */
+  @Test
+  fun notices() {
+    compose.show(armedView.copy(portOverriddenBy = CommandSource.TX.label, reversalPending = true))
+    compose.save("phone-notices")
+  }
+
   @Test
   fun `detail open`() {
     compose.show(armedView)

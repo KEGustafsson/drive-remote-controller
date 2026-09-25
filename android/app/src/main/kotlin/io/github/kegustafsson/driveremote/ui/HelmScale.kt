@@ -184,8 +184,8 @@ val ContactButtonMaxHeight = 240.dp
 
 /**
  * Height reserved for the port/starboard bank as a whole: two contacts at
- * [ContactButtonMinHeight] plus the label, the position readout and the
- * override notice between and below them. A MINIMUM, not a target -- on any
+ * [ContactButtonMinHeight] plus the label and the position readout between
+ * them. (The override notice is drawn over the REV contact, not below it.) A MINIMUM, not a target -- on any
  * screen with room to spare the bank gets the leftover and the contacts grow
  * into it, up to [ContactButtonMaxHeight].
  */

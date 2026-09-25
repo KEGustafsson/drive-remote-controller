@@ -7558,3 +7558,72 @@ tree.
 
 Cost: at 1.3x and above the thruster panel carries an empty second notice line.
 Suites: app 148 (+8 skipped renders); the 1.3x and 2.0x screenshots re-rendered.
+
+## 2026-09-25 — Notices drawn over their controls; the reserved space goes to the buttons
+
+Owner, from the S25 after #13 merged: "Now there is empty unused space where
+text was removed and you did not use that area to increase buttons. Why?"
+
+Because #13 reserved every rare message's full height in every state, so that
+nothing moved when one appeared: the thruster's refusal / "controlled by" /
+"reversing" line under PORT/STBD, and each drive's "controlled by" line under
+REV. After the review fix those reservations were sized by the longest
+message, which at 1.3x is two lines each -- ~60 dp under the thruster and ~50
+under the drives, blank nearly all the time. Stability was bought with the
+buttons' space.
+
+The notices are now drawn **over** the control they concern (`NoticeOverlay`):
+the thruster notice across the bottom of the thruster body (PORT/STBD in MANUAL,
+the trim row in HOLD), a drive's override across the bottom of its REV contact.
+They are inside boxes whose size they cannot change, so nothing moves and
+nothing is reserved; the drive contacts now run down to the status bar and the
+thruster contacts to the panel's padding. Wording is unchanged (SAFETY.md pins
+it). Red band for a refusal, amber for "controlled by" and "reversing".
+
+Two decisions. The bands take no touches: `momentaryPress` accepts a consumed
+down, so a band that swallowed presses would have turned a tap into a one-frame
+command, and "reversing" covers the contact the operator is holding anyway. A
+press on a band reaches the contact exactly as it did when the notice sat
+elsewhere, and a refused or outranked press is ignored where it lands. And
+"reversing" is MANUAL-only now: it explains a held button, HOLD has none, and
+over the trim row it would hide trim through every reversal of an ordinary hold.
+
+The kill switch keeps its two reserved lines: it is always showing one of them,
+and its height is part of the STOP target rather than blank space.
+
+`NoticeOverlayTest` (8, native graphics): no space under REV or under the
+thruster contacts at 1.0x and 1.3x, each notice lands on its control, and a
+press on a band still commands the contact. A `phone-notices` screenshot is
+added. Suites: app 156 (+9 skipped renders). Not on glass.
+
+## 2026-09-25 — The three rows of contacts, one size
+
+Owner: "Increase PORT and STBD & FWD & REV buttons. Make PORT & STBD and FWD &
+REV more balanced, same size." The thruster contacts sat at their 88 dp floor
+in the natural-height chrome while every spare pixel went to the drives --
+~94 dp over ~190 dp on the reference phone.
+
+`ControlSurface` now shares the leftover equally among the three rows (PORT/STBD,
+FWD, REV), between the contact floor and ceiling; the bank's 280 dp floor and
+the body's own minimum still win. First attempt derived the thruster's fixed
+part from its intrinsic height minus a contact floor and came out 3-9 dp off,
+because the body's minimum is the taller of a contact and the HOLD view. So on
+the phone the panel is laid out in pieces -- `ThrusterHeader` at natural
+height, `ThrusterBody` at exactly contact plus its known inset, the panel's
+surface drawn behind both -- and the rows are equal to the pixel: 160 dp each
+on the reference phone, 147 at 1.3x, 159 on a 411 dp phone at 1.3x, 282 on a
+10" tablet. Against `main` on the owner's S25 at 1.3x that is ~94 -> 147 dp for
+PORT/STBD and ~96 -> 147 for FWD/REV. HOLD's trim steps now fill their row as
+four equal buttons. The sidebar and edge arrangements keep `ThrusterControl`
+whole at its natural height.
+
+`ContactBalanceTest` (5, native graphics). Suites: app 161 (+9 skipped renders).
+Not on glass.
+
+CodeRabbit on PR #14: the README's contact-height table still showed the
+pre-balance numbers (drives 185 dp, thruster 88 dp). Re-measured every window
+under the same default-graphics setup the table cites and rewrote it and the
+paragraph above it; the short windows (512 dp, split-screen) show the thruster
+at its 88 dp floor with the drives bigger, because the bank's 280 dp floor wins
+there, and the landscape arrangements keep the thruster natural. The stale
+"screenshots are of the pre-scale layout" known gap went too.

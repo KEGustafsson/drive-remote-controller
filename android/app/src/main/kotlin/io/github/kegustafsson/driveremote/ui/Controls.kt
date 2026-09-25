@@ -46,6 +46,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.Dp
@@ -520,42 +521,20 @@ fun DriveControl(
       enabled = enabled,
       onPressedChange = { contacts.reversePressed = it },
       modifier = overflowProbe.fillMaxWidth().weight(1f, fill = false).contactHeight(helm),
+      // Only when we ARE the armed controller and something outranks us --
+      // exactly the case where a press here visibly does nothing. Drawn OVER
+      // the bottom of this contact rather than on a line of its own: a line
+      // that came and went moved both contacts, and a line held open for it in
+      // every state was empty space under the drives nearly all the time --
+      // ~25 dp at 1.3x font, where "controlled by local switch" takes two
+      // lines. Presses go through it to the contact, as they always did.
+      overlay =
+        overriddenBy?.let { source ->
+          { NoticeOverlay("controlled by $source", NoticeTone.WARN) }
+        },
     )
-
-    // Only shown when we ARE the armed controller and something outranks us --
-    // exactly the case where a press here visibly does nothing. Its line is
-    // held open when there is nothing to say: this column centres its contents,
-    // so a note that came and went moved both contacts under the thumb at the
-    // moment TX or the local switch took over. DriveBankMinHeight already
-    // budgets for this line, so reserving it costs the floor nothing.
-    ReservedLines(
-      lines = 1,
-      fontSize = helm.text(12.sp),
-      modifier = Modifier.padding(top = helm.size(4.dp)),
-      // "controlled by local switch" wraps in a drive column at 1.3x.
-      alsoFits = { OverridingSources.forEach { DriveOverrideNote(it) } },
-    ) {
-      if (overriddenBy != null) DriveOverrideNote(overriddenBy)
-    }
   }
 }
-
-@Composable
-private fun DriveOverrideNote(source: String) {
-  Text(
-    "controlled by $source",
-    fontSize = LocalHelmScale.current.text(12.sp),
-    color = DriveColors.warn,
-    textAlign = TextAlign.Center,
-  )
-}
-
-/**
- * Every source name a "controlled by ..." note can carry: exactly those that
- * outrank this app (StationView's override note is `source.label` for these).
- */
-private val OverridingSources: List<String> =
-  CommandSource.entries.filter { it.overridesThisApp }.map { it.label }
 
 @Composable
 private fun ContactButton(
@@ -565,6 +544,8 @@ private fun ContactButton(
   enabled: Boolean,
   onPressedChange: (Boolean) -> Unit,
   modifier: Modifier = Modifier,
+  /** Drawn over the bottom of the button, inside its shape; see [NoticeOverlay]. */
+  overlay: (@Composable () -> Unit)? = null,
 ) {
   val background =
     when {
@@ -591,6 +572,9 @@ private fun ContactButton(
       fontWeight = FontWeight.Bold,
       color = if (enabled) DriveColors.ink else DriveColors.inkMuted,
     )
+    if (overlay != null) {
+      Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomCenter) { overlay() }
+    }
   }
 }
 
@@ -631,96 +615,128 @@ fun ThrusterControl(
   modifier: Modifier = Modifier,
 ) {
   val helm = LocalHelmScale.current
-  val enabled = view.thrusterCommandable
-
   Column(
     modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(12.dp))
-      .background(DriveColors.surfaceRaised)
-      .padding(helm.size(10.dp))
+      .then(ThrusterPanelBackground)
+      .padding(helm.size(ThrusterPanelPadding))
   ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-      Text(
-        "BOW THRUSTER",
-        fontSize = helm.text(13.sp),
-        color = DriveColors.inkMuted,
-        modifier = Modifier.weight(1f),
-      )
-      // Always live -- see the KDoc above. Selecting a mode is not commanding.
-      ModeChip("MANUAL", mode == ThrusterMode.MANUAL) { onModeChange(ThrusterMode.MANUAL) }
-      ModeChip("HOLD", mode == ThrusterMode.HOLD) { onModeChange(ThrusterMode.HOLD) }
-    }
+    ThrusterHeader(mode, onModeChange)
+    ThrusterBody(
+      view = view,
+      mode = mode,
+      trimDeg = trimDeg,
+      onDirectionChange = onDirectionChange,
+      onTrim = onTrim,
+      modifier = Modifier.padding(top = helm.size(ThrusterBodyGap)),
+    )
+  }
+}
 
-    // One box, sized by BOTH modes' bodies whichever is showing, so switching
-    // mode -- which the chips allow at any time, armed or not -- moves nothing
-    // below this panel. MANUAL's contribution is its contacts' floor; HOLD's is
-    // the readout and the trim row, which are `sp` and so cannot be written down
-    // as a dp number that stays right at every font scale. It is measured
-    // instead: MANUAL carries an invisible, inert copy of the HOLD body purely
-    // for its size.
-    Box(
-      Modifier.fillMaxWidth().padding(top = helm.size(8.dp)),
-      contentAlignment = Alignment.Center,
-    ) {
-      if (mode == ThrusterMode.MANUAL) {
-        HoldBody(
-          view = view,
-          trimDeg = trimDeg,
-          enabled = enabled,
-          onTrim = {},
-          interactive = false,
-          modifier = Modifier.alpha(0f).clearAndSetSemantics {},
-        )
-        Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
-        ManualBody(
-          enabled = enabled,
-          onDirectionChange = onDirectionChange,
-          modifier = Modifier.matchParentSize(),
-        )
-      } else {
-        Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
-        HoldBody(
-          view = view,
-          trimDeg = trimDeg,
-          enabled = enabled,
-          onTrim = onTrim,
-          interactive = true,
-        )
-      }
-    }
+/** The thruster panel's surface. Shared so the split phone layout draws the same one. */
+val ThrusterPanelBackground: Modifier =
+  Modifier.clip(RoundedCornerShape(12.dp)).background(DriveColors.surfaceRaised).testTag(ThrusterPanelTag)
 
-    // The panel's one notice line, held open when there is nothing to say.
-    // At most one notice is shown, most important first:
-    //
-    // 1. HH refusing what this station asked (the red band), in either mode.
-    // 2. Another source holding the thruster -- why a press here does nothing.
-    // 3. A reversal waiting on the thruster box's interlock -- why a press here
-    //    has not happened YET.
-    //
-    // 2 outranks 3 because it is the explanation that changes what the operator
-    // should do: waiting out an interlock on a thruster this station does not
-    // command would be waiting for nothing.
-    ReservedLines(
-      lines = 1,
+/** The panel's inside padding, and the gap between its header and its body, at the reference scale. */
+val ThrusterPanelPadding = 10.dp
+val ThrusterBodyGap = 8.dp
+
+/**
+ * The panel's title and the MANUAL/HOLD chooser.
+ *
+ * Its own composable because the phone arrangement lays the panel out in two
+ * pieces: this at its natural height, and [ThrusterBody] at exactly the height
+ * the drive contacts get, so the three rows of contacts are one size.
+ */
+@Composable
+fun ThrusterHeader(
+  mode: ThrusterMode,
+  onModeChange: (ThrusterMode) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val helm = LocalHelmScale.current
+  Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Text(
+      "BOW THRUSTER",
       fontSize = helm.text(13.sp),
-      modifier = Modifier.fillMaxWidth().padding(top = helm.size(4.dp)),
-      contentAlignment = Alignment.CenterStart,
-      // The band's own inside padding, so reserving "one line" reserves room
-      // for the band -- the tallest thing this line holds.
-      reservePadding = helm.size(RefusalBandPadding),
-      alsoFits = {
-        ThrusterRefusals.forEach { RefusalBand(it) }
-        OverridingSources.forEach { NoticeText("controlled by $it") }
-        NoticeText(ReversingNotice)
-      },
-    ) {
-      val refusal = thrusterRefusal(view, mode)
-      when {
-        refusal != null -> RefusalBand(refusal)
-        view.thrusterOverriddenBy != null ->
-          NoticeText("controlled by ${view.thrusterOverriddenBy}")
-        view.reversalPending -> NoticeText(ReversingNotice)
+      color = DriveColors.inkMuted,
+      modifier = Modifier.weight(1f),
+    )
+    // Always live -- see ThrusterControl's KDoc. Selecting a mode is not commanding.
+    ModeChip("MANUAL", mode == ThrusterMode.MANUAL) { onModeChange(ThrusterMode.MANUAL) }
+    ModeChip("HOLD", mode == ThrusterMode.HOLD) { onModeChange(ThrusterMode.HOLD) }
+  }
+}
+
+/**
+ * The panel's body: PORT/STBD in MANUAL, the heading readout and trim steps in
+ * HOLD, and the panel's notice drawn over either.
+ *
+ * It takes whatever height it is handed, and the live controls grow into it.
+ * Its own minimum is the taller of a contact's floor and the HOLD view, so
+ * switching mode can never make it shrink under a thumb.
+ */
+@Composable
+fun ThrusterBody(
+  view: StationView,
+  mode: ThrusterMode,
+  trimDeg: Double,
+  onDirectionChange: (ThrusterDirection) -> Unit,
+  onTrim: (Double) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val helm = LocalHelmScale.current
+  val enabled = view.thrusterCommandable
+  // One box, sized by BOTH modes' bodies whichever is showing, so switching
+  // mode -- which the chips allow at any time, armed or not -- moves nothing
+  // below this panel. MANUAL's contribution is its contacts' floor; HOLD's is
+  // the readout and the trim row, which are `sp` and so cannot be written down
+  // as a dp number that stays right at every font scale. It is measured
+  // instead: MANUAL carries an invisible, inert copy of the HOLD body purely
+  // for its size.
+  //
+  // Both sizing children are drawn in both modes, and the body that is live
+  // fills the box (matchParentSize) rather than sizing it -- so it grows with
+  // whatever the box is given, PORT/STBD and HOLD's trim steps alike.
+  Box(
+    modifier.fillMaxWidth(),
+    contentAlignment = Alignment.Center,
+  ) {
+    HoldBody(
+      view = view,
+      trimDeg = trimDeg,
+      enabled = enabled,
+      onTrim = {},
+      interactive = false,
+      modifier = Modifier.alpha(0f).clearAndSetSemantics {},
+    )
+    Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
+    if (mode == ThrusterMode.MANUAL) {
+      ManualBody(
+        enabled = enabled,
+        onDirectionChange = onDirectionChange,
+        modifier = Modifier.matchParentSize(),
+      )
+    } else {
+      HoldBody(
+        view = view,
+        trimDeg = trimDeg,
+        enabled = enabled,
+        onTrim = onTrim,
+        interactive = true,
+        grow = true,
+        modifier = Modifier.matchParentSize(),
+      )
+    }
+
+    // The panel's notice, drawn OVER the bottom of the body -- the PORT/STBD
+    // contacts in MANUAL, the trim row in HOLD -- and never beside it: in its
+    // own line it either moved the drives when it appeared or, held open in
+    // every state, sat as empty space under the contacts nearly all the time.
+    // matchParentSize, so however it wraps it cannot resize the panel.
+    thrusterNotice(view, mode)?.let { notice ->
+      Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomCenter) {
+        NoticeOverlay(notice.text, notice.tone)
       }
     }
   }
@@ -776,11 +792,33 @@ private const val HoldCheckUnit = "NOT HOLDING — CHECK THE UNIT"
 private const val ManualUnitFault = "THRUSTER REFUSED — UNIT FAULT"
 private const val ManualRefused = "THRUSTER REFUSED — RE-ARM TO COMMAND"
 
-/** Every band [thrusterRefusal] can return, for the notice line's reservation. */
-private val ThrusterRefusals =
-  listOf(HoldUnitFault, HoldNoReference, HoldRefused, HoldCheckUnit, ManualUnitFault, ManualRefused)
-
 private const val ReversingNotice = "reversing — waiting for the thruster interlock"
+
+/** One notice for the thruster panel, and how it is drawn. */
+private class ThrusterNotice(val text: String, val tone: NoticeTone)
+
+/**
+ * The thruster panel's notice, most important first, or null:
+ *
+ * 1. HH refusing what this station asked (the red band), in either mode.
+ * 2. Another source holding the thruster -- why a press here does nothing.
+ * 3. A reversal waiting on the thruster box's interlock -- why a press here
+ *    has not happened YET. MANUAL only: it explains a button the operator is
+ *    holding, and in HOLD there is none, while drawing it there would cover
+ *    the trim row through every reversal of an ordinary hold.
+ *
+ * 2 outranks 3 because it is the explanation that changes what the operator
+ * should do: waiting out an interlock on a thruster this station does not
+ * command would be waiting for nothing.
+ */
+private fun thrusterNotice(view: StationView, mode: ThrusterMode): ThrusterNotice? {
+  thrusterRefusal(view, mode)?.let { return ThrusterNotice(it, NoticeTone.BAD) }
+  view.thrusterOverriddenBy?.let { return ThrusterNotice("controlled by $it", NoticeTone.WARN) }
+  if (mode == ThrusterMode.MANUAL && view.reversalPending) {
+    return ThrusterNotice(ReversingNotice, NoticeTone.WARN)
+  }
+  return null
+}
 
 /** MANUAL's body: the PORT and STBD contacts, filling whatever height it is given. */
 @Composable
@@ -829,11 +867,9 @@ private fun ManualBody(
   // round the gap came out of the button, and these contacts were silently
   // 80 dp until LayoutFloorsTest measured them.
   //
-  // It still does not grow into leftover space: this block sits in the
-  // screen's natural-height chrome, so there is no leftover here to grow INTO
-  // -- the leftover goes to the drives, which are the pair held through a
-  // manoeuvre. It scales, so on a tablet these are 128 dp rather than a
-  // phone-sized button marooned in a bigger panel.
+  // It grows with its box. On the phone the box is handed exactly the height
+  // the drive contacts get (ControlSurface), so PORT/STBD, FWD and REV are one
+  // size; in the other arrangements the box is its natural height.
   Row(modifier) {
     ContactButton(
       "PORT",
@@ -869,6 +905,12 @@ private fun HoldBody(
   enabled: Boolean,
   onTrim: (Double) -> Unit,
   interactive: Boolean,
+  /**
+   * Fill the height given and let the trim steps take what the readout does
+   * not. Only for the live body, which is handed its box's size; the sizing
+   * copy must stay natural, or it would measure as whatever it was offered.
+   */
+  grow: Boolean = false,
   modifier: Modifier = Modifier,
 ) {
   val helm = LocalHelmScale.current
@@ -940,8 +982,10 @@ private fun HoldBody(
     // wants a target it can tap, not a button it must hold for exactly the
     // right length of time.
     Row(
-      Modifier.fillMaxWidth().padding(top = helm.size(8.dp)),
-      horizontalArrangement = Arrangement.SpaceEvenly,
+      Modifier.fillMaxWidth()
+        .then(if (grow) Modifier.weight(1f) else Modifier)
+        .padding(top = helm.size(8.dp)),
+      horizontalArrangement = Arrangement.spacedBy(helm.size(8.dp)),
     ) {
       // From the contract rather than written out here: these mirror
       // config::kHeadingNudge*StepDeg, which is hand-synced three ways, and a
@@ -954,49 +998,68 @@ private fun HoldBody(
           SkContract.HEADING_TRIM_FINE_DEG,
           SkContract.HEADING_TRIM_COARSE_DEG,
         )
+      // Four equal steps across the width, as tall as the row: the same
+      // generous targets as the contacts rather than chips in a wide strip.
       for (step in steps) {
-        TrimButton(step, enabled, clickable = interactive) { onTrim(step) }
+        TrimButton(
+          step,
+          enabled,
+          clickable = interactive,
+          modifier = Modifier.weight(1f).then(if (grow) Modifier.fillMaxHeight() else Modifier),
+        ) {
+          onTrim(step)
+        }
       }
     }
   }
 }
 
-/** The inside padding of [RefusalBand], above and below its text. */
-private val RefusalBandPadding = 4.dp
+/** How loud a [NoticeOverlay] is. */
+private enum class NoticeTone { BAD, WARN }
 
 /**
- * The thruster panel's red band: HH is not doing what this station asked, and
- * what to do about it.
+ * A notice drawn over the controls it is about, taking no layout space.
+ *
+ * Red for HH refusing what this station asked, amber for everything quieter.
+ * Filled either way, because it sits on top of a button and has to be read
+ * against one. Up to three lines; the box it is drawn in is the control's own,
+ * so a longer message is ellipsised rather than allowed to grow anything.
+ *
+ * It has no pointer handling, so a press on it reaches the contact underneath
+ * exactly as before the notice appeared -- deliberately. A band that swallowed
+ * touches would not stop the press anyway: `momentaryPress` takes a down even
+ * when something has consumed it, so a tap would become a one-frame command.
+ * And the contacts must stay whole: "reversing" covers the very contact the
+ * operator is holding, and a refused or outranked press is already ignored
+ * where it lands (HH, the arbiter).
  */
 @Composable
-private fun RefusalBand(text: String) {
+private fun NoticeOverlay(text: String, tone: NoticeTone) {
   val helm = LocalHelmScale.current
   Text(
     text,
-    fontSize = helm.text(13.sp),
+    fontSize = helm.text(if (tone == NoticeTone.BAD) 13.sp else 12.sp),
+    lineHeight = TightLineHeight,
     fontWeight = FontWeight.Bold,
-    color = DriveColors.ink,
-    // The band, then padding: the space inside it. The gap above belongs to the
-    // notice line holding this. One line, on purpose -- this panel sits in the
-    // screen's natural-height chrome, and the line is reserved at one line's
-    // height, so anything that wraps here comes out of the drive bank.
+    color = if (tone == NoticeTone.BAD) DriveColors.ink else DriveColors.surface,
+    textAlign = TextAlign.Center,
+    maxLines = 3,
+    overflow = TextOverflow.Ellipsis,
     modifier =
       Modifier.fillMaxWidth()
+        .padding(helm.size(4.dp))
         .clip(RoundedCornerShape(6.dp))
-        .background(DriveColors.bad)
-        .padding(horizontal = helm.size(8.dp), vertical = helm.size(RefusalBandPadding)),
+        .background(if (tone == NoticeTone.BAD) DriveColors.bad else DriveColors.warn)
+        .padding(horizontal = helm.size(8.dp), vertical = helm.size(4.dp))
+        .testTag(NoticeOverlayTag),
   )
 }
 
-/** A quieter notice on the thruster panel's notice line: amber text, no band. */
-@Composable
-private fun NoticeText(text: String) {
-  Text(
-    text,
-    fontSize = LocalHelmScale.current.text(12.sp),
-    color = DriveColors.warn,
-  )
-}
+/** Identifies the bow thruster panel, so its height can be measured. */
+const val ThrusterPanelTag = "thrusterPanel"
+
+/** Identifies a notice band drawn over a control. */
+const val NoticeOverlayTag = "noticeOverlay"
 
 /**
  * A mode chip. No `enabled` parameter by design: this chooser stays live and at
@@ -1022,15 +1085,17 @@ private fun TrimButton(
   step: Double,
   enabled: Boolean,
   clickable: Boolean = true,
+  modifier: Modifier = Modifier,
   onClick: () -> Unit,
 ) {
   val helm = LocalHelmScale.current
   Box(
-    Modifier.clip(RoundedCornerShape(8.dp))
+    modifier.clip(RoundedCornerShape(8.dp))
       .background(if (enabled) DriveColors.surface else DriveColors.disarmed.copy(alpha = 0.4f))
       .border(1.dp, DriveColors.border, RoundedCornerShape(8.dp))
       .clickable(enabled = enabled && clickable, onClick = onClick)
-      .padding(horizontal = helm.size(18.dp), vertical = helm.size(12.dp))
+      .padding(horizontal = helm.size(4.dp), vertical = helm.size(12.dp)),
+    contentAlignment = Alignment.Center,
   ) {
     Text(
       formatTrim(step) + "°",

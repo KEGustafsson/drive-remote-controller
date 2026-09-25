@@ -794,9 +794,9 @@ private fun ComposeContentTestRule.assertTelemetryBesideTheDrives() {
 }
 
 /**
- * The drives specifically — FWD and REV, the pair held through a manoeuvre. The
- * thruster's contacts sit in the screen's natural-height chrome and scale rather
- * than growing into leftover space, so they are deliberately not held to this.
+ * The drives specifically — FWD and REV. On the phone the thruster's contacts are
+ * the same height (ContactBalanceTest); in the landscape arrangements they keep
+ * their natural height, so they are not held to this.
  */
 private fun ComposeContentTestRule.assertDriveContactsAtLeast(floor: Dp) {
   for (label in listOf("FWD", "REV")) {

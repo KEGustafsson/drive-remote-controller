@@ -37,17 +37,32 @@ WRITE_SCREENSHOTS=1 ./gradlew :app:testDebugUnitTest --tests '*ReadmeScreenshots
 |---|---|
 | ![Android station, armed, with the drive unit silent: the kill switch reads tap to disarm · drive unit not responding, the drive buttons are greyed, and the DRV status lamp is red with a cross and its name in red; every control is in the same place as in the healthy screenshots](docs/screenshots/phone-drive-unit-silent.png) | ![Android station with the status detail open: under the lamp row, LINK connected, COMMANDS reaching boat, CONTROL this app, DRIVE UNIT responding, and more below in a scrolling panel; the drive buttons have given up their extra height and hold their minimum](docs/screenshots/phone-detail-open.png) |
 
+| Notices over their controls | |
+|---|---|
+| ![Android station, armed: an amber band reading reversing — waiting for the thruster interlock lies across the bottom of the PORT and STBD thruster contacts, and an amber band reading controlled by TX remote lies across the bottom of the port REV contact; the drive contacts run all the way down to the status bar, with no empty space under them](docs/screenshots/phone-notices.png) | |
+
 | System font 1.3× | System font 2.0× |
 |---|---|
 | ![Android station at 1.3x system font, the owner's own setting: larger type throughout, the status lamps still one row with single-word names, every control on screen](docs/screenshots/phone-font-1.3x.png) | ![Android station at 2.0x system font: BOW THRUSTER wraps to two lines, the status lamp names are still single words on one row, and every control is on screen](docs/screenshots/phone-font-2x.png) |
 
 **Buttons do not move when the state changes.** Arming, disarming, a unit
 going quiet, a command path failing, an override, a thruster notice or a mode
-change changes what the screen *says*, never where its controls *are*. Every
-message has its line reserved whether or not it is showing, and the status bar
-is five lamps with fixed names, so it is the same height in every state. The
-full readings are behind a tap on the bar. `ControlPositionStabilityTest`
-asserts this.
+change changes what the screen *says*, never where its controls *are*.
+Notices that come and go are drawn **over** the control they concern, as a
+band: a thruster refusal, "controlled by …" or "reversing …" over the thruster
+body, and a drive's "controlled by …" over that drive's REV contact. They take
+no space of their own, so none is left empty while they are not showing; that
+height belongs to the buttons. The kill switch keeps two lines for its second
+line in every state, and the status bar is five lamps with fixed names, so it
+is the same height in every state. The full readings are behind a tap on the
+bar. `ControlPositionStabilityTest` asserts that nothing moves, and
+`NoticeOverlayTest` asserts that nothing is left empty.
+
+**The three rows of contacts are one size.** Thruster PORT/STBD, drive FWD and
+drive REV share the height left over equally: 160 dp each on the reference
+phone, 147 dp at 1.3x system font, up to the 240 dp ceiling (scaled; 282 dp on
+a 10" tablet). In HOLD the trim steps take the same row and grow with it.
+`ContactBalanceTest` asserts it.
 
 **Text fits itself to the window.** The operator's system font scale is used in
 full wherever the screen holds it. Where it would push a control or the status
@@ -769,35 +784,41 @@ quietly shrink those floors and defeat it.
 only ever half a rule: the bank was unweighted at its minimum while telemetry —
 which commands nothing — held the `weight(1f)` and absorbed every spare pixel.
 `ControlSurface` is a measure policy rather than a `Column` because the priority
-wanted here cannot be said with weights: bank floor first, then telemetry's
-natural height, then the bank up to its ceiling, then the remainder back to
-telemetry. Telemetry is still what gives way on a short screen.
+wanted here cannot be said with weights: the bank's floor first, then
+telemetry's natural height, then one contact height shared by all three rows --
+thruster PORT/STBD, drive FWD, drive REV -- up to the ceiling, then the
+remainder back to telemetry. Telemetry is still what gives way on a short
+screen, and the bank's 280 dp floor still wins over equal rows on one.
 
-Measured, as `LayoutFloorsTest` renders them:
+Measured, as `LayoutFloorsTest` renders them (Robolectric's default graphics,
+whose text is a few dp off real text; `ContactBalanceTest` measures with real
+text and reads 160 dp on the reference phone, 147 dp at 1.3x):
 
-| window | scale | drive contact | was | thruster contact |
-|---|---|---|---|---|
-| reference phone 360×780 | 1.00 | **185 dp** | 88 dp | 88 dp |
-| budget phone 360×640 | 1.00 | 115 dp | 88 dp | 88 dp |
-| supported minimum 360×512 | 1.00 | 110 dp | 88 dp | 88 dp |
-| split-screen 360×390 @1.5× | 1.00 | 97 dp | 88 dp | 88 dp |
-| phone landscape 780×360 | 1.00 | 93 dp | — | 88 dp |
-| 7" tablet 600×960 | 1.23 | 295 dp | 88 dp | 108 dp |
-| 10" tablet 1280×800 | 1.03 | 229 dp | 88 dp | 90 dp |
-| 10" tablet 800×1280 | 1.45 | **348 dp** | 88 dp | 128 dp |
+| window | scale | drive contact | thruster contact |
+|---|---|---|---|
+| reference phone 360×780 | 1.00 | **164 dp** | **164 dp** |
+| budget phone 360×640 | 1.00 | 117 dp | 117 dp |
+| supported minimum 360×512 | 1.00 | 116 dp | 88 dp (floor; the bank's 280 dp floor wins) |
+| split-screen 360×390 @1.5× | 1.00 | 116 dp | 88 dp (as above) |
+| phone landscape 780×360 | 1.00 | 100 dp | 88 dp (landscape: natural height) |
+| 7" tablet 600×960 | 1.23 | 200 dp | 200 dp |
+| 10" tablet 1280×800 | 1.03 | 234 dp | 91 dp (landscape: natural height) |
+| 10" tablet 800×1280 | 1.45 | **287 dp** | **287 dp** |
 
-The ceiling is the reason the tablet stops at 348 rather than filling 1280 dp of
-height with one button: past a point a bigger target is just a longer reach, and
-beyond it the contacts sit centred with the slack around them so FWD and REV stay
-adjacent under one thumb.
+Upright windows share the height equally; the landscape arrangements keep the
+thruster at its natural height and give the leftover to the drives. The
+ceiling (240 dp scaled, 348 dp on the 10" tablet) is why a big screen does not
+fill its height with one button: past a point a bigger target is just a longer
+reach, and beyond it the contacts sit centred with the slack around them so FWD
+and REV stay adjacent under one thumb.
 
 **The arrangement follows the shape of the window, not its width.**
 
 *Upright — a phone or a tablet in portrait — stacks:* kill switch across the
 top, thruster block, the two drives side by side, telemetry under them. A tablet
 held upright is the same shape as a phone held upright and wants the same
-screen; on an 800 × 1280 dp tablet that is a full-width kill switch over 348 dp
-drive contacts. Choosing on width alone used to put that tablet into the
+screen; on an 800 × 1280 dp tablet that is a full-width kill switch over 287 dp
+thruster and drive contacts. Choosing on width alone used to put that tablet into the
 landscape arrangement, where "BOW THRUSTER" came out one letter per line and the
 fourth trim button fell off the side of a 250 dp middle column.
 
@@ -996,7 +1017,7 @@ That is a real milestone and still a long way short of "it works".
 | | |
 |---|---|
 | `core/` | **Verified.** 256 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 148 cases (plus the 8 README screenshot renders, skipped unless asked), most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 161 cases (plus the 9 README screenshot renders, skipped unless asked), most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |
@@ -1025,9 +1046,10 @@ commands anything in earnest.
   switches one composition between states -- disarmed and armed, a unit going
   quiet, commands failing, the link lost, another station arming, an override,
   a thruster notice, the MANUAL refusal band, MANUAL and HOLD -- and asserts
-  every live control keeps identical bounds, at 1.0x and 1.3x font. Every
-  message that used to add a line only while showing now has its line reserved
-  in every state, and the status bar is five lamps of fixed short names (LINK,
+  every live control keeps identical bounds, at 1.0x, 1.3x and 2.0x font.
+  Notices are drawn over the control they concern rather than in a line of
+  their own (a reserved line was empty space nearly all the time, ~110 dp of
+  it at 1.3x; `NoticeOverlayTest` asserts it is gone), and the status bar is five lamps of fixed short names (LINK,
   CMD, CTRL, DRV, THR: a dot with ✓ – ! ✕ over the name) whose readings are in
   the detail view and in each lamp's accessibility description. That suite and
   `StatusBarTest` run with Robolectric's **native** graphics: the default gives
@@ -1119,12 +1141,11 @@ commands anything in earnest.
   run closes this. [BUILDING.md §6.3.1](../docs/BUILDING.md#631-r8-and-what-it-took-to-turn-on)
   has the options.
 
-- **The screenshots are of the pre-scale layout.** Every shot above was taken
-  when the drive contacts were 88 dp; they are 185 dp on that same phone now, so
-  the proportions in the images are wrong even though every control in them is
-  still there and still in the same order. Re-shoot next time the phone is on
-  the boat's network. No tablet has run this at all — the tablet arrangement is
-  measured under Robolectric and has never been held in a hand.
+- **The screenshots are rendered, not photographed.** `ReadmeScreenshots`
+  draws them from the current Compose tree at the reference phone's size, so
+  they match the layout, but without a phone's system bars or a live boat.
+  No tablet has run this at all — the tablet arrangement is measured under
+  Robolectric and has never been held in a hand.
 
 - **A viewport too short for the whole screen now clips rather than shrinks.**
   Nothing above the telemetry panel scrolls — deliberately, so no live control
