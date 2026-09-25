@@ -1,6 +1,7 @@
 package io.github.kegustafsson.driveremote.ui
 
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,5 +72,37 @@ class HelmScaleTest {
         helm.size(ContactButtonMinHeight) >= ContactButtonMinHeight,
       )
     }
+  }
+
+  // ---- Dynamic font fitting ----------------------------------------------
+
+  /**
+   * The fit only ever gives back system scale: it never draws text smaller
+   * than the reference size the screen was tuned at, which is what the system
+   * setting at 1.0x would draw.
+   */
+  @Test
+  fun `the fit floor is the reference size, not smaller`() {
+    assertEquals(0.5f, minTextFit(2.0f), 0.001f)
+    assertEquals(1f / 1.3f, minTextFit(1.3f), 0.001f)
+    // At or below 1.0x there is nothing to give back.
+    assertEquals(1f, minTextFit(1.0f), 0.001f)
+    assertEquals(1f, minTextFit(0.85f), 0.001f)
+  }
+
+  @Test
+  fun `a step gives back 5 percent and stops at the floor`() {
+    assertEquals(0.95f, fitTextStep(1f, 2.0f)!!, 0.001f)
+    assertEquals(0.5f, fitTextStep(0.52f, 2.0f)!!, 0.001f)
+    assertEquals(null, fitTextStep(0.5f, 2.0f))
+    // Nothing to give at the system's own 1.0x.
+    assertEquals(null, fitTextStep(1f, 1.0f))
+  }
+
+  @Test
+  fun `the fit applies to text and never to dimensions`() {
+    val fitted = helmScaleFor(360.dp, 640.dp, textFit = 0.6f)
+    assertEquals(88.dp, fitted.size(88.dp))
+    assertEquals(18f, fitted.text(30.sp).value, 0.001f)
   }
 }

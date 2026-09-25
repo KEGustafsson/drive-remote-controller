@@ -87,6 +87,8 @@ fun StatusPanel(
    */
   appVersion: String = "",
   modifier: Modifier = Modifier,
+  /** Applied to the collapsed bar row itself -- how the screen finds its bottom edge. */
+  barModifier: Modifier = Modifier,
 ) {
   val helm = LocalHelmScale.current
   var expanded by rememberSaveable { mutableStateOf(false) }
@@ -97,12 +99,14 @@ fun StatusPanel(
       .fillMaxWidth()
       .clip(RoundedCornerShape(12.dp))
       .background(DriveColors.surfaceRaised)
-      .padding(helm.size(8.dp))
+      // 6 dp above and below rather than 8: the 640 dp budget phone at 1.0x
+      // had the bar 1.3 dp off the bottom with the drive bank at its floor.
+      .padding(horizontal = helm.size(8.dp), vertical = helm.size(6.dp))
   ) {
     // The always-visible bar, and the whole row is the toggle -- a big target
     // rather than a chevron a thumb has to hunt for on a moving boat.
     Row(
-      Modifier.fillMaxWidth()
+      barModifier.fillMaxWidth()
         .clickable { expanded = !expanded }
         .semantics {
           role = Role.Button

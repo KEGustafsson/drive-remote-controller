@@ -16,7 +16,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.dp
@@ -212,20 +214,54 @@ class LayoutFloorsTest {
   }
 
   /**
-   * 1.75x, not 2.0x, since every state-dependent message on the screen got its
-   * room reserved so that arming, a unit going quiet or a notice appearing can
-   * no longer move a control (ControlPositionStabilityTest). Reserved room is
-   * paid in every state, and at 2.0x on this 640 dp phone it costs the bottom
-   * ~24 dp of the drive bank: the contacts keep their floor (asserted above at
-   * 2.0x), the overflow goes off the bottom, and the screen says so. A
-   * deliberate trade -- a control that stays put was the owner's ask -- and
-   * this is the largest font scale at which a budget phone still fits.
+   * At 2.0x the reserved message lines (ControlPositionStabilityTest) no longer
+   * fit this 640 dp phone at full size, so the text gives back some of the
+   * system scale until they do -- dynamic font fitting, see `fitTextStep`.
    */
   @Test
   @Config(sdk = [35], qualifiers = SmallPhone)
   fun `no off-screen warning on a small phone with large text`() {
-    compose.showControlScreen(fontScale = LargestFittingFontScale)
+    compose.showControlScreen(fontScale = 2.0f)
     compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
+  }
+
+  // ---- Dynamic font fitting ----------------------------------------------
+
+  /**
+   * Where the screen holds the operator's system text, it gets all of it: the
+   * owner's S25 at 1.3x draws the kill switch label at the full 30 sp x 1.3.
+   */
+  @Test
+  fun `text is not shrunk where the screen fits`() {
+    compose.showControlScreen(fontScale = 1.3f)
+    assertEquals(30f, compose.killSwitchLabelSp(), 0.01f)
+  }
+
+  /**
+   * Where it does not, text gives back only as much of the system scale as the
+   * window cannot hold: the 640 dp phone at 2.0x fits every control, with its
+   * type smaller than 2.0x would draw but never below the 1.0x reference.
+   */
+  @Test
+  @Config(sdk = [35], qualifiers = SmallPhone)
+  fun `text gives way on a small phone at double system text, and only that far`() {
+    compose.showControlScreen(fontScale = 2.0f)
+    compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
+    val sp = compose.killSwitchLabelSp()
+    assertTrue("the label was not shrunk at all ($sp sp)", sp < 30f)
+    assertTrue("the label went below the 1.0x reference ($sp sp)", sp >= 15f - 0.01f)
+  }
+
+  /**
+   * Split screen at 1.5x: even the reference size does not fit, so the text
+   * stops at its floor and the screen says so rather than shrinking further.
+   */
+  @Test
+  @Config(sdk = [35], qualifiers = "w360dp-h390dp-xxhdpi")
+  fun `text stops at the reference size and the clip is reported`() {
+    compose.showControlScreen(fontScale = 1.5f)
+    assertEquals(20f, compose.killSwitchLabelSp(), 0.01f)
+    compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertExists()
   }
 
   // ---- Lines that appear when something is wrong ------------------------
@@ -248,7 +284,7 @@ class LayoutFloorsTest {
   @Test
   @Config(sdk = [35], qualifiers = SmallPhone)
   fun `a commands-not-reaching kill switch pushes nothing off a small phone at large text`() {
-    compose.showControlScreen(view = commandsBlocked, fontScale = LargestFittingFontScale)
+    compose.showControlScreen(view = commandsBlocked, fontScale = 2.0f)
     compose.onNodeWithContentDescription(BlockedLine, substring = true).assertExists()
     compose.assertContactFloors()
     compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
@@ -581,13 +617,6 @@ private const val ShortestSidebarWindow = "w900dp-h500dp-xhdpi"
 /** The reference phone on its side — the shortest window the wide layout gets. */
 private const val PhoneLandscape = "w780dp-h360dp-xxhdpi"
 
-/**
- * The largest system font scale at which [SmallPhone] still fits every live
- * control on screen. See `no off-screen warning on a small phone with large
- * text` for why it is not 2.0.
- */
-private const val LargestFittingFontScale = 1.75f
-
 /** Android's minimum touch target, and the floor every contact button holds. */
 private val TouchTargetFloor = 88.dp
 
@@ -647,6 +676,19 @@ private const val KillSwitchDescription = "ARMED. tap to disarm"
 
 private fun ComposeContentTestRule.killSwitch() =
   onNodeWithContentDescription(KillSwitchDescription)
+
+/**
+ * The kill switch label's type size as asked for, in sp before the system font
+ * scale -- 30 at the reference, less when dynamic fitting has given some back.
+ */
+private fun ComposeContentTestRule.killSwitchLabelSp(): Float {
+  val layout = mutableListOf<TextLayoutResult>()
+  onNodeWithText("ARMED", useUnmergedTree = true)
+    .fetchSemanticsNode()
+    .config[SemanticsActions.GetTextLayoutResult]
+    .action!!(layout)
+  return layout.first().layoutInput.style.fontSize.value
+}
 
 /** Where every live control sits, as one comparable snapshot. */
 private fun ComposeContentTestRule.liveControlBounds(): Map<String, DpRect> =

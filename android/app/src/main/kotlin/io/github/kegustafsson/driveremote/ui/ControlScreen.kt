@@ -10,21 +10,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -33,6 +38,9 @@ import io.github.kegustafsson.driveremote.core.DrivePosition
 import io.github.kegustafsson.driveremote.core.StationView
 import io.github.kegustafsson.driveremote.core.ThrusterDirection
 import io.github.kegustafsson.driveremote.core.ThrusterMode
+
+/** Material's body line height, which every Text on this screen inherits. */
+private val ThemeLineHeight = 24.sp
 
 /** Identifies the port/starboard bank so its reserved height can be measured. */
 const val DriveBankTag = "driveBank"
@@ -106,9 +114,38 @@ fun ControlScreen(
   releaseEpoch: Int = 0,
 ) {
   BoxWithConstraints(modifier.fillMaxSize()) {
-    val helm = remember(maxWidth, maxHeight) { helmScaleFor(maxWidth, maxHeight) }
+    // Dynamic font fitting. The operator's system font scale is honoured in
+    // full wherever the screen holds it; where it would push a live control off
+    // the bottom, the text gives back just enough of it to fit, a step per
+    // frame, never below what 1.0x would draw (see fitTextStep). Keyed on the
+    // window and the system setting, so a rotation, a split-screen resize or a
+    // changed font setting starts again from the full scale.
+    val systemFontScale = LocalDensity.current.fontScale
+    var textFit by
+      remember(maxWidth, maxHeight, systemFontScale) { mutableFloatStateOf(1f) }
+    val helm =
+      remember(maxWidth, maxHeight, textFit) { helmScaleFor(maxWidth, maxHeight, textFit) }
+    // Remembered: a static local that changed identity on every recomposition
+    // would recompose the whole screen with every telemetry update.
+    val fitter =
+      remember(textFit, systemFontScale) {
+        TextFitter(canShrink = fitTextStep(textFit, systemFontScale) != null) {
+          fitTextStep(textFit, systemFontScale)?.let { textFit = it }
+        }
+      }
 
-    CompositionLocalProvider(LocalHelmScale provides helm, LocalReleaseEpoch provides releaseEpoch) {
+    CompositionLocalProvider(
+      LocalHelmScale provides helm,
+      LocalReleaseEpoch provides releaseEpoch,
+      LocalTextFitter provides fitter,
+      // The theme's line height is a fixed 24 sp that no call site passes
+      // through the scale, so it stayed 24 sp while the text in it grew on a
+      // tablet or gave way to the fit -- at 2.0x every line was 48 dp tall
+      // whatever size its letters were. Scaled here, it is exactly the theme's
+      // on the reference phone and follows the text everywhere else.
+      LocalTextStyle provides
+        LocalTextStyle.current.merge(TextStyle(lineHeight = helm.text(ThemeLineHeight))),
+    ) {
       // Shape, not width. A tablet held UPRIGHT gets the same stacked
       // arrangement as a phone — one wide kill switch, the thruster block, the
       // two drives side by side, telemetry under them — because that is what the
@@ -231,7 +268,9 @@ private fun TallControlScreen(
         )
       }
     },
-    telemetry = { TelemetryPanel(view, authError, onChangeServer, appVersion) },
+    telemetry = {
+      TelemetryPanel(view, authError, onChangeServer, appVersion, barProbe = overflow.probe("status"))
+    },
   )
 }
 
@@ -325,6 +364,7 @@ private fun SidebarControlScreen(
       authError = authError,
       onChangeServer = onChangeServer,
       appVersion = appVersion,
+      barProbe = overflow.probe("status"),
       modifier = Modifier.width(sidebar).fillMaxHeight().padding(start = gutter),
     )
   }
@@ -397,6 +437,7 @@ private fun EdgeControlScreen(
           authError = authError,
           onChangeServer = onChangeServer,
           appVersion = appVersion,
+          barProbe = overflow.probe("status"),
           modifier = Modifier.padding(top = gutter).weight(1f),
         )
       }
@@ -526,18 +567,37 @@ private fun rememberOverflowWatch(): OverflowWatch {
   // it, so the reading is always of where the controls are now.
   val bottoms = remember { mutableStateMapOf<String, Float>() }
   val liveBottomPx = bottoms.values.maxOrNull() ?: 0f
+  val offScreen = liveBottomPx > viewportBottomPx + 1f
+
+  // Off screen with text still able to give: shrink it and measure again next
+  // frame, rather than telling the operator about a clip that is about to go.
+  val fitter = LocalTextFitter.current
+  SideEffect { if (offScreen) fitter.shrink() }
 
   return OverflowWatch(
     bottoms = bottoms,
     viewport =
       Modifier.onGloballyPositioned { viewportBottomPx = it.positionInRoot().y + it.size.height },
-    clipped = liveBottomPx > viewportBottomPx + 1f,
+    clipped = offScreen && !fitter.canShrink,
   )
 }
+
+/**
+ * The dynamic font fit, as the overflow watch sees it: whether text can still
+ * give up size, and the call that makes it. Provided by [ControlScreen].
+ */
+private class TextFitter(val canShrink: Boolean, val shrink: () -> Unit)
+
+private val LocalTextFitter = staticCompositionLocalOf { TextFitter(canShrink = false) {} }
 
 private class OverflowWatch(
   private val bottoms: MutableMap<String, Float>,
   val viewport: Modifier,
+  /**
+   * A live control is off the bottom AND text is already as small as it may
+   * go -- so the operator has to be told. While text can still shrink, an
+   * overflow is only the fit in progress.
+   */
   val clipped: Boolean,
 ) {
   /** Reports where this live control ends, under its own name. */
@@ -550,13 +610,13 @@ private fun ClippedNotice(clipped: Boolean) {
   if (!clipped) return
   val helm = LocalHelmScale.current
   Text(
-    "Window too short — some drive controls are off screen. Use the full screen.",
+    "Window too short — some controls or status lamps are off screen. Use the full screen.",
     fontSize = helm.text(12.sp),
     color = DriveColors.bad,
     modifier =
       Modifier.fillMaxWidth()
         .padding(top = helm.size(6.dp))
-        .semantics { contentDescription = "Some drive controls are off screen" }
+        .semantics { contentDescription = "Some controls or status lamps are off screen" }
         .testTag(ClippedWarningTag),
   )
 }
@@ -569,6 +629,12 @@ private fun TelemetryPanel(
   onChangeServer: () -> Unit,
   appVersion: String = "",
   modifier: Modifier = Modifier,
+  /**
+   * On the collapsed status bar: it names a quiet unit or a failing command
+   * path, so it counts as something that must be on screen, and dynamic font
+   * fitting shrinks text until it is.
+   */
+  barProbe: Modifier = Modifier,
 ) {
   Column(
     modifier
@@ -581,6 +647,7 @@ private fun TelemetryPanel(
       authError = authError,
       onChangeServer = onChangeServer,
       appVersion = appVersion,
+      barModifier = barProbe,
     )
   }
 }

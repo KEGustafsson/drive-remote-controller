@@ -88,6 +88,17 @@ class ControlPositionStabilityTest {
     compose.assertSameGeometry(disarmed, armed)
   }
 
+  /**
+   * Where dynamic font fitting has shrunk the text, it settles once -- the
+   * screen's height does not depend on its state -- so arming still moves
+   * nothing.
+   */
+  @Test
+  @Config(sdk = [35], qualifiers = "w360dp-h640dp-xxhdpi")
+  fun `arming moves nothing where text has been fitted`() {
+    compose.assertSameGeometry(disarmed, armed, fontScale = 2.0f)
+  }
+
   @Test
   fun `arming in HOLD moves nothing`() {
     compose.assertSameGeometry(disarmed, armed, mode = ThrusterMode.HOLD)

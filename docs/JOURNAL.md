@@ -7497,3 +7497,42 @@ the clipped warning shows; floors still hold everywhere. The two no-overflow
 checks there run at 1.75x, the largest scale that fits.
 
 Not on glass. Suites: app 136 (was 118); debug APK builds.
+
+## 2026-09-25 — Android: dynamic font fitting, README screenshots
+
+**Text fits the window.** The last entry's trade (at 2.0x on a 640 dp phone the
+reserved lines pushed the bank ~24 dp off screen) is gone. `HelmScale` carries a
+`textFit` in (0, 1] that multiplies every `helm.text(...)`. When the overflow
+watch measures a live control off the bottom, `fitTextStep` takes 5% off and the
+screen measures again next frame, stopping at `1 / systemFontScale`, so text is
+never smaller than the system setting at 1.0x would draw it. The fit is keyed on
+the window and the system scale and only moves down. That cannot hunt, because
+the screen's height no longer depends on its state. The *Window too short*
+notice now appears only once the fit is at its floor, not while it settles.
+
+Two things surfaced while building it. The theme's 24 sp line height was never
+scaled, so at 2.0x every line stayed 48 dp tall however small its letters got,
+and fitting moved nothing. It is now provided through `helm.text` in
+`ControlScreen`: identical on the reference phone, and a tablet's lines now grow
+with its text. And the status bar is now probed like a control, since it carries
+the fault lamps. That showed the 640 dp phone at plain 1.0x had the bar 1.3 dp
+off the bottom, which nothing had checked; the bar's vertical padding went from
+8 to 6 dp.
+
+The two small-phone no-overflow checks are back at 2.0x. New cases: text
+untouched where the screen fits (S25 at 1.3x), shrunk but not below 1.0x on the
+640 dp phone at 2.0x, stopped at the floor with the notice in split screen,
+arming still moves nothing once fitted, and the step arithmetic.
+
+**README screenshots are rendered now.** `ReadmeScreenshots` draws eight states
+of the real control screen at the S25's 360x780 dp / 480 dpi under native
+graphics, with presses as injected pointers: disarmed, drive held, thruster
+MANUAL held, HOLD with trim, drive unit silent, detail open, 1.3x and 2.0x
+system font. It is skipped unless `WRITE_SCREENSHOTS` is set. `captureToImage`
+never completes under Robolectric (its PixelCopy does not return), so it
+software-draws the decor view. The old on-device shots, including the record of
+the 4.7 dp squeeze, are replaced; that defect's history is in the entries above.
+A 640 dp render in this activity reserves a navigation bar and does not fit
+even at 1.0x, so the README shows 2.0x on the S25 instead.
+
+Not on glass. Suites: app 143 (+8 skipped renders).
