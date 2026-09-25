@@ -32,7 +32,7 @@ constexpr uint32_t kDebounceMs = 50;
 
 ControlStep::Cfg TestCfg() {
   ControlStep::Cfg cfg;  // HeadingFilter/Fsm/Switch in-class defaults:
-                         // t_fresh 1.5 s, coast_max 30 s, on_thr 3 deg...
+                         // t_fresh 2.0 s, coast_max 30 s, on_thr 3 deg...
   cfg.switcher.lead_time_s = 0.0f;  // s = e: no rate anticipation, so the
                                     // scenarios below control engagement
                                     // purely through the heading error
@@ -701,9 +701,15 @@ void test_local_engage_takes_over_from_a_remote_manual_thrust() {
   sim.TickFor(kDebounceMs + 3 * kTickMs);
   TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kLocal);
   TEST_ASSERT_TRUE(sim.last.mode == ThrusterMode::kHold);
-  // The remote's manual direction must not survive the takeover.
-  TEST_ASSERT_TRUE(sim.tx.manual_cmd == Cmd::kStbd);  // still shouting
-  TEST_ASSERT_NOT_EQUAL(FsmState::kDisarmed, sim.last.state);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  // The remote's manual direction must not survive the takeover, although TX
+  // is still live, enabled and publishing STBD. The OUTPUT is what says so:
+  // the local hold captured the current heading, so with zero heading error
+  // the switcher commands nothing -- and certainly not the remote's STBD.
+  TEST_ASSERT_EQUAL(Cmd::kOff, sim.last.dir);
+  for (int i = 0; i < 50; ++i) {
+    TEST_ASSERT_NOT_EQUAL(Cmd::kStbd, sim.Tick().dir);
+  }
 }
 
 // Changing MANUAL -> HOLD does not create a new FSM engage edge: the FSM is
@@ -1044,6 +1050,354 @@ void test_heading_does_not_read_valid_again_at_the_clock_wrap() {
   TEST_ASSERT_FLOAT_WITHIN(0.5f, 90.0f, sim.last.fused_deg);
 }
 
+// ==========================================================================
+// Review 2026-09-24 regression vectors.
+// ==========================================================================
+
+// The re-engage latch is PER SOURCE, not per winner. TX and the plugin both
+// armed in HOLD; TX outranks, so the plugin is live+enabled+hold but not in
+// command. HH's own link drops (both go stale together) and heals. Latching only
+// last tick's winner left the plugin eligible, so when the link healed its
+// retained enabled=true regenerated the engage level, the FSM saw a rising edge
+// and HH captured a fresh heading and held on it -- nobody touched anything.
+void test_outranked_hold_source_is_latched_when_the_link_drops() {
+  Sim sim;
+  sim.TickFor(500);
+  sim.tx = RemoteIdle();
+  sim.plugin = RemoteIdle();
+  sim.Tick();
+  sim.tx = RemoteHold();
+  sim.plugin = RemoteHold();
+  sim.TickFor(200);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kTx);
+
+  sim.tx.live = false;
+  sim.plugin.live = false;
+  sim.TickFor(500);
+  TEST_ASSERT_EQUAL(FsmState::kDisarmed, sim.last.state);
+
+  sim.tx.live = true;
+  sim.plugin.live = true;
+  for (int i = 0; i < 50; ++i) {
+    ControlStep::Outputs out = sim.Tick();
+    TEST_ASSERT_EQUAL(FsmState::kDisarmed, out.state);
+    TEST_ASSERT_FALSE(out.armed);
+    TEST_ASSERT_EQUAL(Cmd::kOff, out.dir);
+    TEST_ASSERT_TRUE(out.reengage_blocked);
+  }
+
+  // Each station is released by its own deliberate disarm/re-arm.
+  sim.plugin.enabled = false;
+  sim.TickFor(3 * kTickMs);
+  sim.plugin.enabled = true;
+  sim.TickFor(3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kPlugin);
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);  // TX is still refused
+}
+
+// Second path to the same hole: TX armed in HOLD, the local ENGAGE takes over
+// (so TX is no longer the winner), TX's link drops while outranked, local is
+// released, TX's link heals. TX was armed in HOLD when its link went -- it must
+// be refused, not silently re-engage the hold.
+void test_hold_source_outranked_by_local_is_latched_when_its_link_drops() {
+  Sim sim;
+  sim.TickFor(500);
+  HandOver(sim, sim.tx, RemoteHold());
+  sim.TickFor(200);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kTx);
+
+  sim.engage = true;
+  sim.TickFor(kDebounceMs + 3 * kTickMs);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kLocal);
+
+  sim.tx.live = false;
+  sim.TickFor(500);
+  sim.engage = false;
+  sim.TickFor(kDebounceMs + 3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kDisarmed, sim.last.state);
+
+  sim.tx.live = true;
+  for (int i = 0; i < 50; ++i) {
+    ControlStep::Outputs out = sim.Tick();
+    TEST_ASSERT_EQUAL(FsmState::kDisarmed, out.state);
+    TEST_ASSERT_EQUAL(Cmd::kOff, out.dir);
+  }
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);
+}
+
+// ==========================================================================
+// Releasing the local ENGAGE DISARMS (SAFETY.md thruster invariant 6: "Engage
+// released -> DISARMED, outputs OFF"). It is never a handover back to a remote.
+//
+// The defect these lock out: arbitration regenerates engage_request every tick,
+// and a remote that is live and enabled qualifies the moment local lets go --
+// so the request stayed TRUE straight through the release, the FSM never saw
+// it fall, and the thruster went on HOLDING for the remote (resuming a manual
+// STBD, or a hold on the local capture) with nobody touching anything. On the
+// local ENGAGE falling edge, every remote whose retained enabled is true is
+// latched by the existing re-engage latch, so it must be seen DISARMED and then
+// arm afresh before it can command again.
+// ==========================================================================
+
+namespace {
+
+void PressLocalEngage(Sim& sim) {
+  sim.engage = true;
+  sim.TickFor(kDebounceMs + 3 * kTickMs);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kLocal);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+}
+
+// Release, wait out the release debounce, and require the disarm to hold for
+// many ticks afterwards -- not just on the release tick.
+void ReleaseLocalEngageExpectDisarmed(Sim& sim) {
+  sim.engage = false;
+  sim.TickFor(kDebounceMs + 2 * kTickMs);
+  for (int i = 0; i < 300; ++i) {  // 3 s
+    ControlStep::Outputs out = sim.Tick();
+    TEST_ASSERT_EQUAL(FsmState::kDisarmed, out.state);
+    TEST_ASSERT_FALSE(out.armed);
+    TEST_ASSERT_EQUAL(Cmd::kOff, out.dir);
+    TEST_ASSERT_TRUE(out.source == ActiveSource::kNone);
+  }
+}
+
+}  // namespace
+
+// (a) A remote thrusting STBD in MANUAL, the local ENGAGE taken and then let
+// go. The remote is still live, enabled and publishing STBD -- the release must
+// disarm anyway, and STBD must not come back.
+void test_local_release_disarms_over_a_remote_manual_thrust() {
+  Sim sim;
+  ArmRemoteManual(sim, Cmd::kStbd);
+  TEST_ASSERT_EQUAL(Cmd::kStbd, sim.last.dir);
+  PressLocalEngage(sim);
+
+  ReleaseLocalEngageExpectDisarmed(sim);
+  // A present station publishing ARMED that HH is refusing -- reported as such.
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);
+}
+
+// (b) A remote armed in HOLD (the plugin this time), local ENGAGE taken and
+// released. No hold may continue, on the local capture or a fresh one.
+void test_local_release_disarms_over_a_remote_hold() {
+  Sim sim;
+  sim.TickFor(500);
+  HandOver(sim, sim.plugin, RemoteHold());
+  sim.TickFor(200);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kPlugin);
+  PressLocalEngage(sim);
+
+  ReleaseLocalEngageExpectDisarmed(sim);
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);
+}
+
+// (c) Stations that ARMED WHILE the local ENGAGE was held -- TX in MANUAL
+// pressing PORT, the plugin in HOLD. Latching at the falling edge (not at the
+// takeover) is what covers them: they were never in command, and still must not
+// inherit the thruster from the release.
+void test_local_release_disarms_over_remotes_armed_during_local_hold() {
+  Sim sim;
+  sim.TickFor(500);
+  sim.tx = RemoteIdle();
+  sim.plugin = RemoteIdle();
+  sim.Tick();  // both present and disarmed: neither latch is set
+  PressLocalEngage(sim);
+
+  sim.tx = RemoteManual(Cmd::kPort);
+  sim.plugin = RemoteHold();
+  sim.TickFor(200);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kLocal);
+
+  ReleaseLocalEngageExpectDisarmed(sim);
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);
+}
+
+// (d) The latch a release sets clears the ordinary way: the station seen live
+// and DISARMED, then armed again -- STOP then ARM -- and it commands at once.
+void test_remote_latched_by_local_release_commands_after_stop_then_arm() {
+  Sim sim;
+  sim.plugin = RemoteIdle();  // present and disarmed from the start
+  ArmRemoteManual(sim, Cmd::kStbd);
+  sim.plugin = RemoteHold();  // an armed plugin too, outranked by TX
+  sim.Tick();
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kTx);
+  TEST_ASSERT_FALSE(sim.last.reengage_blocked);  // nothing latched yet
+  PressLocalEngage(sim);
+  ReleaseLocalEngageExpectDisarmed(sim);
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);
+
+  // TX: STOP (live, enabled=false) ...
+  sim.tx.enabled = false;
+  sim.TickFor(3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kDisarmed, sim.last.state);
+  TEST_ASSERT_EQUAL(Cmd::kOff, sim.last.dir);
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);  // the plugin is still refused
+  // ... then ARM, still holding STBD: it commands on the arm.
+  sim.tx.enabled = true;
+  sim.TickFor(3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kTx);
+  TEST_ASSERT_EQUAL(Cmd::kStbd, sim.last.dir);
+
+  // The plugin clears the same way, once TX is out of the way.
+  sim.tx.enabled = false;
+  sim.plugin.enabled = false;
+  sim.TickFor(3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kDisarmed, sim.last.state);
+  TEST_ASSERT_FALSE(sim.last.reengage_blocked);
+  sim.plugin.enabled = true;
+  sim.TickFor(3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kPlugin);
+}
+
+// (e) Only a station ARMED at the release is latched. The plugin, present and
+// disarmed at the release, arms with a single arm and gets the thruster -- while
+// TX, armed at the release and outranking it, stays refused.
+void test_local_release_does_not_latch_a_disarmed_remote() {
+  Sim sim;
+  ArmRemoteManual(sim, Cmd::kStbd);
+  sim.plugin = RemoteIdle();
+  PressLocalEngage(sim);
+  ReleaseLocalEngageExpectDisarmed(sim);
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);  // TX
+
+  sim.plugin = RemoteHold();  // one arm, nothing else
+  sim.TickFor(3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.source == ActiveSource::kPlugin);
+  TEST_ASSERT_TRUE(sim.last.reengage_blocked);  // TX still refused
+}
+
+// (e, alone) The ordinary case with nobody armed at the release: a local hold
+// released with a station idle beside it, and that station's first arm engages.
+void test_local_release_with_only_a_disarmed_remote_arms_normally() {
+  Sim sim;
+  sim.TickFor(500);
+  sim.tx = RemoteIdle();
+  sim.Tick();
+  PressLocalEngage(sim);
+  ReleaseLocalEngageExpectDisarmed(sim);
+  TEST_ASSERT_FALSE(sim.last.reengage_blocked);
+
+  sim.tx = RemoteManual(Cmd::kPort);
+  sim.TickFor(3 * kTickMs);
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_EQUAL(Cmd::kPort, sim.last.dir);
+}
+
+// (f) "Live or not": a MANUAL station whose link dropped while the local ENGAGE
+// was held is NOT latched by the stale rule (MANUAL is exempt from its arming
+// half), but its retained enabled=true is still true at the release -- so the
+// release latches it, and its return does not resume the retained STBD.
+void test_local_release_latches_a_remote_that_is_stale_at_the_release() {
+  Sim sim;
+  ArmRemoteManual(sim, Cmd::kStbd);
+  PressLocalEngage(sim);
+  sim.tx.live = false;  // gone, retained enabled=true / manual / stbd
+  sim.TickFor(200);
+  ReleaseLocalEngageExpectDisarmed(sim);
+  TEST_ASSERT_FALSE(sim.last.reengage_blocked);  // nobody present to refuse
+
+  sim.tx.live = true;
+  for (int i = 0; i < 300; ++i) {
+    ControlStep::Outputs out = sim.Tick();
+    TEST_ASSERT_EQUAL(FsmState::kDisarmed, out.state);
+    TEST_ASSERT_EQUAL(Cmd::kOff, out.dir);
+    TEST_ASSERT_TRUE(out.reengage_blocked);
+  }
+}
+
+// MANUAL reaches HOLDING without the heading gate (the operator is the
+// reference). Flipping that session to HOLD must apply the gate a direct HOLD
+// arm would: with the heading stale (GNSS lost ~3 s ago, inside coast_max) it
+// must NOT capture a dead-reckoned base and steer on it. It waits in ARMED_IDLE
+// -- exactly as a direct arm into HOLD with a bad heading does -- and promotes,
+// with a fresh capture, once the heading is good again.
+void test_manual_to_hold_with_a_stale_heading_waits_in_armed_idle() {
+  Sim sim;
+  sim.TickFor(500);  // a good heading once...
+  sim.gnss_alive = false;  // ...then GNSS goes quiet
+  HandOver(sim, sim.tx, RemoteManual(Cmd::kOff));
+  sim.TickFor(3000);  // past t_fresh (2 s), well inside coast_max (30 s)
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  TEST_ASSERT_TRUE(sim.last.mode == ThrusterMode::kManual);
+  TEST_ASSERT_FALSE(sim.last.heading_valid);
+
+  // Flip to HOLD with a trim, so a hold that did run would thrust at once.
+  sim.tx = RemoteHold(/*trim_deg=*/30.0f);
+  for (int i = 0; i < 200; ++i) {
+    ControlStep::Outputs out = sim.Tick();
+    TEST_ASSERT_EQUAL(FsmState::kArmedIdle, out.state);
+    TEST_ASSERT_TRUE(out.armed);
+    TEST_ASSERT_EQUAL(Cmd::kOff, out.dir);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, out.fused_deg, out.setpoint_deg);
+  }
+
+  // The heading comes back: the pending hold engages as a direct arm would.
+  sim.gnss_alive = true;
+  sim.next_gnss_ms = 0;
+  sim.Tick();
+  TEST_ASSERT_EQUAL(FsmState::kHolding, sim.last.state);
+  // Captured fresh from the fused heading on this tick; the 30 deg trim has
+  // moved it by one slew step (10 deg/s * 10 ms) and no further.
+  TEST_ASSERT_FLOAT_WITHIN(0.11f, sim.last.fused_deg, sim.last.setpoint_deg);
+}
+
+// Cross-mode dwell is measured from when the thrust physically STOPPED -- the
+// first OFF tick -- the same instant the Switcher times its own reversals from.
+// Stamping the last ON tick instead made the carried dwell one tick short.
+void test_cross_mode_dwell_is_measured_from_the_first_off_tick() {
+  ControlStep::Cfg cfg = TestCfg();
+  cfg.manual_reversal_dwell_s = 0.0f;
+  cfg.switcher.min_off_s = 0.1f;
+  cfg.switcher.reversal_dwell_s = 0.5f;
+  Sim sim{cfg};
+  sim.TickFor(500);
+  HandOver(sim, sim.tx, RemoteManual(Cmd::kPort));
+  sim.TickFor(200);
+  TEST_ASSERT_EQUAL(Cmd::kPort, sim.last.dir);
+
+  sim.tx = RemoteHold(/*trim_deg=*/30.0f);  // switcher will want STBD
+  TEST_ASSERT_EQUAL(Cmd::kOff, sim.Tick().dir);  // thrust stops HERE
+  const uint32_t stopped_ms = sim.t;
+
+  uint32_t stbd_ms = 0;
+  for (int i = 0; i < 200 && stbd_ms == 0; ++i) {
+    if (sim.Tick().dir == Cmd::kStbd) stbd_ms = sim.t;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(stbd_ms != 0, "switcher never reversed");
+  TEST_ASSERT_EQUAL_UINT32(500, stbd_ms - stopped_ms);
+}
+
+// The GNSS listener stamps HH's own millis() on the loop task; the control task
+// reads its clock once at the top of the tick. A fix whose callback lands in
+// between is dated a few ms in the FUTURE. Correct() rightly rejects it this
+// tick -- but it must be retried next tick, when it is no longer in the future,
+// rather than marked applied and lost.
+void test_future_stamped_gnss_fix_is_retried_next_tick() {
+  Sim sim;
+  sim.TickFor(500);
+  sim.gnss_alive = false;
+  sim.TickFor(1000);  // the last accepted fix is now ~1 s old
+  TEST_ASSERT_TRUE(sim.last.heading_age_ms > 900);
+
+  sim.gnss.heading_deg = sim.gnss_heading_deg;
+  sim.gnss.t_ms = sim.t + kTickMs + 1;  // 1 ms after the next tick's clock read
+  sim.gnss.valid = true;
+  sim.Tick();
+  TEST_ASSERT_TRUE(sim.last.heading_age_ms > 900);  // not accepted yet
+
+  sim.Tick();  // same sample, now 9 ms in the past
+  TEST_ASSERT_EQUAL_UINT32(kTickMs - 1, sim.last.heading_age_ms);
+  TEST_ASSERT_TRUE(sim.last.heading_valid);
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_engage_with_valid_heading_captures_setpoint_once);
@@ -1085,5 +1439,17 @@ int main(int argc, char** argv) {
   RUN_TEST(test_setpoint_mirrors_fused_heading_in_manual_mode);
   RUN_TEST(test_mirroring_stops_once_hold_captures_the_setpoint);
   RUN_TEST(test_heading_does_not_read_valid_again_at_the_clock_wrap);
+  RUN_TEST(test_outranked_hold_source_is_latched_when_the_link_drops);
+  RUN_TEST(test_hold_source_outranked_by_local_is_latched_when_its_link_drops);
+  RUN_TEST(test_local_release_disarms_over_a_remote_manual_thrust);
+  RUN_TEST(test_local_release_disarms_over_a_remote_hold);
+  RUN_TEST(test_local_release_disarms_over_remotes_armed_during_local_hold);
+  RUN_TEST(test_remote_latched_by_local_release_commands_after_stop_then_arm);
+  RUN_TEST(test_local_release_does_not_latch_a_disarmed_remote);
+  RUN_TEST(test_local_release_with_only_a_disarmed_remote_arms_normally);
+  RUN_TEST(test_local_release_latches_a_remote_that_is_stale_at_the_release);
+  RUN_TEST(test_manual_to_hold_with_a_stale_heading_waits_in_armed_idle);
+  RUN_TEST(test_cross_mode_dwell_is_measured_from_the_first_off_tick);
+  RUN_TEST(test_future_stamped_gnss_fix_is_retried_next_tick);
   return UNITY_END();
 }

@@ -102,15 +102,34 @@ class KeystoreEncryptedPreferences(
   var writesDroppedWithoutKey: Int = 0
     private set
 
-  /** False when no key could be obtained -- see [writesDroppedWithoutKey]. */
+  /**
+   * False when no key could be obtained -- see [writesDroppedWithoutKey].
+   * Asking tries again: a failed load is not remembered.
+   */
   val keyAvailable: Boolean
     get() = secretKey != null
 
   // ---------------------------------------------------------------- crypto --
 
-  private val secretKey: SecretKey? by lazy {
-    if (useAndroidKeystore) loadOrCreateKey() else keySource()
-  }
+  @Volatile private var cachedKey: SecretKey? = null
+  private val keyLock = Any()
+
+  /**
+   * The key, loaded on first use and kept -- but only once it has actually been
+   * obtained. A failed load is NOT cached: this used to be a `lazy`, which kept
+   * a launch-time Keystore hiccup as "no key" for the whole process, so every
+   * read looked like nothing stored and every write was dropped -- including the
+   * client id, whose loss makes the station a new device needing an admin's
+   * approval. Retried on the next access instead. Loading stays under a lock so
+   * two threads cannot both find the alias missing and generate two keys.
+   */
+  private val secretKey: SecretKey?
+    get() =
+      cachedKey
+        ?: synchronized(keyLock) {
+          cachedKey
+            ?: (if (useAndroidKeystore) loadOrCreateKey() else keySource()).also { cachedKey = it }
+        }
 
   private fun loadOrCreateKey(): SecretKey? =
     runCatching {

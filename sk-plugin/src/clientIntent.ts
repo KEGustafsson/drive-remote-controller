@@ -102,18 +102,29 @@ export const INTENT_POST_TIMEOUT_MS = 2000;
  * write. Nothing is written to the Signal K data tree.
  */
 export const postIntent: PostIntent = async (intent) => {
-  // AbortSignal.timeout is missing on some older WebViews; without it the
-  // request simply has no client-side deadline, as before.
-  const signal =
-    typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
-      ? AbortSignal.timeout(INTENT_POST_TIMEOUT_MS)
-      : undefined;
-  const res = await fetch(SK_PLUGIN_INTENT_ENDPOINT, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(intent),
-    signal,
-  });
-  if (!res.ok) throw new IntentPostError(res.status);
+  // The deadline is not optional: App skips every heartbeat while a POST is in
+  // flight, so one POST that never settles would stop the heartbeat for the
+  // page's life. AbortSignal.timeout is missing on some older Safari/WebViews,
+  // so fall back to an AbortController and a timer there, cleared once settled.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let signal: AbortSignal | undefined;
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    signal = AbortSignal.timeout(INTENT_POST_TIMEOUT_MS);
+  } else if (typeof AbortController !== 'undefined') {
+    const controller = new AbortController();
+    timer = setTimeout(() => controller.abort(), INTENT_POST_TIMEOUT_MS);
+    signal = controller.signal;
+  }
+  try {
+    const res = await fetch(SK_PLUGIN_INTENT_ENDPOINT, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(intent),
+      signal,
+    });
+    if (!res.ok) throw new IntentPostError(res.status);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 };

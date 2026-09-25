@@ -8,6 +8,7 @@ import io.github.kegustafsson.driveremote.auth.AccessRequestClient
 import io.github.kegustafsson.driveremote.core.AccessState
 import io.github.kegustafsson.driveremote.core.ClientIntent
 import io.github.kegustafsson.driveremote.core.DrivePosition
+import io.github.kegustafsson.driveremote.core.IntentStatus
 import io.github.kegustafsson.driveremote.core.ServerAddress
 import io.github.kegustafsson.driveremote.core.SkContract
 import io.github.kegustafsson.driveremote.core.StationView
@@ -15,8 +16,10 @@ import io.github.kegustafsson.driveremote.core.ThrusterCommand
 import io.github.kegustafsson.driveremote.core.ThrusterDirection
 import io.github.kegustafsson.driveremote.core.ThrusterMode
 import io.github.kegustafsson.driveremote.core.TokenHealth
+import io.github.kegustafsson.driveremote.core.classifyIntentOutcome
 import io.github.kegustafsson.driveremote.core.deriveStationView
 import io.github.kegustafsson.driveremote.core.tokenRefusedNotice
+import io.github.kegustafsson.driveremote.core.trimGovernedBy
 import io.github.kegustafsson.driveremote.net.IntentPoster
 import io.github.kegustafsson.driveremote.net.SkStream
 import io.github.kegustafsson.driveremote.settings.SettingsStore
@@ -86,6 +89,21 @@ data class UiState(
   val setupNotice: String? = null,
   /** The last server used, offered for one-tap reconnection. */
   val lastServer: ServerAddress? = null,
+  /**
+   * Bumped every time [StationViewModel.releaseAllControls] forces the controls
+   * safe. The screen keys its momentary contacts on it, so a contact still drawn
+   * as held -- a pause need not cancel the pointer -- is released on screen as
+   * well as on the wire, rather than showing FORWARD while NEUTRAL is sent.
+   */
+  val releaseEpoch: Int = 0,
+  /**
+   * The outcome of the last intent POST this session: whether this station's
+   * commands -- STOP included -- are reaching the boat. The COMMANDS lamp and the
+   * kill switch's warning line read it (through [StationView.intentStatus]).
+   * Back to [IntentStatus.UNKNOWN] whenever a session starts or ends, so one
+   * server's verdict is never shown against another.
+   */
+  val intentStatus: IntentStatus = IntentStatus.UNKNOWN,
 )
 
 /**
@@ -191,6 +209,22 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    * instant the MODE changes, which [refreshView]'s 4 Hz sampling cannot see.
    */
   private var holdRequestedSinceMs: Long? = null
+
+  /**
+   * The MANUAL counterpart of [holdRequestedSinceMs]: when this station, armed
+   * with MANUAL selected, began asking HH to take its commands. Kept the same
+   * way and cleared by the same mode rule, so a refusal band can never be drawn
+   * from a window that belonged to the other mode.
+   */
+  private var manualRequestedSinceMs: Long? = null
+
+  /**
+   * Since when HH has read not-live on a live stream, continuously -- the one
+   * piece of history the trim rule needs (`trimMustReset` in :core). Handed to
+   * each derivation and taken back from the view it returns; the view clears it
+   * whenever the condition breaks, the stream dropping included.
+   */
+  private var hhGoneSinceMs: Long? = null
 
   private var heartbeatJob: Job? = null
   private var tickerJob: Job? = null
@@ -342,6 +376,7 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
           setupNotice = null,
           authError = null,
           lastServer = address,
+          intentStatus = IntentStatus.UNKNOWN,
         )
       if (token != null) {
         stream.connect(address, token)
@@ -400,7 +435,8 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     if (current.server != address || current.stage !is Stage.NeedsToken) return
     settings.setToken(state.token, state.expiresAtMs, address)
     tokenHealth = TokenHealth()
-    _uiState.value = current.copy(stage = Stage.Ready, authError = null)
+    _uiState.value =
+      current.copy(stage = Stage.Ready, authError = null, intentStatus = IntentStatus.UNKNOWN)
     stream.connect(address, state.token)
     startHeartbeat()
   }
@@ -408,11 +444,12 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
   /**
    * Operator-initiated: stop talking to this server and pick another.
    *
-   * Refused while armed. Disconnecting would leave this station holding the arm
-   * token until the arbiter stale-evicts it, with the operator already on a
-   * setup screen that shows no controls -- armed, commanding, and unable to
-   * see or stop it. Disarming first is one tap and makes the state
-   * unambiguous.
+   * Refused while armed on a live link ([StationView.changeServerRefused];
+   * offline it leaves with a disarm instead). Disconnecting would leave this
+   * station holding the arm token until the arbiter stale-evicts it, with the
+   * operator already on a setup screen that shows no controls -- armed,
+   * commanding, and unable to see or stop it. Disarming first is one tap and
+   * makes the state unambiguous.
    *
    * "Armed" here means armed IN A LIVE SESSION, and both halves of that are
    * load-bearing. `view.armed` is derived from the arbiter's `activeClient`,
@@ -426,13 +463,22 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    * test stays as the cheap second answer to the same question.
    */
   fun changeServer() {
-    if (_uiState.value.stage == Stage.Ready && _uiState.value.view?.armed == true) {
+    val ready = _uiState.value.stage == Stage.Ready
+    val view = _uiState.value.view
+    if (ready && view?.changeServerRefused == true) {
       _uiState.value =
         _uiState.value.copy(
           authError = "Disarm before changing server — this station is armed."
         )
       return
     }
+    // Offline, "armed" is only the last-known activeClient, which a disarm sent
+    // now could never visibly clear -- refusing on it was a lockout onto a server
+    // the operator could not reach. So leave, but leave with a STOP: teardown()'s
+    // final safe intent carries disarmReq, and bumping it here makes that intent
+    // a disarm edge. If it is lost too, the heartbeat stops with the session and
+    // the arbiter stale-evicts this station anyway.
+    if (ready && view?.changeServerSendsStop == true) disarmReq += 1
     teardown()
     _uiState.value =
       _uiState.value.copy(
@@ -441,6 +487,7 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
         authError = null,
         setupNotice = null,
         lastServer = _uiState.value.server,
+        intentStatus = IntentStatus.UNKNOWN,
       )
   }
 
@@ -492,6 +539,7 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
         authError = null,
         lastServer = server,
         setupNotice = notice,
+        intentStatus = IntentStatus.UNKNOWN,
       )
   }
 
@@ -614,7 +662,10 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    * writer to touch this field.
    */
   private fun updateThruster(next: ThrusterCommand) {
-    if (next.mode != thruster.mode) holdRequestedSinceMs = null
+    if (next.mode != thruster.mode) {
+      holdRequestedSinceMs = null
+      manualRequestedSinceMs = null
+    }
     thruster = next
   }
 
@@ -673,6 +724,7 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
    */
   fun releaseAllControls() {
     setControlsSafe()
+    _uiState.value = _uiState.value.copy(releaseEpoch = _uiState.value.releaseEpoch + 1)
     sendIntentNow(allowWithoutHeartbeat = true, urgent = true, nonCancellable = true)
   }
 
@@ -891,11 +943,16 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     }
     when (result) {
       is IntentPoster.Result.Ok -> {
+        reportIntentStatus(IntentStatus.OK)
         tokenHealth = tokenHealth.accepted()
         if (_uiState.value.authError != null) _uiState.value = _uiState.value.copy(authError = null)
       }
 
       is IntentPoster.Result.Unauthorized -> {
+        // Reported before the TokenHealth verdict: if that ends the session, the
+        // status is reset along with it; if it does not, the refusal is real --
+        // a STOP sent now would be refused just the same -- and says so.
+        reportIntentStatus(classifyIntentOutcome(result.code))
         // A rejection only counts against the scheme it actually used, so
         // several sends refused on the same unprobed scheme cannot spend the
         // whole budget on one failed probe. A refusal with no scheme at all
@@ -924,8 +981,28 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
       // must keep working while it cannot see the boat. If the outage outlasts
       // the arbiter's staleness timeout it releases the token itself, and the
       // system falls back to disarmed with no special-casing here.
-      is IntentPoster.Result.Failed -> Unit
+      //
+      // What it is NOT is nothing to report. It used to be dropped here, and the
+      // kill switch went on reading a healthy "tap to arm" over a path that
+      // reached nothing -- a 503 from a stopped plugin, or no network at all.
+      // Reported only for the session it was sent under: a failure from a server
+      // this station has since left says nothing about the one it is on now.
+      is IntentPoster.Result.Failed ->
+        if (result.generation != null && result.generation == intentPoster.currentGeneration()) {
+          reportIntentStatus(classifyIntentOutcome(result.code))
+        }
     }
+  }
+
+  /**
+   * Record a POST outcome, and redraw at once when it changes -- a STOP that
+   * just failed must say so now, not on the next tick. Deduplicated because the
+   * heartbeat confirms the same answer four times a second.
+   */
+  private fun reportIntentStatus(status: IntentStatus) {
+    if (_uiState.value.stage != Stage.Ready || _uiState.value.intentStatus == status) return
+    _uiState.value = _uiState.value.copy(intentStatus = status)
+    refreshView()
   }
 
   /**
@@ -960,6 +1037,17 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
     val armed = _uiState.value.view?.armed == true
     holdRequestedSinceMs =
       if (armed && thruster.mode == ThrusterMode.HOLD) holdRequestedSinceMs ?: nowMs else null
+    // The same for MANUAL, whose "request" is simply being able to command in it:
+    // HH should take this station's commands from then on, and a refusal band is
+    // drawn only once it has had HOLD_ENGAGE_GRACE_MS to (StationView
+    // .manualRefusal). Commandable rather than merely armed, as the browser
+    // measures it: while HH is absent there is nothing to refuse, and a window
+    // that ran on through the absence would flash the band at HH's return, in
+    // the moment before it has taken the arm.
+    val commandable = _uiState.value.view?.thrusterCommandable == true
+    manualRequestedSinceMs =
+      if (commandable && thruster.mode == ThrusterMode.MANUAL) manualRequestedSinceMs ?: nowMs
+      else null
 
     val view =
       deriveStationView(
@@ -972,16 +1060,28 @@ class StationViewModel(application: Application) : AndroidViewModel(application)
         everConnected = stream.everConnected,
         linkAttemptStartedMs = stream.targetSetAtMs,
         holdRequestedSinceMs = holdRequestedSinceMs,
+        manualRequestedSinceMs = manualRequestedSinceMs,
+        // So an activeClient heard on a socket that has since been replaced is
+        // not read as proof that this one is live (serverStreamLive).
+        streamOpenedAtMs = stream.openedAtMs,
+        hhGoneSinceMs = hhGoneSinceMs,
+        intentStatus = _uiState.value.intentStatus,
       )
+    hhGoneSinceMs = view.hhGoneSinceMs
 
-    // Arm-first, then trim: force the trim back to 0 whenever the thruster is
-    // not commandable, so arming always begins at "hold the captured heading"
-    // and never swings the boat to an offset dialled in earlier.
-    if (!view.thrusterCommandable) {
-      // Trim only -- the mode is untouched, so this one does not go through
-      // updateThruster's mode rule (and must not: it runs on every tick).
-      thruster = thruster.untrimmed()
-    }
+    // The trim is reset only when the hold has ENDED, never because this
+    // station's read side went dark -- socket down, or open and silent. The
+    // rule, and why, is trimMustReset in :core (owner decision 2026-09-24).
+    // Offline the trim is kept and keeps being sent; the trim steps are inert
+    // there (they follow thrusterCommandable), so it is frozen rather than
+    // lost. Once the hold really is over -- disarmed on a live link, HH not
+    // answering for a full window on a live link, MANUAL -- it goes back to 0,
+    // so a later hold begins at "hold the captured heading" and never swings
+    // the boat to an offset dialled in earlier.
+    //
+    // Trim only -- the mode is untouched, so this does not go through
+    // updateThruster's mode rule (and must not: it runs on every tick).
+    thruster = thruster.trimGovernedBy(view)
 
     _uiState.value = _uiState.value.copy(view = view, trimDeg = thruster.trimDeg)
   }

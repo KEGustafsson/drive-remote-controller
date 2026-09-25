@@ -130,10 +130,11 @@ bool SkThrusterIn::Snapshot(uint32_t now_ms,
     future_stamps_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  out->live = command_watchdog_.IsLive(now_ms, timeout_ms) &&
-              mode_watchdog_.IsLive(now_ms, timeout_ms) &&
-              trim_watchdog_.IsLive(now_ms, timeout_ms) &&
-              enabled_watchdog_.IsLive(now_ms, timeout_ms);
+  // AllLive, not a chain of `&&`: every member must be polled every tick so a
+  // stale one latches (control_core::AllLive).
+  out->live = control_core::AllLive(now_ms, timeout_ms, command_watchdog_,
+                                    mode_watchdog_, trim_watchdog_,
+                                    enabled_watchdog_);
   const uint32_t command_age =
       ElapsedMs(now_ms, command_watchdog_.LastUpdateMs());
   const uint32_t mode_age = ElapsedMs(now_ms, mode_watchdog_.LastUpdateMs());

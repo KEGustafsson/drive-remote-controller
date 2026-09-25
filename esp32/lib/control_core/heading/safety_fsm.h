@@ -25,10 +25,12 @@
 // give up holding (GNSS lost too long, BNO died, they let go of engage)
 // should see a deliberate "it's idle now" state and consciously re-arm,
 // rather than thrust silently resuming mid-maneuver once some sensor comes
-// back. The one case that DOES auto-promote without a fresh edge is the
-// very first arm attempt with no heading yet available: holding `engage`
-// through ARMED_IDLE while waiting for the first fix is not a "recovery
-// from interruption," nothing was ever holding to interrupt.
+// back. The one case that DOES auto-promote without a fresh edge is an arm
+// attempt with no good heading yet available: holding `engage` through
+// ARMED_IDLE while waiting for the fix is not a "recovery from
+// interruption," nothing was ever holding to interrupt. A MANUAL session
+// flipped to HOLD on a bad heading is that same case (hold_mode_entered):
+// manual thrust was never holding a heading either.
 
 #include <cstdint>
 
@@ -52,6 +54,14 @@ struct FsmInputs {
   // Age of the latest accepted GNSS fix, for the coast warn/max timers
   // while HOLDING. Irrelevant in other states.
   uint32_t heading_age_ms = 0;
+  // True on the tick the thruster changes from MANUAL to HOLD while engaged.
+  // MANUAL reaches kHolding without the heading arm gate (the operator is the
+  // reference), so a hold starting from there has never passed it. With this
+  // set, a kHolding FSM re-applies heading_ok_to_arm exactly as an arm would:
+  // not ok -> back to kArmedIdle with the hold request still PENDING, so it
+  // promotes (and the caller captures a fresh setpoint) once the heading is
+  // good -- the same wait a direct arm into HOLD with a bad heading gets.
+  bool hold_mode_entered = false;
 };
 
 class SafetyFsm {

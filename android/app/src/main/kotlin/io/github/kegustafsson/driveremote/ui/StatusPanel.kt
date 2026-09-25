@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.kegustafsson.driveremote.core.CommandSource
+import io.github.kegustafsson.driveremote.core.CommandsTone
 import io.github.kegustafsson.driveremote.core.ConnectionState
 import io.github.kegustafsson.driveremote.core.LinkPhase
 import io.github.kegustafsson.driveremote.core.ControlState
@@ -123,14 +124,23 @@ fun StatusPanel(
         // uses it: a socket that has not opened YET is a start-up, and lighting
         // this amber and then red for the few hundred milliseconds of every
         // launch trains the operator to ignore the one lamp that reports the
-        // link. Once a session has been open, a gap is reported immediately.
+        // link. Once a session has been live, a gap is reported immediately.
+        //
+        // "no data from server" is the socket that still reads open while
+        // nothing arrives on it -- the far end gone without a FIN. Named apart
+        // from "disconnected" because it looks nothing like one from the phone:
+        // Wi-Fi up, the app still attached, and the boat invisible. The
+        // browser's Link lamp says the same words.
         reading =
           when (view.linkPhase) {
             LinkPhase.ONLINE -> "connected"
             LinkPhase.CONNECTING -> "connecting…"
             LinkPhase.OFFLINE ->
-              if (view.connectionState == ConnectionState.CONNECTING) "reconnecting…"
-              else "disconnected"
+              when (view.connectionState) {
+                ConnectionState.OPEN -> "no data from server"
+                ConnectionState.CONNECTING -> "reconnecting…"
+                ConnectionState.CLOSED -> "disconnected"
+              }
           },
         colour =
           when (view.linkPhase) {
@@ -139,6 +149,29 @@ fun StatusPanel(
             LinkPhase.OFFLINE ->
               if (view.connectionState == ConnectionState.CONNECTING) DriveColors.warn
               else DriveColors.bad
+          },
+        dimmed = false,
+        modifier = Modifier.weight(1f),
+      )
+
+      // Whether this station's commands are actually landing, from the outcome
+      // of its own intent POSTs -- the browser's Commands lamp, same place in the
+      // summary, same wording. In the collapsed summary because a command path
+      // that reaches nothing is a fault the operator must be told, not detail.
+      //
+      // Never dimmed, unlike the browser's copy: the reading does not come from
+      // the stream, it comes from the HTTP path, which is independent of it --
+      // and "the stream is down but commands still land" is precisely the case
+      // where this lamp is the one telling the operator their STOP still works.
+      val commands = view.commands
+      Lamp(
+        title = "COMMANDS",
+        reading = commands.value,
+        colour =
+          when (commands.tone) {
+            CommandsTone.GOOD -> DriveColors.good
+            CommandsTone.NEUTRAL -> DriveColors.neutral
+            CommandsTone.BAD -> DriveColors.bad
           },
         dimmed = false,
         modifier = Modifier.weight(1f),
@@ -158,7 +191,7 @@ fun StatusPanel(
       )
 
       // Chevron and version share one column so the version costs no WIDTH --
-      // the two lamps beside it are weight(1f) and would give up space for it.
+      // the lamps beside it are weight(1f) and would give up space for it.
       // Height is the cheaper axis here: this row is inside the telemetry
       // region, which scrolls and commands nothing.
       Column(
@@ -237,29 +270,43 @@ fun StatusPanel(
       // deliberate, occasional act, and a control that ends the session has no
       // business sitting where a thumb can find it during a manoeuvre.
       //
-      // Inert while armed rather than hidden. Disconnecting armed would leave
-      // this station holding the arm token until the arbiter stale-evicts it,
-      // with the operator already on a screen that shows no controls -- armed,
-      // still commanding, and unable to see or stop it. Saying so is more use
-      // than a button that has silently vanished.
+      // Inert while armed on a live link rather than hidden. Disconnecting armed
+      // would leave this station holding the arm token until the arbiter
+      // stale-evicts it, with the operator already on a screen that shows no
+      // controls -- armed, still commanding, and unable to see or stop it.
+      // Saying so is more use than a button that has silently vanished.
+      //
+      // NOT inert offline: there "armed" is only the last-known activeClient,
+      // which no disarm could visibly clear, and refusing on it locked the
+      // operator onto a server they could not reach. Offline the button leaves
+      // with a STOP instead (StationView.changeServerSendsStop), and says so.
+      val refused = view.changeServerRefused
       Box(
         Modifier.fillMaxWidth()
           .padding(top = helm.size(10.dp))
           .clip(RoundedCornerShape(10.dp))
-          .background(if (view.armed) DriveColors.disarmed.copy(alpha = 0.4f) else DriveColors.surface)
-          .clickable(enabled = !view.armed, onClick = onChangeServer)
+          .background(if (refused) DriveColors.disarmed.copy(alpha = 0.4f) else DriveColors.surface)
+          .clickable(enabled = !refused, onClick = onChangeServer)
           .padding(vertical = helm.size(12.dp))
           .semantics {
             role = Role.Button
             contentDescription =
-              if (view.armed) "Disconnect, unavailable while armed" else "Disconnect and change server"
+              when {
+                refused -> "Disconnect, unavailable while armed"
+                view.changeServerSendsStop -> "Stop, disconnect and change server"
+                else -> "Disconnect and change server"
+              }
           },
         contentAlignment = Alignment.Center,
       ) {
         Text(
-          if (view.armed) "Disarm to change server" else "Disconnect / change server",
+          when {
+            refused -> "Disarm to change server"
+            view.changeServerSendsStop -> "STOP + change server"
+            else -> "Disconnect / change server"
+          },
           fontSize = helm.text(13.sp),
-          color = if (view.armed) DriveColors.inkMuted else DriveColors.ink,
+          color = if (refused) DriveColors.inkMuted else DriveColors.ink,
         )
       }
     }

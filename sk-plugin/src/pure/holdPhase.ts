@@ -145,3 +145,62 @@ export function holdEngagedFrom(
     ? true
     : hhFsmState === HH_FSM_HOLDING;
 }
+
+export interface ManualRefusalInputs {
+  /** Can this station command the thruster at all right now? */
+  thrusterCommandable: boolean;
+  /**
+   * How long this station has been asking for MANUAL -- armed and commandable
+   * with MANUAL selected -- ms; null when it is not.
+   */
+  requestedForMs: number | null;
+  /** HH's own FSM state (sensors.headingHold.fsmState). */
+  hhFsmState: unknown;
+  /** A higher-precedence source owns the thruster. */
+  overridden: boolean;
+}
+
+/**
+ * MANUAL's counterpart of the hold diagnosis: is HH refusing an arm this
+ * station holds?
+ *
+ * In MANUAL there is no hold to fail to engage, so nothing above ever fires --
+ * yet HH can still refuse the station outright. A release of HH's own ENGAGE
+ * input latches every armed remote out until it disarms and re-arms (the same
+ * re-engage latch as SAFETY.md thruster invariant 9), and HH then reports
+ * DISARMED while this station still holds the arbiter's token. The station
+ * reads armed, its PORT/STBD contacts light under a finger, and the thruster
+ * does nothing: a live-looking control that reaches nothing. So it is said.
+ *
+ * Deliberately narrower than holdStallReason:
+ *  - DISARMED is the refusal, FAULT is the unit's fault; both are positive
+ *    reports that the thruster is not taking commands.
+ *  - ARMED_IDLE is NOT a refusal here. It is exactly where an armed MANUAL unit
+ *    sits with no contact pressed (hh.armed is true in it); flagging it would
+ *    alarm on every MANUAL session.
+ *  - Anything else -- HOLDING, a state this build does not know, or none at
+ *    all -- is no positive evidence of refusal, and MANUAL, unlike HOLD, has no
+ *    "engaged" report whose absence could stand in for one.
+ *  - A higher-precedence source in control is drawn as nothing, as in HOLD:
+ *    the "controlled by ..." note already says it.
+ *  - The same HOLD_ENGAGE_GRACE_MS window, measured from when this station
+ *    started asking: HH's state for the first moments after an arm is the
+ *    state it was in BEFORE the arm reached it, which is DISARMED every time.
+ */
+export function manualRefusal({
+  thrusterCommandable,
+  requestedForMs,
+  hhFsmState,
+  overridden,
+}: ManualRefusalInputs): HoldStall {
+  if (requestedForMs === null || !thrusterCommandable || overridden) return 'none';
+  if (requestedForMs < HOLD_ENGAGE_GRACE_MS) return 'none';
+  switch (hhFsmState) {
+    case HH_FSM_DISARMED:
+      return 'refused';
+    case HH_FSM_FAULT:
+      return 'unit-fault';
+    default:
+      return 'none';
+  }
+}

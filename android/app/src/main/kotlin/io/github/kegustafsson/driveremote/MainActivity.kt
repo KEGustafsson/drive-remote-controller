@@ -169,6 +169,7 @@ private fun StationApp(viewModel: StationViewModel = viewModel()) {
             // takes plain values so the layout can be rendered -- and
             // measured -- without a server, a token or a boat.
             appVersion = "v" + BuildConfig.VERSION_NAME,
+            releaseEpoch = state.releaseEpoch,
           )
         }
       }

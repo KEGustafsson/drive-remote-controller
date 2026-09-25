@@ -109,7 +109,15 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
    the gyro, then disengage cleanly.
 6. **Manual authority dominates.** Engage or deadman released → DISARMED,
    outputs OFF. HH's own ENGAGE input outranks every remote station,
-   unconditionally, and always means HOLD. *Current hardware status:* no
+   unconditionally, and always means HOLD. Releasing it disarms even with a
+   remote station armed: it is never a handover. On the debounced release edge,
+   every remote (TX and plugin) whose `enabled` reads true at that instant —
+   live or not, in either mode, whether it was in command before the takeover
+   or armed while ENGAGE was held — is refused by the same re-engage latch as
+   invariant 9, so the thruster stays off until that station is **stopped
+   (seen live and disarmed) and then armed again**. A station already disarmed
+   at the release is not affected, and its next arm engages normally.
+   (`ControlStep`, test_control_step `test_local_release_*`.) *Current hardware status:* no
    deadman switch is installed and its read is compile-time disabled
    (`config::kDeadmanWired = false` — no switch is fitted), so this
    invariant's deadman half is provided by ENGAGE alone until the switch is
@@ -149,9 +157,13 @@ Debounce is contact-bounce settling and is **not** a dwell — it applies to bot
    restarts silently because a sensor recovered. For a remote station the
    engage edge is its `enabled` flag going false then true, and a link outage
    cannot manufacture one: a station whose link to HH went stale while it was
-   engaging HOLD is refused when the link returns, however its retained
+   armed in HOLD is refused when the link returns, however its retained
    `enabled` reads, until HH has seen it live and *disabled* — the operator
-   must disarm and re-arm. HH boots in that same refused state for both remote
+   must disarm and re-arm. That holds whether or not it was the station in
+   command: one outranked by TX or by the local ENGAGE carries the same
+   retained `enabled`, and would engage the moment whatever outranked it let
+   go. (A local ENGAGE release refuses every armed station regardless — see
+   invariant 6.) HH boots in that same refused state for both remote
    sources, so a station left armed across an HH power-cycle cannot engage a
    hold at boot either. MANUAL deliberately resumes after a link blip, exactly
    as a held shift switch does at RX: a momentary button is the operator's
@@ -344,6 +356,7 @@ A bow thruster can move several tonnes of boat and amputate fingers.
 - [ ] Release during a dwell (HOLD, or MANUAL with a non-zero dwell) → the thruster does **not** fire when it expires.
 - [ ] Unplug the IMU mid-thrust → outputs off, FAULT — in MANUAL mode as well as HOLD.
 - [ ] Local ENGAGE asserted while a remote is thrusting → local takes over, mode reads `hold`, source reads `local`.
+- [ ] **Local ENGAGE released with a remote still armed → DISARMED, outputs OFF, and they stay off (invariant 6).** Motor power isolated, scope on the outputs. Hold STBD in MANUAL from a station, assert ENGAGE, release it while the station is still armed and still pressing STBD: ENABLE and both direction lines must drop and stay low, `fsmState` reads `DISARMED`, `hh.source` reads `none`, and HH's serial prints `re-engage BLOCKED` once. Repeat with the station armed in HOLD (no hold may continue, on the local capture or a new one), and with a station that armed only while ENGAGE was held. In each case the station must be disarmed and then armed again before it commands anything; a station that was disarmed at the release must engage on a single arm. On the station: in HOLD, the "controlled by" note gives way to `NOT HOLDING — RE-ARM TO ENGAGE` (phone; the browser says `not holding — disarm and re-arm to engage`). In MANUAL, once the 2 s grace has passed, the station shows `THRUSTER REFUSED — RE-ARM TO COMMAND` (phone; the browser says `thruster refused — disarm and re-arm to command`). Its PORT/STBD contacts still light under a finger, so confirm the outputs on the scope as well as on the station.
 - [ ] HOLD: trim from a station → the setpoint slews at the rate limit and never jumps; the fused heading is not snapped.
 - [ ] Leave HOLD and return → the setpoint is re-captured from the current heading, not the earlier session's target.
 - [ ] **Arming straight into HOLD from a station.** The plugin and phone let the operator pick MANUAL or HOLD while disarmed, so the arm itself is what engages the hold — no thruster press is involved. With motor power isolated and a scope on the outputs: select HOLD with nothing armed (nothing may appear at the outputs, and `plugin.thruster.mode` must not follow a non-holder), then arm and confirm the hold engages against the heading captured **at the arm**, and that a preceding manual thrust still buys its full 1.85 s dwell across that arm. Then repeat with MANUAL selected: arming alone must produce no thrust at all.
@@ -386,6 +399,14 @@ handset is not evidence about this one.
 - [ ] **Two-handed.** Port FWD and stbd REV held by two fingers at the same time → both `plugin.port.command` and `plugin.stbd.command` hold their values simultaneously in the SK data browser. This is what `ui/Momentary.kt` exists for and the one thing an ordinary `clickable` would silently break. Repeat with the two thruster buttons, and with a drive and the thruster together.
 - [ ] **Fail-safe on losing the foreground.** Armed, holding a drive button: press Home, then repeat with the screen locked, then with the app switcher open, then with an incoming call. Each must drive the command path to `neutral` — **check the path value in the data browser, not that the button looks released.**
 - [ ] **Exclusive arm across station types.** Arm on the phone → the browser UI shows IN USE and cannot arm. Disarm from the browser → the phone drops to disarmed and says so. Then the reverse. The two-tap handoff must work in both directions.
+
+**Owner decisions of 2026-09-24, host-tested only (repeat each in the browser UI too):**
+
+- [ ] **Trim survives a read-stream drop.** Armed in HOLD with trim +20, kill only the station's live-data stream (block the WebSocket, or stop the SK server's stream while the intent route stays up) → the heading does not move, the trim steps grey out, and `plugin.thruster.trimDeg` stays 20 in the data browser. Restore the stream → still +20, steps enabled. Then drop the stream again and tap the kill switch → it disarms (`plugin.activeClient` empty in the data browser): with the intent route still up, a STOP from a blind station is delivered.
+- [ ] **A silent stream reads offline.** Armed in HOLD with trim +20, DROP (not reject) all of the phone's traffic at the AP or server → within ~1.5 s the kill switch reads OFFLINE and LINK `no data from server`, and the trim stays +20; ~5 s later LINK reads reconnecting. A tap now *selects* STOP (the kill switch acts on it) but cannot deliver it, since the intent route is blocked too: confirm the COMMANDS lamp and the kill switch's second line say commands are not reaching the boat, and that the arbiter releases the phone on its staleness timeout (`plugin.activeClient` empty, outputs safe) — that release, not the tap, is what stops the machine here. Lift the rule → it reconnects with no automatic re-arm. A delivered STOP is checked by the item above, where only the stream is dropped and the intent route stays up.
+- [ ] **STOP at touch-down.** Armed, press the kill switch and slide the finger off before lifting → disarmed. Then from DISARMED press and slide off → nothing arms.
+- [ ] **Commands not reaching the boat are named.** Stop the plugin → the COMMANDS lamp reads BLOCKED and the kill switch says `commands not reaching boat — plugin stopped`.
+- [ ] **MANUAL refusal.** Armed in MANUAL, assert and release HH's ENGAGE → after 2 s the station shows `THRUSTER REFUSED — RE-ARM TO COMMAND`, and STOP then ARM restores command.
 
 **Loss of link, which is the phone's most likely failure:**
 

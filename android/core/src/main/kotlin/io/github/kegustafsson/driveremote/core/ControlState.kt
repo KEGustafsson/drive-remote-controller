@@ -40,8 +40,11 @@ fun controlStateOf(activeClient: Any?, myClientId: String): ControlState =
 /**
  * Can this station actually command a given machine right now?
  *
- * All three conditions, together: we hold the token, the read socket is up, and
- * that machine's own unit is answering. The two machines are judged
+ * All three conditions, together: we hold the token, the read stream is live,
+ * and that machine's own unit is answering. [deriveStationView] passes the
+ * stream as evidence -- [ConnectionState.OPEN] only while the arbiter's publish
+ * is arriving ([serverStreamLive]) -- so an open socket gone silent commands
+ * nothing either. The two machines are judged
  * independently because the two boards are independent -- RX drives the gears,
  * HH drives the thruster -- so a dead thruster board must not grey out the
  * gears, and vice versa.

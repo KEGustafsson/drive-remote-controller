@@ -10,7 +10,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket as NodeWebSocket } from 'ws';
 import { App } from './App';
 import { IntentPostError, type PostIntent } from './clientIntent';
-import { PERIODIC_REFRESH_MS } from './config';
+import {
+  HOLD_ENGAGE_GRACE_MS,
+  KILL_SWITCH_STOP_HOLDOVER_MS,
+  PERIODIC_REFRESH_MS,
+  RX_TELEMETRY_STALE_MS,
+} from './config';
 import { SkClientContext } from './hooks/useSkConnection';
 import { createSkClient, type SkClient } from './skClient';
 import { startArbiterServer, type ArbiterHarness } from '../test/arbiterServer';
@@ -342,7 +347,12 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
     expect(harness.state().enabled).toBe(false);
 
-    // Tap 2 -> arm: we take control.
+    // Tap 2 -> arm: we take control. Deliberately a beat later: a tap within
+    // KILL_SWITCH_STOP_HOLDOVER_MS of the button meaning STOP is still a STOP
+    // (see 'a tap decided as STOP stays a STOP' below).
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, KILL_SWITCH_STOP_HOLDOVER_MS));
+    });
     fireEvent.click(screen.getByText('DISARMED'));
     await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument());
     expect(harness.state().activeClient).not.toBe('other-device');
@@ -561,6 +571,66 @@ describe('App: "holding" comes from the HH unit, never from being armed', () => 
   });
 });
 
+// In MANUAL there is no hold to fail, but HH can still refuse the station: a
+// release of its own ENGAGE latches every armed remote out until it re-arms,
+// and HH then reports DISARMED while this station still holds the token.
+describe('App: a MANUAL arm HH is refusing is said so', () => {
+  const REFUSED = 'thruster refused — disarm and re-arm to command';
+
+  it('states the refusal once HH has stayed DISARMED past the window, and clears on re-arm', async () => {
+    await renderApp();
+    await arm(); // opens on MANUAL
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.armed', value: false },
+      { path: 'sensors.headingHold.fsmState', value: 'DISARMED' },
+    ]);
+    // Inside the window: every arm starts from DISARMED.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    expect(screen.queryByText(REFUSED)).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(REFUSED), {
+      timeout: HOLD_ENGAGE_GRACE_MS + 1500,
+    });
+
+    // HH takes the station again: the band goes.
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.armed', value: true },
+      { path: 'sensors.headingHold.fsmState', value: 'ARMED_IDLE' },
+    ]);
+    await waitFor(() => expect(screen.queryByText(REFUSED)).not.toBeInTheDocument());
+  }, 10_000);
+
+  it('never flags an armed MANUAL unit at rest', async () => {
+    await renderApp();
+    await arm();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.armed', value: true },
+      { path: 'sensors.headingHold.fsmState', value: 'ARMED_IDLE' },
+    ]);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, HOLD_ENGAGE_GRACE_MS + 500));
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('defers to the override note when another source has the thruster', async () => {
+    await renderApp();
+    await arm();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.source', value: 'tx' },
+      { path: 'control.remoteController.hh.armed', value: false },
+      { path: 'sensors.headingHold.fsmState', value: 'DISARMED' },
+    ]);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, HOLD_ENGAGE_GRACE_MS + 500));
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText(/controlled by TX remote/)).toBeInTheDocument();
+  }, 10_000);
+});
+
 describe('App: the intent heartbeat', () => {
   it('never stacks up POSTs -- a heartbeat waits for the one in flight', async () => {
     // Every 250 ms tick used to fire a fetch regardless, so a server answering
@@ -610,5 +680,300 @@ describe('App: the intent heartbeat', () => {
       await new Promise((r) => setTimeout(r, PERIODIC_REFRESH_MS * 5));
     });
     expect(calls).toBe(2); // no heartbeat: the mount request is still pending
+  });
+});
+
+// A tap's meaning is decided by the operator when they reach for the button,
+// but the click lands on whatever the button shows by then. The arbiter's
+// answer to a STOP comes back within milliseconds, so the second half of a
+// double-tapped STOP -- or a second person's STOP decided against IN USE just
+// before the holder disarmed -- used to land on DISARMED and ARM this station.
+// In HOLD that engages a hold on the boat.
+describe('App: a tap decided as STOP stays a STOP', () => {
+  it('a double-tapped STOP does not re-arm; a tap after the hold-over arms normally', async () => {
+    await renderApp();
+    await arm();
+
+    fireEvent.click(screen.getByText('ARMED')); // tap 1: STOP
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('DISARMED')); // tap 2, a moment later
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(harness.state().enabled).toBe(false);
+    expect(harness.state().activeClient).toBe('');
+    expect(screen.queryByText('ARMED')).not.toBeInTheDocument();
+
+    // A deliberate arm, once the hold-over has run out, still works.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, KILL_SWITCH_STOP_HOLDOVER_MS));
+    });
+    fireEvent.click(screen.getByText('DISARMED'));
+    await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument());
+    expect(harness.state().enabled).toBe(true);
+  });
+
+  // A finger that lands on STOP and slides off produces no click at all. The
+  // STOP must already have gone out on the way down -- and the gesture's
+  // eventual lift, if it does come up on the button, must not arm.
+  it('a STOP reaches the arbiter on touch-down, with no click, and its lift does not re-arm', async () => {
+    await renderApp();
+    await arm();
+    fireEvent.pointerDown(screen.getByText('ARMED'), { pointerId: 1 });
+    await waitFor(() => expect(harness.state().enabled).toBe(false));
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    // Held well past the hold-over, then lifted on the button.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, KILL_SWITCH_STOP_HOLDOVER_MS + 200));
+    });
+    fireEvent.click(screen.getByText('DISARMED'), { detail: 1 });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(harness.state().enabled).toBe(false);
+    expect(harness.state().activeClient).toBe('');
+  });
+
+  it('a STOP decided against IN USE stays a STOP when the holder disarms first', async () => {
+    await renderApp();
+    harness.injectIntent({ clientId: 'other-device', armReq: 0, disarmReq: 0 });
+    harness.injectIntent({ clientId: 'other-device', armReq: 1, disarmReq: 0 });
+    await waitFor(() => expect(screen.getByText('IN USE')).toBeInTheDocument());
+
+    // The holder disarms between this operator's decision and their click.
+    harness.injectIntent({ clientId: 'other-device', armReq: 1, disarmReq: 1 });
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('DISARMED'));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(harness.state().enabled).toBe(false);
+    expect(harness.state().activeClient).toBe('');
+  });
+});
+
+// Signal K keeps the last activeClient forever and the SK client keeps its
+// copy across drops, so neither the socket's state nor that value can say the
+// server is still there. A half-open socket (no FIN) stays 'open' indefinitely.
+// The plugin republishes activeClient every 250 ms; its ARRIVAL is the proof.
+describe('App: the server stream going silent', () => {
+  it('reads a silent-but-open socket as OFFLINE, and the tap still stops', async () => {
+    await renderApp();
+    await arm();
+    const portFwd = within(screen.getByLabelText('Port drive control')).getByLabelText(
+      'Port forward',
+    );
+    expect(portFwd).not.toBeDisabled();
+
+    harness.stallConnections();
+
+    await waitFor(() => expect(screen.getByText('OFFLINE')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    // Nothing on the socket itself ever said so.
+    expect(client.getSnapshot().connectionState).toBe('open');
+    expect(screen.queryByText('ARMED')).not.toBeInTheDocument();
+    expect(portFwd).toBeDisabled();
+    expect(screen.getByRole('status', { name: 'Link: no data from server' })).toHaveClass(
+      'lamp--bad',
+    );
+    expect(screen.getByRole('status', { name: /^Control:/ })).toHaveClass('lamp--stale');
+
+    // The arbiter still hears our intents over HTTP -- we are still armed
+    // there -- and the OFFLINE tap is the stop.
+    expect(harness.state().enabled).toBe(true);
+    fireEvent.click(screen.getByText('OFFLINE'));
+    await waitFor(() => expect(harness.state().enabled).toBe(false));
+  });
+});
+
+// A heading or a reversal note from a unit that has stopped answering is a
+// frozen reading, and "current heading" under it presents it as live.
+describe('App: HH readings follow HH liveness', () => {
+  it('stops showing the held heading once HH stops answering', async () => {
+    await renderApp();
+    fireEvent.click(screen.getByText('HOLD'));
+    harness.sendDelta([{ path: 'control.remoteController.hh.setpointDeg', value: 40 }]);
+    await waitFor(() => expect(screen.getByText('040°')).toBeInTheDocument());
+
+    harness.stopHh();
+    await waitFor(
+      () => expect(screen.getByText(/thruster unit not responding/i)).toBeInTheDocument(),
+      { timeout: 4000 },
+    );
+    expect(screen.queryByText('040°')).not.toBeInTheDocument();
+    expect(screen.getByText('---°')).toBeInTheDocument();
+  });
+
+  it('drops a reversal-pending note once HH stops answering', async () => {
+    await renderApp();
+    harness.sendDelta([
+      { path: 'control.remoteController.hh.reversalPending', value: true },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByText(/reversing — waiting for the thruster/)).toBeInTheDocument(),
+    );
+
+    harness.stopHh();
+    await waitFor(
+      () => expect(screen.getByText(/thruster unit not responding/i)).toBeInTheDocument(),
+      { timeout: 4000 },
+    );
+    expect(
+      screen.queryByText(/reversing — waiting for the thruster/),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// The trim is an offset from the heading HH captured, so zeroing it TURNS the
+// boat -- by up to MAX_TRIM_DEG, with nobody touching anything. Owner decision:
+// the trim is kept when this station's live-data stream drops (intents still
+// flow over HTTP, so the hold is still running) and reset only when the hold
+// ends. pure/trimReset.ts has the rule; these pin it through the real App.
+describe('App: the heading trim survives the read side going dark', () => {
+  let sent: Array<Record<string, unknown>>;
+
+  async function renderRecording() {
+    sent = [];
+    await renderApp({
+      postIntent: async (intent) => {
+        const i = intent as unknown as Record<string, unknown>;
+        sent.push(i);
+        harness.feedIntent(i);
+      },
+    });
+  }
+
+  function trimButton(): HTMLElement {
+    return screen.getByLabelText(/Trim 10 degrees to starboard/);
+  }
+
+  /** Armed, in HOLD, trimmed +20 and the arbiter honouring it. */
+  async function armHoldAndTrim20() {
+    await renderRecording();
+    await arm();
+    fireEvent.click(screen.getByText('HOLD'));
+    fireEvent.click(trimButton());
+    fireEvent.click(trimButton());
+    await waitFor(() => expect(harness.state().trimDeg).toBe(20));
+  }
+
+  async function settle(ms: number) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, ms));
+    });
+  }
+
+  /** Every intent sent after index `from` carried trim `deg` -- and there were some. */
+  function expectSentSince(from: number, deg: number) {
+    const since = sent.slice(from);
+    expect(since.length).toBeGreaterThan(0);
+    for (const i of since) expect(i.trimDeg).toBe(deg);
+  }
+
+  it('keeps sending the trim through a silent stream, with the trim buttons frozen', async () => {
+    await armHoldAndTrim20();
+    harness.stallConnections();
+    await waitFor(() => expect(screen.getByText('OFFLINE')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    // Everything we could read says the hold is gone -- HH's liveness has aged
+    // out with the stream -- and none of it is evidence.
+    const mark = sent.length;
+    await settle(PERIODIC_REFRESH_MS * 3);
+    expectSentSince(mark, 20);
+    expect(trimButton()).toBeDisabled();
+    // Still this station's hold, still at the offset it asked for.
+    expect(harness.state().trimDeg).toBe(20);
+
+    // The stream comes back on the same socket: armed, HH answering.
+    harness.resumeConnections();
+    await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    await waitFor(() => expect(trimButton()).not.toBeDisabled());
+    const back = sent.length;
+    await settle(PERIODIC_REFRESH_MS * 3);
+    expectSentSince(back, 20);
+  }, 15_000);
+
+  it('keeps the trim across a dropped socket and a reconnect', async () => {
+    await armHoldAndTrim20();
+    const states: string[] = [];
+    const unsubscribe = client.subscribe(() =>
+      states.push(client.getSnapshot().connectionState),
+    );
+    const mark = sent.length;
+    harness.dropConnections();
+    await waitFor(() => expect(states).toContain('closed'));
+    await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    await waitFor(() => expect(trimButton()).not.toBeDisabled());
+    await settle(PERIODIC_REFRESH_MS * 3);
+    unsubscribe();
+    expectSentSince(mark, 20);
+    expect(harness.state().trimDeg).toBe(20);
+  }, 15_000);
+
+  // The reconnect race: the arbiter's publish can land before HH's first new
+  // delta, so for a moment the stream reads connected while HH's verdict is
+  // still the outage's. That moment must not be read as HH gone.
+  it('keeps the trim when HH answers a beat after the stream comes back', async () => {
+    await armHoldAndTrim20();
+    harness.stallConnections();
+    await waitFor(() => expect(screen.getByText('OFFLINE')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    harness.stopHh();
+    // Long enough that HH's last arrival is past its liveness window.
+    await settle(RX_TELEMETRY_STALE_MS + 300);
+    const mark = sent.length;
+    harness.resumeConnections();
+    await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    harness.startHh();
+    await waitFor(() => expect(trimButton()).not.toBeDisabled(), { timeout: 4000 });
+    await settle(RX_TELEMETRY_STALE_MS);
+    expectSentSince(mark, 20);
+  }, 15_000);
+
+  it('resets once HH has stayed silent a full window on the returned stream', async () => {
+    await armHoldAndTrim20();
+    harness.stallConnections();
+    await waitFor(() => expect(screen.getByText('OFFLINE')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    harness.stopHh();
+    harness.resumeConnections();
+    await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    await waitFor(() => expect(sent[sent.length - 1].trimDeg).toBe(0), {
+      timeout: 4000,
+    });
+  }, 15_000);
+
+  it('resets when HH stops answering while connected', async () => {
+    await armHoldAndTrim20();
+    harness.stopHh();
+    await waitFor(() => expect(sent[sent.length - 1].trimDeg).toBe(0), {
+      timeout: 4000,
+    });
+  });
+
+  it('resets on disarm while connected', async () => {
+    await armHoldAndTrim20();
+    fireEvent.click(screen.getByText('ARMED'));
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    await waitFor(() => expect(sent[sent.length - 1].trimDeg).toBe(0));
+  });
+
+  it('resets on leaving HOLD', async () => {
+    await armHoldAndTrim20();
+    fireEvent.click(screen.getByText('MANUAL'));
+    await waitFor(() => expect(sent[sent.length - 1].trimDeg).toBe(0));
+    expect(sent[sent.length - 1].thrusterMode).toBe('manual');
   });
 });

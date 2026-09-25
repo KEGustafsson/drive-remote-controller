@@ -26,9 +26,14 @@ import {
 import { classifyIntentFailure, type IntentStatus } from './pure/intentStatus';
 import { holdEngagedFrom } from './pure/holdPhase';
 import { isPlausibleHeading, trimBy } from './pure/trimOffset';
-import { useHoldPhase } from './hooks/useHoldPhase';
-import { useHhLiveness, useRxLiveness } from './hooks/useRxLiveness';
+import { useHoldPhase, useManualRefusal } from './hooks/useHoldPhase';
+import {
+  useHhLiveness,
+  useRxLiveness,
+  useServerStreamLive,
+} from './hooks/useRxLiveness';
 import { useSkConnection } from './hooks/useSkConnection';
+import { useTrimReset } from './hooks/useTrimReset';
 import { useWriteAccess } from './hooks/useWriteAccess';
 import type { DrivePosition } from './pure/driveCommand';
 import { rxReadyToArm } from './pure/rxLiveness';
@@ -104,6 +109,11 @@ export function App({
   // The same for the heading-hold unit -- independently, because the two
   // boards can be powered, fail or leave WiFi range independently.
   const hhLiveness = useHhLiveness(connection);
+  // Is the arbiter's own 250 ms republish still ARRIVING on this socket? The
+  // socket reading 'open' cannot say: a half-open socket (no FIN) reads open
+  // forever, and the activeClient VALUE is retained across silence and across
+  // a reconnect alike. See pure/serverStream.ts.
+  const serverLive = useServerStreamLive(connection);
 
   // Stable per-tab identity. Generated once and never regenerated (not even
   // across a WebSocket reconnect, since this component stays mounted) so the
@@ -138,9 +148,9 @@ export function App({
   const [thrusterMode, setThrusterMode] = useState<ThrusterMode>('manual');
   const [thrusterDir, setThrusterDir] = useState<ThrusterDirection>('off');
   // Heading-hold TRIM: a RELATIVE offset (deg) from the heading HH captures on
-  // engage. 0 = no trim. Reset to 0 whenever we cannot command the thruster
-  // (below), so arming always starts at "hold current heading" and never swings
-  // the boat to a pre-dialed number -- trim is an after-arming action.
+  // engage. 0 = no trim. Reset to 0 when the hold ends (below), so arming always
+  // starts at "hold current heading" and never swings the boat to a pre-dialed
+  // number -- trim is an after-arming action.
   const [trimOffset, setTrimOffset] = useState(0);
 
   // Who the arbiter says holds the token right now.
@@ -152,9 +162,10 @@ export function App({
         ? 'other'
         : 'none';
 
-  // Is the socket open right now? `values` (hence `activeClient`/controlState)
+  // Is the server stream live right now -- socket open AND the arbiter's
+  // publish still arriving on it? `values` (hence `activeClient`/controlState)
   // is last-known while it isn't -- the SK client never clears it on
-  // disconnect. IMPORTANT: the socket is only the READ side. The intent
+  // disconnect, and a silent socket delivers nothing to clear. IMPORTANT: the socket is only the READ side. The intent
   // heartbeat below POSTs over HTTP and keeps running regardless of the
   // socket's state, so if only the WebSocket is down the arbiter may still be
   // seeing our heartbeats -- we can still be armed and commanding without
@@ -167,7 +178,7 @@ export function App({
   // command is landing -- but they are NOT the stop; the always-live kill
   // switch is, so greying them takes nothing away from the operator's ability
   // to stop the machinery.
-  const connected = connectionState === 'open';
+  const connected = connectionState === 'open' && serverLive;
   const armed = controlState === 'you';
   // Arming is offered only while RX is proven alive. The server enforces this
   // too (arbiter.cjs) and is the real gate -- this is so the button never
@@ -191,8 +202,14 @@ export function App({
   // The heading the unit reports it is actually holding -- shown for reference
   // while trimming (the trim is relative to whatever HH captured). Read for
   // DISPLAY only; the trim offset itself is self-contained and needs no seed.
+  //
+  // Only while HH is answering: a unit that has gone quiet leaves its last
+  // setpoint standing forever, and the panel labels the number "current
+  // heading" whenever the thruster is not commandable -- a frozen heading
+  // presented as live (SAFETY.md invariant 6). The same for reversalPending.
+  const hhAnswering = connected && rxReadyToArm(hhLiveness);
   const heldRaw = values[SK_HH_SETPOINT_PATH];
-  const heldDeg = isPlausibleHeading(heldRaw) ? heldRaw : null;
+  const heldDeg = hhAnswering && isPlausibleHeading(heldRaw) ? heldRaw : null;
 
   // Is HH ACTUALLY holding, by its own report? Never a local guess: HH mirrors
   // hh.setpointDeg to the fused heading whenever it is not holding
@@ -311,14 +328,27 @@ export function App({
     return () => clearInterval(id);
   }, [sendHeartbeat]);
 
-  // Arm-first, then trim: force the trim back to 0 whenever the thruster is not
-  // commandable (disarmed, offline, or HH not live). Arming therefore always
-  // begins at "hold the captured heading" and never swings the boat to an
-  // offset dialed in earlier -- trimming is a deliberate action taken after
-  // arming, matching how the operator chose this to behave.
+  // The trim goes back to 0 when the HOLD ENDS -- and not when this station
+  // merely stops being able to SEE it. Leaving HOLD, being disarmed, or HH
+  // going silent on a live stream all reset it, so arming always begins at
+  // "hold the captured heading" and never swings the boat to an offset dialed
+  // in earlier. But the read side dropping (socket down, or the stream silent)
+  // does NOT: intents still flow over HTTP, the hold is still ours and still
+  // running, and zeroing a relative trim would swing the boat back by up to
+  // MAX_TRIM_DEG with nobody touching anything. While blind the value is kept
+  // and kept SENT; the trim buttons are inert meanwhile (thrusterCommandable is
+  // false). HH truly dying while we are blind is caught by the arbiter, which
+  // zeroes and quarantines the trim server-side. The full rule, including the
+  // settling window on reconnect, is pure/trimReset.ts.
+  const trimReset = useTrimReset(
+    thrusterMode,
+    connected,
+    armed,
+    rxReadyToArm(hhLiveness),
+  );
   useEffect(() => {
-    if (!thrusterCommandable) setTrimOffset(0);
-  }, [thrusterCommandable]);
+    if (trimReset && trimOffset !== 0) setTrimOffset(0);
+  }, [trimReset, trimOffset]);
 
   const handlePortChange = useCallback((p: DrivePosition) => {
     setPortPosition(p);
@@ -401,6 +431,14 @@ export function App({
     values[SK_HH_FSM_STATE_PATH],
     thrusterOverride !== undefined,
   );
+  // And in MANUAL, where the arm is the whole request: is HH refusing it? A
+  // release of HH's own ENGAGE latches every armed remote out until it
+  // re-arms, and HH then reports DISARMED while we still hold the token.
+  const manualStall = useManualRefusal(
+    thrusterCommandable && thrusterMode === 'manual',
+    values[SK_HH_FSM_STATE_PATH],
+    thrusterOverride !== undefined,
+  );
 
   return (
     <div className="app">
@@ -447,8 +485,11 @@ export function App({
         // long enough to take it.
         holdPhase={hold.phase}
         holdStall={hold.stall}
+        manualStall={manualStall}
         overriddenBy={thrusterOverride}
-        reversalPending={values[SK_HH_REVERSAL_PENDING_PATH] === true}
+        reversalPending={
+          hhAnswering && values[SK_HH_REVERSAL_PENDING_PATH] === true
+        }
       />
 
       <main className="app__drives">
@@ -470,6 +511,7 @@ export function App({
 
       <StatusPanel
         connectionState={connectionState}
+        serverSilent={connectionState === 'open' && !serverLive}
         writeStatus={writeStatus}
         intentStatus={intentStatus}
         controlState={controlState}

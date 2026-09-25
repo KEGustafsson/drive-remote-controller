@@ -19,7 +19,10 @@ enum class UnitLiveness {
   /** Telemetry is arriving right now. The only state in which arming is offered. */
   LIVE,
 
-  /** The socket is down, so we genuinely cannot tell -- either claim would be a guess. */
+  /**
+   * The stream is down -- socket closed, or open with the arbiter's publish no
+   * longer arriving -- so we genuinely cannot tell; either claim would be a guess.
+   */
   OFFLINE,
 
   /** Connected, but no telemetry has EVER arrived (unit off since before launch). */
@@ -30,7 +33,8 @@ enum class UnitLiveness {
 }
 
 /**
- * @param connectionState the read socket's state.
+ * @param connectionState the read stream's state. [deriveStationView] passes
+ *   it as evidence: [ConnectionState.OPEN] only while [serverStreamLive].
  * @param telemetryAgeMs age of the most recent telemetry delta for this unit;
  *   null = none ever received. Comes from arrival timestamps plus a clock,
  *   never from a value in the data model.

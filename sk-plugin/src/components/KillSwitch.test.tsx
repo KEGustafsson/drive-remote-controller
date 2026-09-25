@@ -8,7 +8,8 @@
 // anything -- least of all on the health of a different transport).
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { KILL_SWITCH_STOP_HOLDOVER_MS } from '../config';
 import { KillSwitch } from './KillSwitch';
 
 function renderSwitch(props: Partial<Parameters<typeof KillSwitch>[0]> = {}) {
@@ -184,5 +185,257 @@ describe('KillSwitch when no unit is responding', () => {
     });
     fireEvent.click(killButton());
     expect(onDisarm).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The button's meaning can change between the operator's decision and the
+// click landing -- the arbiter answers a STOP in milliseconds. A tap within
+// KILL_SWITCH_STOP_HOLDOVER_MS of the button last meaning STOP is a STOP.
+describe('KillSwitch: a tap aimed at STOP stays a STOP', () => {
+  const base = {
+    connected: true,
+    rxLiveness: 'live' as const,
+    hhLiveness: 'live' as const,
+    canArm: true,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  for (const [what, from] of [
+    ['ARMED', { armed: true, foreignControl: false, connected: true }],
+    ['IN USE', { armed: false, foreignControl: true, connected: true }],
+    ['OFFLINE', { armed: false, foreignControl: false, connected: false }],
+  ] as const) {
+    it(`a tap just after ${what} flips to DISARMED still stops, never arms`, () => {
+      const onArm = vi.fn();
+      const onDisarm = vi.fn();
+      const { rerender } = render(
+        <KillSwitch {...base} {...from} onArm={onArm} onDisarm={onDisarm} />,
+      );
+      rerender(
+        <KillSwitch
+          {...base}
+          armed={false}
+          foreignControl={false}
+          onArm={onArm}
+          onDisarm={onDisarm}
+        />,
+      );
+      expect(screen.getByText('DISARMED')).toBeInTheDocument();
+      fireEvent.click(killButton());
+      expect(onDisarm).toHaveBeenCalledTimes(1);
+      expect(onArm).not.toHaveBeenCalled();
+    });
+  }
+
+  // A tap held over as STOP restarts the window: hammering STOP at a pace just
+  // under the hold-over must never reach ARM, however long it goes on.
+  it('hammered STOP taps never reach ARM', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const onArm = vi.fn();
+    const onDisarm = vi.fn();
+    const { rerender } = render(
+      <KillSwitch {...base} armed foreignControl={false} onArm={onArm} onDisarm={onDisarm} />,
+    );
+    rerender(
+      <KillSwitch
+        {...base}
+        armed={false}
+        foreignControl={false}
+        onArm={onArm}
+        onDisarm={onDisarm}
+      />,
+    );
+    for (let i = 0; i < 6; i++) {
+      now += KILL_SWITCH_STOP_HOLDOVER_MS - 100;
+      fireEvent.click(killButton());
+    }
+    expect(onArm).not.toHaveBeenCalled();
+    expect(onDisarm).toHaveBeenCalledTimes(6);
+  });
+
+  it('arms normally once the hold-over has passed', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const onArm = vi.fn();
+    const onDisarm = vi.fn();
+    const { rerender } = render(
+      <KillSwitch {...base} armed foreignControl={false} onArm={onArm} onDisarm={onDisarm} />,
+    );
+    rerender(
+      <KillSwitch
+        {...base}
+        armed={false}
+        foreignControl={false}
+        onArm={onArm}
+        onDisarm={onDisarm}
+      />,
+    );
+    now += KILL_SWITCH_STOP_HOLDOVER_MS + 1;
+    fireEvent.click(killButton());
+    expect(onArm).toHaveBeenCalledTimes(1);
+    expect(onDisarm).not.toHaveBeenCalled();
+  });
+});
+
+// Owner decision: a gesture's meaning is fixed at touch-down. A click fires on
+// LIFT, and only when the pointer comes up inside the button -- so a hurried
+// STOP whose finger slid off used to send nothing. STOP now acts on the way
+// down and its gesture can never arm; ARM still waits for the lift, so sliding
+// off cancels an arm nobody meant. Keyboard and assistive activation (a click
+// with detail 0 and no pointer down) is decided at the click, as before.
+// fireEvent.click defaults to detail 0 -- a pointer's click passes {detail: 1}.
+describe('KillSwitch: the gesture is decided at touch-down', () => {
+  const base = {
+    rxLiveness: 'live' as const,
+    hhLiveness: 'live' as const,
+    canArm: true,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function setup(initial: { armed: boolean; foreignControl: boolean; connected: boolean }) {
+    const onArm = vi.fn();
+    const onDisarm = vi.fn();
+    const utils = render(
+      <KillSwitch {...base} {...initial} onArm={onArm} onDisarm={onDisarm} />,
+    );
+    const show = (next: { armed: boolean; foreignControl: boolean; connected: boolean }) =>
+      utils.rerender(<KillSwitch {...base} {...next} onArm={onArm} onDisarm={onDisarm} />);
+    return { onArm, onDisarm, show };
+  }
+
+  const ARMED = { armed: true, foreignControl: false, connected: true };
+  const IN_USE = { armed: false, foreignControl: true, connected: true };
+  const OFFLINE = { armed: false, foreignControl: false, connected: false };
+  const DISARMED = { armed: false, foreignControl: false, connected: true };
+
+  for (const [what, from] of [
+    ['ARMED', ARMED],
+    ['IN USE', IN_USE],
+    ['OFFLINE', OFFLINE],
+  ] as const) {
+    it(`STOP fires on pointer down from ${what}, with no click at all`, () => {
+      const { onArm, onDisarm } = setup(from);
+      fireEvent.pointerDown(killButton(), { pointerId: 1 });
+      // The finger slides off and lifts elsewhere: no click ever reaches it.
+      fireEvent.pointerLeave(killButton(), { pointerId: 1 });
+      expect(onDisarm).toHaveBeenCalledTimes(1);
+      expect(onArm).not.toHaveBeenCalled();
+    });
+
+    it(`the click that ends a STOP gesture from ${what} never arms, however long it was held`, () => {
+      let now = 10_000;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      const { onArm, onDisarm, show } = setup(from);
+      fireEvent.pointerDown(killButton(), { pointerId: 1 });
+      expect(onDisarm).toHaveBeenCalledTimes(1);
+      // The STOP lands and the button flips to DISARMED under the finger...
+      show(DISARMED);
+      // ...which stays down well past the holdover, then lifts on the button.
+      now += KILL_SWITCH_STOP_HOLDOVER_MS * 3;
+      fireEvent.click(killButton(), { detail: 1 });
+      expect(onArm).not.toHaveBeenCalled();
+      expect(onDisarm).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it('ARM does nothing on pointer down, and arms on the click', () => {
+    const { onArm, onDisarm } = setup(DISARMED);
+    fireEvent.pointerDown(killButton(), { pointerId: 1 });
+    expect(onArm).not.toHaveBeenCalled();
+    fireEvent.click(killButton(), { detail: 1 });
+    expect(onArm).toHaveBeenCalledTimes(1);
+    expect(onDisarm).not.toHaveBeenCalled();
+  });
+
+  it('an ARM gesture that slides off sends nothing', () => {
+    const { onArm, onDisarm } = setup(DISARMED);
+    fireEvent.pointerDown(killButton(), { pointerId: 1 });
+    fireEvent.pointerLeave(killButton(), { pointerId: 1 });
+    fireEvent.pointerUp(document.body, { pointerId: 1 });
+    expect(onArm).not.toHaveBeenCalled();
+    expect(onDisarm).not.toHaveBeenCalled();
+  });
+
+  it('an ARM gesture whose button comes to mean STOP before the lift is a STOP', () => {
+    const { onArm, onDisarm, show } = setup(DISARMED);
+    fireEvent.pointerDown(killButton(), { pointerId: 1 });
+    show(IN_USE); // another station armed during the press
+    fireEvent.click(killButton(), { detail: 1 });
+    expect(onDisarm).toHaveBeenCalledTimes(1);
+    expect(onArm).not.toHaveBeenCalled();
+  });
+
+  it('a keyboard click still arms or stops by the policy', () => {
+    const disarmed = setup(DISARMED);
+    fireEvent.click(killButton(), { detail: 0 });
+    expect(disarmed.onArm).toHaveBeenCalledTimes(1);
+    disarmed.show(ARMED);
+    fireEvent.click(killButton(), { detail: 0 });
+    expect(disarmed.onDisarm).toHaveBeenCalledTimes(1);
+  });
+
+  // A swallow left standing by a gesture that never produced its click must
+  // not eat the next legitimate activation.
+  it('a STOP that slid off cannot swallow a later keyboard arm', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { onArm, onDisarm, show } = setup(ARMED);
+    fireEvent.pointerDown(killButton(), { pointerId: 1 });
+    fireEvent.pointerLeave(killButton(), { pointerId: 1 });
+    show(DISARMED);
+    now += KILL_SWITCH_STOP_HOLDOVER_MS + 1;
+    fireEvent.click(killButton(), { detail: 0 });
+    expect(onDisarm).toHaveBeenCalledTimes(1);
+    expect(onArm).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cancelled STOP gesture cannot swallow a later click', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { onArm, onDisarm, show } = setup(ARMED);
+    fireEvent.pointerDown(killButton(), { pointerId: 1 });
+    fireEvent.pointerCancel(killButton(), { pointerId: 1 });
+    show(DISARMED);
+    now += KILL_SWITCH_STOP_HOLDOVER_MS + 1;
+    fireEvent.click(killButton(), { detail: 1 });
+    expect(onDisarm).toHaveBeenCalledTimes(1);
+    expect(onArm).toHaveBeenCalledTimes(1);
+  });
+
+  it('the next pointer gesture decides afresh after a STOP that slid off', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { onArm, show } = setup(ARMED);
+    fireEvent.pointerDown(killButton(), { pointerId: 1 });
+    fireEvent.pointerLeave(killButton(), { pointerId: 1 });
+    show(DISARMED);
+    now += KILL_SWITCH_STOP_HOLDOVER_MS + 1;
+    fireEvent.pointerDown(killButton(), { pointerId: 2 });
+    expect(onArm).not.toHaveBeenCalled(); // ARM waits for the lift
+    fireEvent.click(killButton(), { detail: 1 });
+    expect(onArm).toHaveBeenCalledTimes(1);
+  });
+
+  // The holdover still restarts on a STOP decided at touch-down, so hammered
+  // STOP gestures at any pace under it never reach ARM.
+  it('hammered STOP gestures never reach ARM', () => {
+    let now = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { onArm, onDisarm, show } = setup(ARMED);
+    show(DISARMED);
+    for (let i = 0; i < 6; i++) {
+      now += KILL_SWITCH_STOP_HOLDOVER_MS - 100;
+      fireEvent.pointerDown(killButton(), { pointerId: i + 1 });
+      fireEvent.click(killButton(), { detail: 1 });
+    }
+    expect(onArm).not.toHaveBeenCalled();
+    expect(onDisarm).toHaveBeenCalledTimes(6);
   });
 });

@@ -98,11 +98,17 @@ fun ControlScreen(
   onChangeServer: () -> Unit,
   appVersion: String = "",
   modifier: Modifier = Modifier,
+  /**
+   * Bumped by the ViewModel each time it forces every control safe -- the app
+   * leaving the foreground. Releases any contact still drawn as held; see
+   * [momentaryPress].
+   */
+  releaseEpoch: Int = 0,
 ) {
   BoxWithConstraints(modifier.fillMaxSize()) {
     val helm = remember(maxWidth, maxHeight) { helmScaleFor(maxWidth, maxHeight) }
 
-    CompositionLocalProvider(LocalHelmScale provides helm) {
+    CompositionLocalProvider(LocalHelmScale provides helm, LocalReleaseEpoch provides releaseEpoch) {
       // Shape, not width. A tablet held UPRIGHT gets the same stacked
       // arrangement as a phone — one wide kill switch, the thruster block, the
       // two drives side by side, telemetry under them — because that is what the

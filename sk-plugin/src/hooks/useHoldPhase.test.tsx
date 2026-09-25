@@ -3,7 +3,7 @@ import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOLD_ENGAGE_GRACE_MS } from '../config';
 import { resetRuntimeClockForTests } from '../pure/runtimeClock';
-import { useHoldPhase } from './useHoldPhase';
+import { useHoldPhase, useManualRefusal } from './useHoldPhase';
 
 /**
  * The clock half of the rule. `pure/holdPhase.ts` decides what a given elapsed
@@ -78,5 +78,45 @@ describe('useHoldPhase', () => {
     // ...and asking again is a new request, not the old one continued.
     rerender({ requesting: true });
     expect(result.current.phase).toBe('requested');
+  });
+});
+
+/** The same window and clock, for MANUAL's refusal. */
+describe('useManualRefusal', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    resetRuntimeClockForTests();
+  });
+
+  function fakeClocks() {
+    vi.useFakeTimers({ toFake: ['Date', 'performance', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date(1_000_000));
+    resetRuntimeClockForTests();
+  }
+
+  it('holds its peace inside the window, then reports the refusal', () => {
+    fakeClocks();
+    const { result } = renderHook(() => useManualRefusal(true, 'DISARMED', false));
+    expect(result.current).toBe('none');
+    act(() => {
+      vi.advanceTimersByTime(HOLD_ENGAGE_GRACE_MS + 250);
+    });
+    expect(result.current).toBe('refused');
+  });
+
+  it('starts a fresh window when asked again after a disarm', () => {
+    fakeClocks();
+    const { result, rerender } = renderHook(
+      ({ requesting }) => useManualRefusal(requesting, 'DISARMED', false),
+      { initialProps: { requesting: true } },
+    );
+    act(() => {
+      vi.advanceTimersByTime(HOLD_ENGAGE_GRACE_MS + 250);
+    });
+    expect(result.current).toBe('refused');
+    rerender({ requesting: false });
+    expect(result.current).toBe('none');
+    rerender({ requesting: true });
+    expect(result.current).toBe('none');
   });
 });

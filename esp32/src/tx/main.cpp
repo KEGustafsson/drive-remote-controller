@@ -6,18 +6,19 @@
 // control_core::DrivePosition, and publishes to Signal K per
 // §5's path contract on change + a periodic refresh (so RX's
 // link_watchdog always has something recent to check). Drives the link-OK
-// LED from TX's own WiFi/SK connection state. TX has no safety-critical
+// LED from TX's server connection AND the arrival liveness of RX's and HH's
+// own linkUp deltas (drive/link_indicator.h). TX has no safety-critical
 // local output, so it doesn't need a FreeRTOS task -- see CLAUDE.md
 // "Architecture."
 
 #include <memory>
 #include <vector>
 
-// WiFi/OTA credentials live in include/secrets.h (committed in this private
-// repo by explicit owner decision -- see the note in secrets.h itself). On a
-// machine without secrets.h this falls back to include/secrets.example.h's
-// placeholders -- the firmware still builds, it just won't join WiFi until
-// you create secrets.h or configure WiFi via the setup portal.
+// WiFi/OTA credentials live in include/secrets.h, which is GITIGNORED and
+// never committed -- create it from include/secrets.example.h (AGENTS.md). On
+// a machine without secrets.h this falls back to the example's placeholders --
+// the firmware still builds, it just won't join WiFi until you create
+// secrets.h or configure WiFi via the setup portal.
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else

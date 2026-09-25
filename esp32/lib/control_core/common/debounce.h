@@ -40,9 +40,11 @@ class Debounce {
         state_(initial) {}
 
   // Feed the raw sampled level at monotonic time now_ms; returns the
-  // debounced state. Call at the sampling rate (every control tick) --
-  // stability is judged by consecutive calls agreeing for long enough,
-  // so a gap in calls can't fabricate stability that wasn't observed.
+  // debounced state. Call at the sampling rate (every control tick):
+  // stability is judged as the time since the first of a run of agreeing
+  // calls, and nothing between two calls is seen -- so two agreeing samples
+  // a long gap apart count as stable across the whole gap. Callers must not
+  // leave gaps longer than the bounce they mean to reject.
   bool Update(bool raw, uint32_t now_ms) {
     if (raw == state_) {
       // Bounce back to the current state: cancel any pending transition.

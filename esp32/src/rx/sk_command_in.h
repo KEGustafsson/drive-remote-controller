@@ -46,8 +46,10 @@ class SkCommandIn {
   // Non-blocking. Fills *port_out and *stbd_out (both built from the same
   // cached enabled/liveness state, per-drive command) and returns true
   // if the mutex was free; returns false (leaving both untouched) if it
-  // was momentarily held by a listener callback -- caller must treat the
-  // source as not-live for that cycle. now_ms/timeout_ms govern each field.
+  // was momentarily held by a listener callback -- the caller then reuses its
+  // last copy, aged via AgeCachedSnapshot (common/cached_snapshot.h), rather
+  // than dropping the source to not-live for that cycle. now_ms/timeout_ms
+  // govern each field.
   //
   // Not const: judging liveness latches a stale source as never-updated
   // (LinkWatchdog::IsLive), so the millis() wrap ~49.7 days into a silence

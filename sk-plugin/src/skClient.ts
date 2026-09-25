@@ -20,6 +20,7 @@
 import {
   RECONNECT_INITIAL_DELAY_MS,
   RECONNECT_MAX_DELAY_MS,
+  SK_STREAM_SILENCE_RECONNECT_MS,
   SUBSCRIBE_PATHS,
 } from './config';
 import { runtimeNowMs } from './pure/runtimeClock';
@@ -31,6 +32,13 @@ export type SubscribedPath = (typeof SUBSCRIBE_PATHS)[number];
 export interface SkSnapshot {
   connectionState: ConnectionState;
   values: Partial<Record<SubscribedPath, unknown>>;
+  /**
+   * When the current socket opened (runtime clock, the same one arrivals are
+   * stamped on); undefined before the first open. `values` and arrival times
+   * survive a reconnect, so an arrival older than this was heard on a socket
+   * that is gone -- it says nothing about the server NOW.
+   */
+  openedAt?: number;
 }
 
 export interface SkClient {
@@ -78,6 +86,8 @@ const SELF_CONTEXT = 'vessels.self';
 export function createSkClient(
   url: string,
   WebSocketImpl: typeof WebSocket = globalThis.WebSocket,
+  // Injectable only so a test need not sit through the production window.
+  silenceReconnectMs: number = SK_STREAM_SILENCE_RECONNECT_MS,
 ): SkClient {
   let socket: WebSocket | null = null;
   // useSyncExternalStore requires getSnapshot() to return a referentially
@@ -94,6 +104,16 @@ export function createSkClient(
   let reconnectDelayMs = RECONNECT_INITIAL_DELAY_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let closedByCaller = false;
+  // Silence watchdog -- see SK_STREAM_SILENCE_RECONNECT_MS.
+  let lastMessageAt = 0;
+  let silenceTimer: ReturnType<typeof setInterval> | null = null;
+
+  function stopSilenceWatchdog() {
+    if (silenceTimer !== null) {
+      clearInterval(silenceTimer);
+      silenceTimer = null;
+    }
+  }
 
   function notify() {
     for (const listener of listeners) listener();
@@ -181,10 +201,40 @@ export function createSkClient(
       return;
     }
     socket = ws;
+    // Set when the silence watchdog gives up on THIS socket: from then on
+    // nothing it delivers (a late frame, its eventual 'close') may touch the
+    // state of the connection that replaced it.
+    let abandoned = false;
 
     ws.addEventListener('open', () => {
+      if (abandoned) return;
       reconnectDelayMs = RECONNECT_INITIAL_DELAY_MS;
-      setConnectionState('open');
+      const openedAt = runtimeNowMs();
+      snapshot = { ...snapshot, connectionState: 'open', openedAt };
+      notify();
+      // A half-open socket (the far end gone with no FIN) never errors or
+      // closes here -- this client sends nothing after subscribing, so TCP
+      // has nothing to time out on. The server republishes every 250 ms, so
+      // a socket that has delivered nothing for this long is dead: drop it
+      // and open a fresh one instead of reading 'open' for the page's life.
+      lastMessageAt = openedAt;
+      stopSilenceWatchdog();
+      silenceTimer = setInterval(
+        () => {
+          if (runtimeNowMs() - lastMessageAt <= silenceReconnectMs) return;
+          abandoned = true;
+          stopSilenceWatchdog();
+          socket = null;
+          try {
+            ws.close();
+          } catch {
+            /* already closing -- nothing to do */
+          }
+          setConnectionState('closed');
+          scheduleReconnect();
+        },
+        Math.min(silenceReconnectMs, 1000),
+      );
       ws.send(
         JSON.stringify({
           context: SELF_CONTEXT,
@@ -194,10 +244,14 @@ export function createSkClient(
     });
 
     ws.addEventListener('message', (event: MessageEvent) => {
+      if (abandoned) return;
+      lastMessageAt = runtimeNowMs();
       if (typeof event.data === 'string') handleMessage(event.data);
     });
 
     ws.addEventListener('close', () => {
+      if (abandoned) return;
+      stopSilenceWatchdog();
       socket = null;
       setConnectionState('closed');
       scheduleReconnect();
@@ -228,6 +282,7 @@ export function createSkClient(
 
     close() {
       closedByCaller = true;
+      stopSilenceWatchdog();
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;

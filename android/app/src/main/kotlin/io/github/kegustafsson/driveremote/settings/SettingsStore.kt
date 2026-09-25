@@ -1,7 +1,6 @@
 package io.github.kegustafsson.driveremote.settings
 
 import android.content.Context
-import android.content.SharedPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -22,7 +21,18 @@ private val Context.dataStore by preferencesDataStore(name = "drive_remote_setti
  * because it authorises commanding machinery -- it is the one stored value
  * whose disclosure matters. Everything else is ordinary preferences.
  */
-class SettingsStore(context: Context) {
+class SettingsStore
+internal constructor(
+  context: Context,
+  // Test seam only: the Keystore does not exist under Robolectric, and the
+  // key-recovery paths below cannot be exercised without a key source that
+  // fails and then recovers.
+  private val secureFactory: (Context) -> KeystoreEncryptedPreferences,
+) {
+
+  constructor(context: Context) : this(context, { ctx ->
+    KeystoreEncryptedPreferences(ctx, SECURE_FILE, SECURE_KEY_ALIAS)
+  })
 
   private val appContext = context.applicationContext
 
@@ -38,9 +48,7 @@ class SettingsStore(context: Context) {
   //
   // A station that somehow never ran a migrating build loses its stored token
   // and asks for a new one -- the same recovery as any unreadable token.
-  private val secure: SharedPreferences by lazy {
-    KeystoreEncryptedPreferences(appContext, SECURE_FILE, SECURE_KEY_ALIAS)
-  }
+  private val secure: KeystoreEncryptedPreferences by lazy { secureFactory(appContext) }
 
   /** The configured server, or null until one has been chosen. */
   val serverAddress: Flow<ServerAddress?> =
@@ -69,10 +77,39 @@ class SettingsStore(context: Context) {
    *
    * It survives reinstall only as far as the app's data does; a fresh id simply
    * means a fresh access request, which is the correct outcome.
+   *
+   * **A stored id that cannot be read right now is not an absent one.** Minting
+   * and writing a new id in that state used to DELETE the stored one -- the
+   * write fails without a key and the store removes the entry rather than leave
+   * a stale value -- so a single launch-time Keystore hiccup made this station a
+   * new device, needing an admin to approve it again. So a new id is persisted
+   * only when there is genuinely none and the key works. Otherwise this process
+   * runs on an in-memory id and leaves the stored one alone for the next launch.
+   * That is protocol-safe: a fresh id per process is exactly how the browser UI
+   * already presents itself, and the arbiter keys nothing on it but bookkeeping.
    */
-  fun clientId(): String =
-    secure.getString(KEY_CLIENT_ID, null)
-      ?: UUID.randomUUID().toString().also { secure.edit().putString(KEY_CLIENT_ID, it).apply() }
+  fun clientId(): String {
+    synchronized(cacheLock) { ephemeralClientId?.let { return it } }
+    secure.getString(KEY_CLIENT_ID, null)?.let { return it }
+    // Asking for the key retries a failed load. If that brings it back, read
+    // again: the first read may have missed a stored id only because the key
+    // was not there yet, and the decision below must rest on the same key
+    // state as the read it follows.
+    if (secure.keyAvailable) {
+      secure.getString(KEY_CLIENT_ID, null)?.let { return it }
+      if (!secure.contains(KEY_CLIENT_ID)) {
+        return UUID.randomUUID().toString().also {
+          secure.edit().putString(KEY_CLIENT_ID, it).apply()
+        }
+      }
+    }
+    synchronized(cacheLock) {
+      return ephemeralClientId ?: UUID.randomUUID().toString().also { ephemeralClientId = it }
+    }
+  }
+
+  /** This process's id when the stored one cannot be read; see [clientId]. */
+  private var ephemeralClientId: String? = null
 
   /**
    * Claim the next session generation: a strictly increasing integer, bumped
@@ -146,6 +183,17 @@ class SettingsStore(context: Context) {
   /** Caller must hold [cacheLock]. */
   private fun loadCache() {
     if (cacheLoaded) return
+    // Not cached when no key can be had: a read then sees "nothing stored" only
+    // because nothing COULD be read, and caching it would keep a launch-time
+    // Keystore hiccup as a missing token for the whole process. The key is
+    // asked for FIRST, because asking retries the load -- a read made before
+    // it could miss a token that the same call then went on to find the key for.
+    if (!secure.keyAvailable) {
+      cachedToken = null
+      cachedTokenServer = null
+      cachedExpiryMs = null
+      return
+    }
     cachedToken = secure.getString(KEY_TOKEN, null)
     cachedTokenServer = secure.getString(KEY_TOKEN_SERVER, null)
     cachedExpiryMs =

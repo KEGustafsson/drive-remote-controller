@@ -145,12 +145,9 @@ class IntentPosterTest {
    * operator can choose a new server while a request to the old one is still in
    * flight. That reply must not touch the new server's probe.
    *
-   * Left unfixed it is not a cosmetic ordering wrinkle: the stale 401 pushes the
-   * index to the last scheme, where it sticks -- the index only climbs and the
-   * target no longer changes -- so a Bearer-only server is probed as JWT
-   * forever. And since `TokenHealth` only declares death once EVERY scheme has
-   * been refused, a token never tried with Bearer can never be declared dead
-   * either. The station sits refused indefinitely, reporting that it is retrying.
+   * Left unfixed it is not a cosmetic ordering wrinkle: the stale 401 moves the
+   * new server's probe off a scheme that server never refused, and its verdict
+   * would count against the new token in `TokenHealth`.
    */
   @Test
   fun `a 401 from the previous server cannot move the new server's probe`() {
@@ -178,5 +175,54 @@ class IntentPosterTest {
     // from wherever A's reply would have left it.
     runBlocking { poster.send(address(serverB), intent(3), "tokB") }
     assertEquals("JWT tokB", serverB.takeRequest().headers["Authorization"])
+  }
+
+  /**
+   * Settled on JWT, the probe must still get back to Bearer when refusals
+   * resume. A probe that only climbs presented a revoked token with JWT alone,
+   * forever -- and TokenHealth, which needs EVERY scheme refused, then never
+   * declared it dead, so the station kept presenting as able to command.
+   */
+  @Test
+  fun `a probe settled on the last scheme wraps back to the first on refusal`() {
+    serverA.enqueue(MockResponse().setResponseCode(401)) // Bearer refused
+    serverA.enqueue(MockResponse().setResponseCode(200)) // JWT accepted: settled
+    serverA.enqueue(MockResponse().setResponseCode(401)) // token revoked
+    serverA.enqueue(MockResponse().setResponseCode(401))
+
+    runBlocking { poster.send(address(serverA), intent(1), "tok") }
+    assertEquals("Bearer tok", serverA.takeRequest().headers["Authorization"])
+    runBlocking { poster.send(address(serverA), intent(2), "tok") }
+    assertEquals("JWT tok", serverA.takeRequest().headers["Authorization"])
+
+    val refused = runBlocking { poster.send(address(serverA), intent(3), "tok") }
+    assertEquals("JWT tok", serverA.takeRequest().headers["Authorization"])
+    assertEquals(AuthScheme.JWT, (refused as IntentPoster.Result.Unauthorized).schemeTried)
+
+    runBlocking { poster.send(address(serverA), intent(4), "tok") }
+    assertEquals(
+      "a refused last scheme must wrap round so every scheme is retried",
+      "Bearer tok",
+      serverA.takeRequest().headers["Authorization"],
+    )
+  }
+
+  /**
+   * On a Bearer-only server, one stray refusal must not strand the probe on JWT:
+   * the JWT refusal that follows brings it back, and the good token is accepted.
+   */
+  @Test
+  fun `a stray refusal on a Bearer-only server recovers to Bearer`() {
+    serverA.enqueue(MockResponse().setResponseCode(401)) // stray Bearer refusal
+    serverA.enqueue(MockResponse().setResponseCode(401)) // JWT: not this server's scheme
+    serverA.enqueue(MockResponse().setResponseCode(200)) // Bearer again: accepted
+
+    runBlocking { poster.send(address(serverA), intent(1), "tok") }
+    serverA.takeRequest()
+    runBlocking { poster.send(address(serverA), intent(2), "tok") }
+    assertEquals("JWT tok", serverA.takeRequest().headers["Authorization"])
+    val ok = runBlocking { poster.send(address(serverA), intent(3), "tok") }
+    assertEquals("Bearer tok", serverA.takeRequest().headers["Authorization"])
+    assertTrue("expected Ok, got $ok", ok is IntentPoster.Result.Ok)
   }
 }

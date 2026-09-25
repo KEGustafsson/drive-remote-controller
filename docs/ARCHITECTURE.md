@@ -331,6 +331,19 @@ Two structural properties are enforced in the result itself rather than trusted
 to callers: a manual direction cannot survive into HOLD, and a commanded trim
 cannot survive into MANUAL.
 
+**Releasing local ENGAGE disarms; it is not a handover** (SAFETY.md thruster
+invariant 6). The arbiter above is stateless and re-run every tick, so on its
+own an armed remote would qualify on the very tick ENGAGE falls and keep
+`engage_request` high straight through the release — the FSM would never see
+it. `ControlStep` therefore acts on the debounced ENGAGE falling edge: every
+remote whose `enabled` reads true at that instant (live or not, either mode, in
+command before the takeover or armed while ENGAGE was held) gets its re-engage
+latch set, the same latch a HOLD source earns by going stale (invariant 9). A
+latched source is presented to the arbiter as not enabled, so nothing qualifies,
+the request drops, the FSM goes `DISARMED` and the outputs go off. The latch
+clears only when HH sees that station live and **disarmed**; its next arm is
+then a fresh engage edge. A station disarmed at the release is not latched.
+
 ### 6.2 Where a remote command enters
 
 The arbitrated `engage_request` is fed to `SafetyFsm` **at exactly the position
@@ -343,7 +356,7 @@ Three things are adapted per mode, and only these three:
 
 | Precondition | HOLD | MANUAL | Reason |
 |---|---|---|---|
-| Good-heading arm gate | required | not required | The gate exists so the loop never steers against a heading it cannot trust. Manual consults no heading — the operator's eyes are the reference. |
+| Good-heading arm gate | required | not required | The gate exists so the loop never steers against a heading it cannot trust. Manual consults no heading — the operator's eyes are the reference. A MANUAL session switched to HOLD meets the gate at the switch, exactly as an arm into HOLD does: on a stale heading it waits in `ARMED_IDLE` and engages once the heading is good. |
 | GNSS coast timers | active | inert | Nothing is being held, so there is nothing to coast. |
 | Source staleness window | 2000 ms | 1000 ms | What a false "source gone" costs. A manual command is a momentary button with the operator watching: it must stop promptly when a station vanishes, and a false trip costs one 250 ms gap. A hold is autonomous, and losing it arms the re-engage latch (SAFETY.md thruster invariant 9) — permanent until someone disarms and re-arms. So HOLD buys headroom against transport jitter. `kThrusterHoldSourceStalenessMs` / `kThrusterManualSourceStalenessMs`. |
 
@@ -416,12 +429,22 @@ The trim magnitude is clamped to `kMaxTrimDeg` (±45°).
   trim or a mode change.
 - **Arm-first, then trim.** Arming holds the captured heading (trim 0); trimming
   is a deliberate action taken afterward. **Every** station enforces this by
-  resetting its trim to 0 whenever the thruster is not commandable from it, so
-  arming never swings the boat to an offset dialled in earlier. The condition is
+  resetting its trim to 0 when the hold ends, so arming never swings the boat
+  to an offset dialled in earlier. The condition is
   `control_core::TrimHoldAllowed` (HOLD mode, this station enabled, HH answering)
   — stated once in the pure core because all three stations owe it and each
   implements it in its own language: TX in its sample loop, the plugin in
-  `App.tsx`, the Android station in `StationViewModel`. TX originally omitted the
+  `src/pure/trimReset.ts`, the Android station in `StationView.trimMustReset`.
+  The two network stations apply the *station enabled* and *HH answering* terms
+  only while their live-data stream is up (owner decision 2026-09-24): those are
+  verdicts read off that stream, and a station that has only lost sight of the
+  boat is still commanding over HTTP, so zeroing a relative trim then would turn
+  the boat by up to `kMaxTrimDeg` with nobody touching anything. While blind
+  they keep sending the trim and freeze the trim buttons; the arbiter zeroes and
+  quarantines the trim itself if HH really drops (`_refreshUnitLiveness`,
+  `_maybeRelease`). *HH answering* counts as lost only after HH has read
+  not-live for a full liveness window on a live stream, because both edges of a
+  stream outage briefly read that way. TX originally omitted the
   *station enabled* term, and on TX the enable switch **is** the arm, so a trim
   dialled in while disarmed was applied by the act of arming.
 
@@ -859,11 +882,21 @@ reversal dwells against the same shared last-thrust history (§6.3).
 
 **Nothing derived is shown as live when it cannot be confirmed.** Lamps grey out
 when the socket is down or when the unit that publishes them has gone quiet, and
-the kill switch renders a distinct OFFLINE state while disconnected rather than
+the kill switch renders a distinct OFFLINE state while disconnected — or while
+the socket reads open but the plugin's 250 ms `activeClient` republish has
+stopped arriving on it — rather than
 a confident ARMED — or a false DISARMED: the socket is only the read side, and
-the intent heartbeat keeps POSTing over HTTP, so the tab may still genuinely
+the intent heartbeat keeps POSTing over HTTP, so the station may still genuinely
 hold the token. The OFFLINE tap therefore stays live and always means STOP;
 disarm is never gated on the read socket's health (SAFETY.md).
+
+On both stations a kill-switch gesture's meaning is fixed at **touch-down**: a
+press that means STOP (or lands within the 1 s holdover after the button last
+meant STOP) disarms on the down and its lift can never arm, so a hurried STOP
+that slides off the button still stops; ARM acts on the lift inside the button,
+so sliding off cancels an unintended arm. Keyboard and accessibility activation
+go through the same policy (`pure/killSwitchGesture.ts`,
+`core/KillSwitchTapPolicy.kt`).
 
 Screenshots of every operating state are in
 [sk-plugin/README.md](../sk-plugin/README.md), captured from the real built app driving

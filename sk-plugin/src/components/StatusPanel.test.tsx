@@ -241,6 +241,17 @@ describe('StatusPanel when RX has stopped publishing', () => {
     renderPanel('open', LIVE_LOOKING_VALUES, 'stale');
     for (const title of ['RX link', 'RX enable', 'Port', 'Starboard']) {
       expect(lampFor(title).className).toContain('lamp--stale');
+      // ...and SAYS so: the grey is lost on a screen reader, and a frozen
+      // "neutral · plugin" next to a grey light still reads as a reading.
+      expect(lampFor(title).querySelector('.lamp__value')).toHaveTextContent('no data');
+      expect(screen.getByRole('status', { name: `${title}: no data` })).toBeInTheDocument();
+    }
+  });
+
+  it('says no data on the drive lamps while the socket is down, too', () => {
+    renderPanel('closed', LIVE_LOOKING_VALUES, 'offline', 'offline');
+    for (const title of ['Port', 'Starboard']) {
+      expect(screen.getByRole('status', { name: `${title}: no data` })).toBeInTheDocument();
     }
   });
 

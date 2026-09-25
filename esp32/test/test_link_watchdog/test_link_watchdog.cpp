@@ -3,6 +3,7 @@
 #include "common/elapsed_ms.h"
 #include "drive/link_watchdog.h"
 
+using control_core::AllLive;
 using control_core::LinkWatchdog;
 
 void setUp() {}
@@ -176,6 +177,44 @@ void test_instances_are_independent() {
   TEST_ASSERT_FALSE(b.IsLive(100, kTimeoutMs));
 }
 
+// AllLive polls every member even once one is stale, so every stale member
+// latches. With a short-circuit the later members were never polled: after
+// 2^31 ms of silence ElapsedMs read their old stamps as age 0, and a fresh
+// update on the first member alone made the whole month-old tuple live.
+void test_all_live_latches_every_member_even_after_one_is_stale() {
+  LinkWatchdog port;
+  LinkWatchdog stbd;
+  LinkWatchdog enabled;
+  port.Update(1000);
+  stbd.Update(1000);
+  enabled.Update(1000);
+  TEST_ASSERT_TRUE(AllLive(1000, kTimeoutMs, port, stbd, enabled));
+
+  // Silence: the first poll after the timeout must latch all three.
+  TEST_ASSERT_FALSE(AllLive(1000 + kTimeoutMs + 20, kTimeoutMs, port, stbd,
+                            enabled));
+  TEST_ASSERT_FALSE(port.HasEverUpdated());
+  TEST_ASSERT_FALSE(stbd.HasEverUpdated());
+  TEST_ASSERT_FALSE(enabled.HasEverUpdated());
+
+  // 25 days later only the first member's path updates. The others' stamps
+  // are now in the upper half of the range, which ElapsedMs reads as age 0 --
+  // the latch is the only thing keeping them out.
+  const uint32_t later = 1000u + 25u * 24u * 3600u * 1000u;
+  port.Update(later);
+  TEST_ASSERT_FALSE(AllLive(later, kTimeoutMs, port, stbd, enabled));
+}
+
+// Every member is polled on every call, not just until the first false.
+void test_all_live_needs_every_member() {
+  LinkWatchdog a;
+  LinkWatchdog b;
+  a.Update(100);
+  TEST_ASSERT_FALSE(AllLive(100, kTimeoutMs, a, b));
+  b.Update(100);
+  TEST_ASSERT_TRUE(AllLive(100, kTimeoutMs, a, b));
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_never_updated_is_not_live);
@@ -192,5 +231,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_update_stamped_after_now_across_rollover_is_live);
   RUN_TEST(test_elapsed_ms);
   RUN_TEST(test_silent_source_still_goes_stale_at_its_timeout);
+  RUN_TEST(test_all_live_latches_every_member_even_after_one_is_stale);
+  RUN_TEST(test_all_live_needs_every_member);
   return UNITY_END();
 }

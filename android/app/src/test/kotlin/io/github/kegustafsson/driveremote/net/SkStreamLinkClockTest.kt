@@ -78,6 +78,7 @@ class SkStreamLinkClockTest {
         connectionState = stream.connectionState.value,
         everConnected = stream.everConnected,
         connectingForMs = SystemClock.elapsedRealtime() - stream.targetSetAtMs,
+        serverLive = false,
       )
 
     assertEquals(
@@ -98,6 +99,7 @@ class SkStreamLinkClockTest {
         connectionState = stream.connectionState.value,
         everConnected = stream.everConnected,
         connectingForMs = SkContract.LINK_STARTUP_GRACE_MS,
+        serverLive = false,
       )
 
     assertEquals(LinkPhase.OFFLINE, phase)

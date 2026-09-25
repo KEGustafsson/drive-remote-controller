@@ -50,11 +50,17 @@ Cmd ManualThrust::Update(Cmd requested, uint32_t now_ms) {
   // through kOff on this tick; the dwell is then measured from here. This is
   // the structural interlock: a direct direction->direction transition is not
   // expressible, so the output driver can never be asked for both lines.
+  //
+  // This one OFF tick is that structural interlock, not a wait. It counts as a
+  // pending reversal only when there is a dwell to serve after it: with a zero
+  // dwell the opposite direction asserts on the very next tick, nothing is
+  // being withheld, and SAFETY.md thruster invariant 7 says reversalPending
+  // never publishes in manual mode.
   if (current_ != Cmd::kOff) {
     last_thrust_dir_ = current_;
     off_since_ms_ = now_ms;
     current_ = Cmd::kOff;
-    reversal_pending_ = true;
+    reversal_pending_ = dwell_ms_ > 0;
     return current_;
   }
 

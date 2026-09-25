@@ -14,6 +14,11 @@
 //      This is SAFETY.md thruster invariant 6 ("manual authority dominates") preserved
 //      unchanged by the addition of remote control: someone standing at the
 //      unit can always take it, and a phone can never wrestle it back.
+//      RELEASING it is not a handover either: it disarms. That rule needs
+//      history this stateless function does not keep, so ControlStep enforces
+//      it -- on the release edge it latches every armed remote out, so nothing
+//      qualifies here until that station has been seen disarmed and armed
+//      again (control_step.h, "RE-ENGAGE LATCH").
 //   2. Otherwise TX outranks the plugin by FIXED precedence (never recency),
 //      exactly as for the drives -- "TX wins both motion and bow thruster
 //      controls whenever it is activated" (owner requirement). A source must
@@ -115,9 +120,9 @@ inline Cmd ThrusterCmdFromSkString(const char* s) {
 // trip costs one 250 ms gap in a command the operator is already watching.
 // HOLD is the opposite: an autonomous loop against a setpoint HH captured for
 // itself, with nobody at a button. Dropping it costs the whole hold, because a
-// source that goes stale while it was the authoritative HOLD commander arms the
-// re-engage latch (control_step.h, SAFETY.md thruster invariant 9) -- permanent
-// until that station is seen live and DISARMED. So HOLD buys headroom against
+// source that goes stale while it is armed in HOLD arms the re-engage latch
+// (control_step.h, SAFETY.md thruster invariant 9) -- permanent until that
+// station is seen live and DISARMED. So HOLD buys headroom against
 // transport jitter and MANUAL buys promptness, and neither number is the other
 // one's default.
 //

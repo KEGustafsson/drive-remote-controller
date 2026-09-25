@@ -26,7 +26,7 @@ class LinkPhaseTest {
   fun `an open stream is online`() {
     assertEquals(
       LinkPhase.ONLINE,
-      linkPhaseOf(ConnectionState.OPEN, everConnected = false, connectingForMs = 0),
+      linkPhaseOf(ConnectionState.OPEN, everConnected = false, connectingForMs = 0, serverLive = true),
     )
   }
 
@@ -34,7 +34,12 @@ class LinkPhaseTest {
   fun `an open stream is online even long into a session`() {
     assertEquals(
       LinkPhase.ONLINE,
-      linkPhaseOf(ConnectionState.OPEN, everConnected = true, connectingForMs = 10 * 60_000),
+      linkPhaseOf(
+        ConnectionState.OPEN,
+        everConnected = true,
+        connectingForMs = 10 * 60_000,
+        serverLive = true,
+      ),
     )
   }
 
@@ -44,7 +49,7 @@ class LinkPhaseTest {
   fun `a socket that has never opened yet is starting up, not offline`() {
     assertEquals(
       LinkPhase.CONNECTING,
-      linkPhaseOf(ConnectionState.CONNECTING, everConnected = false, connectingForMs = 0),
+      linkPhaseOf(ConnectionState.CONNECTING, everConnected = false, connectingForMs = 0, serverLive = false),
     )
   }
 
@@ -58,7 +63,7 @@ class LinkPhaseTest {
   fun `the gap between two failed first attempts is still starting up`() {
     assertEquals(
       LinkPhase.CONNECTING,
-      linkPhaseOf(ConnectionState.CLOSED, everConnected = false, connectingForMs = 500),
+      linkPhaseOf(ConnectionState.CLOSED, everConnected = false, connectingForMs = 500, serverLive = false),
     )
   }
 
@@ -77,6 +82,7 @@ class LinkPhaseTest {
         ConnectionState.CONNECTING,
         everConnected = false,
         connectingForMs = SkContract.LINK_STARTUP_GRACE_MS,
+        serverLive = false,
       ),
     )
   }
@@ -89,6 +95,7 @@ class LinkPhaseTest {
         ConnectionState.CONNECTING,
         everConnected = false,
         connectingForMs = SkContract.LINK_STARTUP_GRACE_MS - 1,
+        serverLive = false,
       ),
     )
   }
@@ -104,11 +111,44 @@ class LinkPhaseTest {
   fun `a drop after a session has been open is offline immediately`() {
     assertEquals(
       LinkPhase.OFFLINE,
-      linkPhaseOf(ConnectionState.CONNECTING, everConnected = true, connectingForMs = 0),
+      linkPhaseOf(ConnectionState.CONNECTING, everConnected = true, connectingForMs = 0, serverLive = false),
     )
     assertEquals(
       LinkPhase.OFFLINE,
-      linkPhaseOf(ConnectionState.CLOSED, everConnected = true, connectingForMs = 0),
+      linkPhaseOf(ConnectionState.CLOSED, everConnected = true, connectingForMs = 0, serverLive = false),
+    )
+  }
+
+  // ---- An open socket is not a live link --------------------------------
+
+  /**
+   * The far end gone without a FIN leaves the socket OPEN with nothing arriving.
+   * Once the session has been live that is a drop like any other, and gets no
+   * grace either.
+   */
+  @Test
+  fun `an open socket gone silent mid-session is offline immediately`() {
+    assertEquals(
+      LinkPhase.OFFLINE,
+      linkPhaseOf(ConnectionState.OPEN, everConnected = true, connectingForMs = 0, serverLive = false),
+    )
+  }
+
+  /** Before the arbiter's first publish lands on a fresh session: a start-up. */
+  @Test
+  fun `open but not yet live at start-up is still starting up`() {
+    assertEquals(
+      LinkPhase.CONNECTING,
+      linkPhaseOf(ConnectionState.OPEN, everConnected = false, connectingForMs = 300, serverLive = false),
+    )
+    assertEquals(
+      LinkPhase.OFFLINE,
+      linkPhaseOf(
+        ConnectionState.OPEN,
+        everConnected = false,
+        connectingForMs = SkContract.LINK_STARTUP_GRACE_MS,
+        serverLive = false,
+      ),
     )
   }
 

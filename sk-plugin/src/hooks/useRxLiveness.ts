@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import {
   RX_TELEMETRY_POLL_MS,
   SK_HH_LINK_UP_PATH,
+  SK_PLUGIN_ACTIVE_CLIENT_PATH,
   SK_PLUGIN_HH_LIVE_PATH,
   SK_PLUGIN_RX_LIVE_PATH,
   SK_RX_LINK_UP_PATH,
 } from '../config';
 import { evaluateRxLiveness, type RxLiveness } from '../pure/rxLiveness';
 import { runtimeNowMs } from '../pure/runtimeClock';
+import { serverStreamLive } from '../pure/serverStream';
 import type { SubscribedPath } from '../skClient';
 import type { SkConnection } from './useSkConnection';
 
@@ -25,22 +27,27 @@ import type { SkConnection } from './useSkConnection';
  * timer); rx.linkUp is used because it is the one the status panel displays,
  * so the row's freshness and its content come from the same delta.
  */
+// The clock every arrival age here is measured against, re-read on a timer.
+// Must be the SAME clock skClient stamps arrivals with, or every age is
+// meaningless. runtimeNowMs() also counts time the device spent suspended,
+// so a laptop closed with this open does not wake reporting stale telemetry
+// as live (SAFETY.md invariant 6).
+function useRuntimeNow(): number {
+  const [now, setNow] = useState(() => runtimeNowMs());
+  useEffect(() => {
+    const id = setInterval(() => setNow(runtimeNowMs()), RX_TELEMETRY_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
 export function useUnitLiveness(
   connection: SkConnection,
   telemetryPath: SubscribedPath,
   pluginLivePath: SubscribedPath,
 ): RxLiveness {
   const { connectionState, values, getReceivedAt } = connection;
-  // Must be the SAME clock skClient stamps arrivals with, or every age is
-  // meaningless. runtimeNowMs() also counts time the device spent suspended,
-  // so a laptop closed with this open does not wake reporting stale telemetry
-  // as live (SAFETY.md invariant 6).
-  const [now, setNow] = useState(() => runtimeNowMs());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(runtimeNowMs()), RX_TELEMETRY_POLL_MS);
-    return () => clearInterval(id);
-  }, []);
+  const now = useRuntimeNow();
 
   const receivedAt = getReceivedAt(telemetryPath);
   // `now` can lag a real arrival by up to one poll interval, and a
@@ -69,4 +76,23 @@ export function useRxLiveness(connection: SkConnection): RxLiveness {
  */
 export function useHhLiveness(connection: SkConnection): RxLiveness {
   return useUnitLiveness(connection, SK_HH_LINK_UP_PATH, SK_PLUGIN_HH_LIVE_PATH);
+}
+
+/**
+ * Is the server's stream still carrying live data -- the arbiter's
+ * activeClient republish arriving on the current socket? The socket reading
+ * 'open' is not enough (a half-open socket reads open forever) and the
+ * retained activeClient value is not evidence at all. See pure/serverStream.ts.
+ * Re-evaluated on the same timer as the unit checks, because going silent
+ * produces no event.
+ */
+export function useServerStreamLive(connection: SkConnection): boolean {
+  const { connectionState, openedAt, getReceivedAt } = connection;
+  const now = useRuntimeNow();
+  return serverStreamLive({
+    connectionState,
+    receivedAtMs: getReceivedAt(SK_PLUGIN_ACTIVE_CLIENT_PATH),
+    openedAtMs: openedAt,
+    nowMs: now,
+  });
 }

@@ -7,6 +7,7 @@
 #include <freertos/task.h>
 
 #include "common/cached_snapshot.h"
+#include "common/elapsed_ms.h"
 #include "config.h"
 #include "sensesp/ui/config_item.h"
 
@@ -240,7 +241,12 @@ void ControlTask::FailoffWatchdogTrampoline(void* arg) {
 // whole point is that it keeps running when the control task doesn't.
 void ControlTask::CheckFailoff() {
   uint32_t now_ms = millis();
-  uint32_t age_ms = now_ms - heartbeat_ms_.load(std::memory_order_relaxed);
+  // ElapsedMs, not plain subtraction: this runs on the other core, and a tick
+  // that completes between the clock read above and the load below stores a
+  // heartbeat LATER than now_ms. That is proof of life, not ~49 days of
+  // silence, and must not release the outputs (common/elapsed_ms.h).
+  uint32_t age_ms = control_core::ElapsedMs(
+      now_ms, heartbeat_ms_.load(std::memory_order_relaxed));
   if (age_ms <= config::kOutputFailoffTimeoutMs) {
     return;
   }
@@ -396,9 +402,11 @@ void ControlTask::Tick(uint32_t now_ms, float dt_s) {
   // One line the first time a present station is latched out, not one per
   // tick: HH is refusing a station that still shows ARMED, and without this the
   // operator sees only a station that says ARMED commanding nothing
-  // (control_step.h, "RE-ENGAGE LATCH"). Two causes, one remedy: that
-  // station's link dropped while it was holding, or HH itself restarted under
-  // a station that was already armed.
+  // (control_step.h, "RE-ENGAGE LATCH"). Three causes, one remedy: that
+  // station's link dropped while it was holding, HH itself restarted under a
+  // station that was already armed, or the unit's own ENGAGE was released
+  // while that station was armed (invariant 6: the release disarms, it does
+  // not hand the thruster back).
   if (last_step_.reengage_blocked && !prev_reengage_blocked_) {
     ESP_LOGW("control",
              "re-engage BLOCKED: a station is publishing ARMED that HH has not "

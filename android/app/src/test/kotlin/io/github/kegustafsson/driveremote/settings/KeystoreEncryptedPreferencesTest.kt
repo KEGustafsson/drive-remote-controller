@@ -179,4 +179,31 @@ class KeystoreEncryptedPreferencesTest {
     assertEquals(99L, prefs.getLong("sk_token_expiry", 0L))
     assertEquals("http://boat:3000", prefs.getString("sk_token_server", null))
   }
+
+  /**
+   * A Keystore that fails once and then answers -- a launch-time hiccup. The
+   * key used to be a `lazy`, which kept that first failure for the whole
+   * process: every read looked like nothing stored and every write was dropped.
+   */
+  @Test
+  fun `a failed key load is retried rather than remembered`() {
+    store("flaky").edit().putString("client_id", "stable-id").commit()
+
+    var loads = 0
+    val flaky =
+      KeystoreEncryptedPreferences(
+        ApplicationProvider.getApplicationContext(),
+        "flaky",
+        "test_alias_flaky",
+        keySource = { if (loads++ == 0) null else testKey },
+      )
+
+    assertNull("the hiccup itself reads as unavailable", flaky.getString("client_id", null))
+    assertEquals(
+      "the key came back, and the stored value with it",
+      "stable-id",
+      flaky.getString("client_id", null),
+    )
+    assertTrue(flaky.keyAvailable)
+  }
 }

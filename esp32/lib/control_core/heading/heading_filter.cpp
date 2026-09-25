@@ -38,11 +38,18 @@ bool HeadingFilter::Correct(const GnssHeading& gnss, uint32_t now_ms) {
     return false;
   }
 
-  // Unsigned subtraction, so a timestamp in the FUTURE (clock skew between
-  // the SK producer and us, a replayed frame) wraps to a huge age and is
-  // rejected by the same freshness bound -- which is the behaviour we want.
-  // Note there is deliberately no `age_s < 0` branch: it would be dead code,
-  // since this can never be negative.
+  // Unsigned subtraction, so a timestamp in the FUTURE wraps to a huge age and
+  // is rejected by the same freshness bound. t_ms is not the producer's clock:
+  // it is HH's OWN millis(), stamped by the SK listener on the loop task when
+  // the delta arrives (sk_heading_in.cpp). A future stamp is therefore the
+  // loop-task/control-task ordering race (common/elapsed_ms.h) -- the callback
+  // landed after the control tick read now_ms -- and the fix is genuinely a few
+  // ms old, not bogus. Rejecting it HERE is still right: accepting it would
+  // leave prev_gnss_t_ms_ in the future, and every plain `now - prev` age below
+  // and in ExpireStaleReference() would wrap. ControlStep instead declines to
+  // mark such a fix applied, so it is offered again next tick, when it is no
+  // longer in the future. Note there is deliberately no `age_s < 0` branch: it
+  // would be dead code, since this can never be negative.
   float age_s = (now_ms - gnss.t_ms) / 1000.0f;
   if (age_s > cfg_.t_fresh_s) {
     return false;  // stale, or dated in the future

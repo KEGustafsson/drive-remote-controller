@@ -209,7 +209,7 @@ void setup() {
   auto fused_heading_sk_output = std::make_shared<SKOutputFloat>(
       "sensors.headingHold.fusedHeading", "", "rad");
   auto fsm_state_sk_output =
-      std::make_shared<SKOutputString>("sensors.headingHold.fsmState", "");
+      std::make_shared<SKOutputString>(config::kSkHhFsmStatePath, "");
   auto bno_ok_sk_output =
       std::make_shared<SKOutputBool>("sensors.headingHold.bnoOk", "");
   auto gnss_valid_sk_output =

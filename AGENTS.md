@@ -92,13 +92,13 @@ If a task would require breaking one of these, stop and flag it.
 ## Commands
 
 ```bash
-cd esp32 && pio test -e native                          # pure core, all three firmwares (285 cases)
+cd esp32 && pio test -e native                          # pure core, all three firmwares (302 cases)
 cd esp32 && pio run -e tx_shesp32|rx_shesp32|hh_shesp32 # build
 cd esp32 && pio run -e <env> -t upload && pio device monitor
-cd sk-plugin && npm test                    # 277 cases
+cd sk-plugin && npm test                    # 377 cases
 cd sk-plugin && npm run build               # -> public/
-cd android && ./gradlew :core:test          # pure Kotlin core, 178 cases
-cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 75 cases (needs SDK)
+cd android && ./gradlew :core:test          # pure Kotlin core, 256 cases
+cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 118 cases (needs SDK)
 cd android && ./gradlew :app:assembleDebug  # needs an Android SDK
 ```
 
