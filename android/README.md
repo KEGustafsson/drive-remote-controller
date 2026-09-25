@@ -967,7 +967,7 @@ That is a real milestone and still a long way short of "it works".
 | | |
 |---|---|
 | `core/` | **Verified.** 256 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 118 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 127 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |
@@ -991,6 +991,19 @@ Work through the checklist in
 commands anything in earnest.
 
 ### Known gaps
+
+- **Controls no longer move with state, but the status bar still can.**
+  `ControlPositionStabilityTest` switches one composition between states --
+  disarmed and armed, a unit going quiet, an override, a thruster notice, the
+  MANUAL refusal band, MANUAL and HOLD -- and asserts every live control keeps
+  identical bounds, at 1.0x and 1.3x font. Each message that used to add a line
+  only while showing now has its line reserved in every state. The collapsed
+  telemetry bar is the exception: its lamp readings wrap with what they say and
+  it adds a "not responding" line, so where the drive bank has grown past its
+  floor a fault still resizes the drives. It is being redesigned to a fixed
+  height. The reservations also cost ~24 dp at 2.0x font on a 640 dp phone,
+  which now reports the bottom of the drive bank as off screen (floors hold);
+  the no-overflow checks there run at 1.75x.
 
 - **The layout floors are measured on the JVM, but never yet on the reference
   phone.** `app/src/test/.../LayoutFloorsTest.kt` renders the real Compose tree

@@ -7442,3 +7442,44 @@ replace a healthy-looking DISARMED while every POST fails.
 
 Suites: native 302, plugin 377, core 256, app 118; all firmwares build.
 SAFETY.md's Android checklist carries the hand-on-glass lines for each.
+
+## 2026-09-25 — Android: controls hold still across arm and faults
+
+Owner report from the S25 (system font ~1.3x): arming and disarming moved the
+control buttons, the two thruster mode notes should go, and the bottom status
+bar reads badly on the S25 where the Nokia 7.2 fits.
+
+**The notes are gone.** "MANUAL selected — arm to thrust" and "HOLD selected —
+starts holding when you arm" were removed at the owner's request; the lit mode
+chip is the statement. The browser UI still carries its copy.
+
+**Why the buttons moved.** That note existed only while disarmed, so every ARM
+took a line out of the thruster panel and every DISARM put it back -- and the
+drives sit directly below it. The same shape recurred elsewhere: the kill
+switch's second line was one line or two depending on its words, and the
+thruster's refusal band, "controlled by ...", "reversing ..." and each drive's
+override note took a line only while showing.
+
+**The rule now: what the screen says may change with state, where its controls
+are may not.** `ReservedLines` holds room for a message in every state (sized by
+an empty paragraph of the same type, so it tracks font scale exactly): two lines
+under the kill switch label, one notice line at the bottom of the thruster panel
+(one notice at a time: refusal > controlled by > reversing), one override line
+under each drive. The thruster body is the same height in MANUAL and HOLD, by
+carrying an invisible, inert, semantics-cleared copy of the HOLD body for size.
+Reserved text uses a 1.3 em line height rather than Material's 24 sp, which is
+what pays for most of it: reference-phone drive contacts went 185 -> 167 dp.
+
+`ControlPositionStabilityTest` (10 cases) flips one composition between states
+and asserts identical bounds for the kill switch and every contact. Not yet in
+scope: the collapsed telemetry bar, whose readings wrap with their words and
+which adds a "not responding" line -- where the bank is above its floor that
+still resizes the drives. Four fixed-height designs were sketched for the owner
+to choose from; that choice closes it.
+
+**Trade taken.** Reserved room is paid in every state. At 2.0x font on the
+640 dp budget phone the bottom ~24 dp of the drive bank now goes off screen and
+the clipped warning shows; floors still hold everywhere. The two no-overflow
+checks there run at 1.75x, the largest scale that fits.
+
+Not on glass. Suites: app 127 (was 118).

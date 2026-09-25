@@ -211,10 +211,20 @@ class LayoutFloorsTest {
     compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
   }
 
+  /**
+   * 1.75x, not 2.0x, since every state-dependent message on the screen got its
+   * room reserved so that arming, a unit going quiet or a notice appearing can
+   * no longer move a control (ControlPositionStabilityTest). Reserved room is
+   * paid in every state, and at 2.0x on this 640 dp phone it costs the bottom
+   * ~24 dp of the drive bank: the contacts keep their floor (asserted above at
+   * 2.0x), the overflow goes off the bottom, and the screen says so. A
+   * deliberate trade -- a control that stays put was the owner's ask -- and
+   * this is the largest font scale at which a budget phone still fits.
+   */
   @Test
   @Config(sdk = [35], qualifiers = SmallPhone)
   fun `no off-screen warning on a small phone with large text`() {
-    compose.showControlScreen(fontScale = 2.0f)
+    compose.showControlScreen(fontScale = LargestFittingFontScale)
     compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
   }
 
@@ -238,7 +248,7 @@ class LayoutFloorsTest {
   @Test
   @Config(sdk = [35], qualifiers = SmallPhone)
   fun `a commands-not-reaching kill switch pushes nothing off a small phone at large text`() {
-    compose.showControlScreen(view = commandsBlocked, fontScale = 2.0f)
+    compose.showControlScreen(view = commandsBlocked, fontScale = LargestFittingFontScale)
     compose.onNodeWithContentDescription(BlockedLine, substring = true).assertExists()
     compose.assertContactFloors()
     compose.onNodeWithTag(ClippedWarningTag, useUnmergedTree = true).assertDoesNotExist()
@@ -570,6 +580,13 @@ private const val ShortestSidebarWindow = "w900dp-h500dp-xhdpi"
 
 /** The reference phone on its side — the shortest window the wide layout gets. */
 private const val PhoneLandscape = "w780dp-h360dp-xxhdpi"
+
+/**
+ * The largest system font scale at which [SmallPhone] still fits every live
+ * control on screen. See `no off-screen warning on a small phone with large
+ * text` for why it is not 2.0.
+ */
+private const val LargestFittingFontScale = 1.75f
 
 /** Android's minimum touch target, and the floor every contact button holds. */
 private val TouchTargetFloor = 88.dp
