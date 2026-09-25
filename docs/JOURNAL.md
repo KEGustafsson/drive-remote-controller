@@ -7619,3 +7619,11 @@ whole at its natural height.
 
 `ContactBalanceTest` (5, native graphics). Suites: app 161 (+9 skipped renders).
 Not on glass.
+
+CodeRabbit on PR #14: the README's contact-height table still showed the
+pre-balance numbers (drives 185 dp, thruster 88 dp). Re-measured every window
+under the same default-graphics setup the table cites and rewrote it and the
+paragraph above it; the short windows (512 dp, split-screen) show the thruster
+at its 88 dp floor with the drives bigger, because the bank's 280 dp floor wins
+there, and the landscape arrangements keep the thruster natural. The stale
+"screenshots are of the pre-scale layout" known gap went too.

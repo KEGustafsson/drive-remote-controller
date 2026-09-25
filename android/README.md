@@ -784,35 +784,41 @@ quietly shrink those floors and defeat it.
 only ever half a rule: the bank was unweighted at its minimum while telemetry —
 which commands nothing — held the `weight(1f)` and absorbed every spare pixel.
 `ControlSurface` is a measure policy rather than a `Column` because the priority
-wanted here cannot be said with weights: bank floor first, then telemetry's
-natural height, then the bank up to its ceiling, then the remainder back to
-telemetry. Telemetry is still what gives way on a short screen.
+wanted here cannot be said with weights: the bank's floor first, then
+telemetry's natural height, then one contact height shared by all three rows --
+thruster PORT/STBD, drive FWD, drive REV -- up to the ceiling, then the
+remainder back to telemetry. Telemetry is still what gives way on a short
+screen, and the bank's 280 dp floor still wins over equal rows on one.
 
-Measured, as `LayoutFloorsTest` renders them:
+Measured, as `LayoutFloorsTest` renders them (Robolectric's default graphics,
+whose text is a few dp off real text; `ContactBalanceTest` measures with real
+text and reads 160 dp on the reference phone, 147 dp at 1.3x):
 
-| window | scale | drive contact | was | thruster contact |
-|---|---|---|---|---|
-| reference phone 360×780 | 1.00 | **185 dp** | 88 dp | 88 dp |
-| budget phone 360×640 | 1.00 | 115 dp | 88 dp | 88 dp |
-| supported minimum 360×512 | 1.00 | 110 dp | 88 dp | 88 dp |
-| split-screen 360×390 @1.5× | 1.00 | 97 dp | 88 dp | 88 dp |
-| phone landscape 780×360 | 1.00 | 93 dp | — | 88 dp |
-| 7" tablet 600×960 | 1.23 | 295 dp | 88 dp | 108 dp |
-| 10" tablet 1280×800 | 1.03 | 229 dp | 88 dp | 90 dp |
-| 10" tablet 800×1280 | 1.45 | **348 dp** | 88 dp | 128 dp |
+| window | scale | drive contact | thruster contact |
+|---|---|---|---|
+| reference phone 360×780 | 1.00 | **164 dp** | **164 dp** |
+| budget phone 360×640 | 1.00 | 117 dp | 117 dp |
+| supported minimum 360×512 | 1.00 | 116 dp | 88 dp (floor; the bank's 280 dp floor wins) |
+| split-screen 360×390 @1.5× | 1.00 | 116 dp | 88 dp (as above) |
+| phone landscape 780×360 | 1.00 | 100 dp | 88 dp (landscape: natural height) |
+| 7" tablet 600×960 | 1.23 | 200 dp | 200 dp |
+| 10" tablet 1280×800 | 1.03 | 234 dp | 91 dp (landscape: natural height) |
+| 10" tablet 800×1280 | 1.45 | **287 dp** | **287 dp** |
 
-The ceiling is the reason the tablet stops at 348 rather than filling 1280 dp of
-height with one button: past a point a bigger target is just a longer reach, and
-beyond it the contacts sit centred with the slack around them so FWD and REV stay
-adjacent under one thumb.
+Upright windows share the height equally; the landscape arrangements keep the
+thruster at its natural height and give the leftover to the drives. The
+ceiling (240 dp scaled, 348 dp on the 10" tablet) is why a big screen does not
+fill its height with one button: past a point a bigger target is just a longer
+reach, and beyond it the contacts sit centred with the slack around them so FWD
+and REV stay adjacent under one thumb.
 
 **The arrangement follows the shape of the window, not its width.**
 
 *Upright — a phone or a tablet in portrait — stacks:* kill switch across the
 top, thruster block, the two drives side by side, telemetry under them. A tablet
 held upright is the same shape as a phone held upright and wants the same
-screen; on an 800 × 1280 dp tablet that is a full-width kill switch over 348 dp
-drive contacts. Choosing on width alone used to put that tablet into the
+screen; on an 800 × 1280 dp tablet that is a full-width kill switch over 287 dp
+thruster and drive contacts. Choosing on width alone used to put that tablet into the
 landscape arrangement, where "BOW THRUSTER" came out one letter per line and the
 fourth trim button fell off the side of a 250 dp middle column.
 
@@ -1135,12 +1141,11 @@ commands anything in earnest.
   run closes this. [BUILDING.md §6.3.1](../docs/BUILDING.md#631-r8-and-what-it-took-to-turn-on)
   has the options.
 
-- **The screenshots are of the pre-scale layout.** Every shot above was taken
-  when the drive contacts were 88 dp; they are 185 dp on that same phone now, so
-  the proportions in the images are wrong even though every control in them is
-  still there and still in the same order. Re-shoot next time the phone is on
-  the boat's network. No tablet has run this at all — the tablet arrangement is
-  measured under Robolectric and has never been held in a hand.
+- **The screenshots are rendered, not photographed.** `ReadmeScreenshots`
+  draws them from the current Compose tree at the reference phone's size, so
+  they match the layout, but without a phone's system bars or a live boat.
+  No tablet has run this at all — the tablet arrangement is measured under
+  Robolectric and has never been held in a hand.
 
 - **A viewport too short for the whole screen now clips rather than shrinks.**
   Nothing above the telemetry panel scrolls — deliberately, so no live control
