@@ -98,7 +98,7 @@ cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 377 cases
 cd sk-plugin && npm run build               # -> public/
 cd android && ./gradlew :core:test          # pure Kotlin core, 256 cases
-cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 148 cases (needs SDK)
+cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 156 cases (needs SDK)
 cd android && ./gradlew :app:assembleDebug  # needs an Android SDK
 ```
 
@@ -272,14 +272,17 @@ property on that screen — if you change the control layout, run that suite.**
 
 **Controls must not move when the state changes** -- only the window and the
 font scale may place them. Arming used to move both drives a line, because a
-note under the thruster existed only while disarmed. Every state-dependent
-message now has its room reserved in every state (`ReservedLines` in
-`Controls.kt`, sized by drawing every message the slot can hold invisibly --
-a line count is right at one font scale and wrong at the next), the status bar is a row of fixed-name lamps, and
-`ControlPositionStabilityTest` asserts identical bounds across arm, faults,
-notices and mode. Do not add a line that appears only in some states anywhere
-in the portrait stack -- the drive bank takes what the bar below it leaves, so
-even telemetry counts. That test runs with Robolectric's native graphics,
+note under the thruster existed only while disarmed. Notices that come and go
+are now drawn **over** the control they concern (`NoticeOverlay` in
+`Controls.kt`: over the thruster body, or over a drive's REV contact) and take
+no space; the kill switch's second line is reserved for every line it can show
+(`ReservedLines`, sized by drawing each invisibly); the status bar is a row of
+fixed-name lamps. `ControlPositionStabilityTest` asserts identical bounds
+across arm, faults, notices and mode. Do not add a line that appears only in
+some states anywhere in the portrait stack -- the drive bank takes what the bar
+below it leaves, so even telemetry counts -- and do not reserve room for a
+rare message either: the owner saw it as empty space the buttons should have
+had, and `NoticeOverlayTest` now fails on it. Overlay it instead. That test runs with Robolectric's native graphics,
 because the default measures text at almost zero width and never wraps.
 **Text fits the window dynamically**: where the operator's system font scale
 would push a control or the status bar off screen, `HelmScale.textFit` gives

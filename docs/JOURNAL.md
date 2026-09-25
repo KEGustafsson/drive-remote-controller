@@ -7558,3 +7558,40 @@ tree.
 
 Cost: at 1.3x and above the thruster panel carries an empty second notice line.
 Suites: app 148 (+8 skipped renders); the 1.3x and 2.0x screenshots re-rendered.
+
+## 2026-09-25 — Notices drawn over their controls; the reserved space goes to the buttons
+
+Owner, from the S25 after #13 merged: "Now there is empty unused space where
+text was removed and you did not use that area to increase buttons. Why?"
+
+Because #13 reserved every rare message's full height in every state, so that
+nothing moved when one appeared: the thruster's refusal / "controlled by" /
+"reversing" line under PORT/STBD, and each drive's "controlled by" line under
+REV. After the review fix those reservations were sized by the longest
+message, which at 1.3x is two lines each -- ~60 dp under the thruster and ~50
+under the drives, blank nearly all the time. Stability was bought with the
+buttons' space.
+
+The notices are now drawn **over** the control they concern (`NoticeOverlay`):
+the thruster notice across the bottom of the thruster body (PORT/STBD in MANUAL,
+the trim row in HOLD), a drive's override across the bottom of its REV contact.
+They are inside boxes whose size they cannot change, so nothing moves and
+nothing is reserved; the drive contacts now run down to the status bar and the
+thruster contacts to the panel's padding. Wording is unchanged (SAFETY.md pins
+it). Red band for a refusal, amber for "controlled by" and "reversing".
+
+Two decisions. The bands take no touches: `momentaryPress` accepts a consumed
+down, so a band that swallowed presses would have turned a tap into a one-frame
+command, and "reversing" covers the contact the operator is holding anyway. A
+press on a band reaches the contact exactly as it did when the notice sat
+elsewhere, and a refused or outranked press is ignored where it lands. And
+"reversing" is MANUAL-only now: it explains a held button, HOLD has none, and
+over the trim row it would hide trim through every reversal of an ordinary hold.
+
+The kill switch keeps its two reserved lines: it is always showing one of them,
+and its height is part of the STOP target rather than blank space.
+
+`NoticeOverlayTest` (8, native graphics): no space under REV or under the
+thruster contacts at 1.0x and 1.3x, each notice lands on its control, and a
+press on a band still commands the contact. A `phone-notices` screenshot is
+added. Suites: app 156 (+9 skipped renders). Not on glass.

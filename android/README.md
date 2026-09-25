@@ -37,17 +37,26 @@ WRITE_SCREENSHOTS=1 ./gradlew :app:testDebugUnitTest --tests '*ReadmeScreenshots
 |---|---|
 | ![Android station, armed, with the drive unit silent: the kill switch reads tap to disarm · drive unit not responding, the drive buttons are greyed, and the DRV status lamp is red with a cross and its name in red; every control is in the same place as in the healthy screenshots](docs/screenshots/phone-drive-unit-silent.png) | ![Android station with the status detail open: under the lamp row, LINK connected, COMMANDS reaching boat, CONTROL this app, DRIVE UNIT responding, and more below in a scrolling panel; the drive buttons have given up their extra height and hold their minimum](docs/screenshots/phone-detail-open.png) |
 
+| Notices over their controls | |
+|---|---|
+| ![Android station, armed: an amber band reading reversing — waiting for the thruster interlock lies across the bottom of the PORT and STBD thruster contacts, and an amber band reading controlled by TX remote lies across the bottom of the port REV contact; the drive contacts run all the way down to the status bar, with no empty space under them](docs/screenshots/phone-notices.png) | |
+
 | System font 1.3× | System font 2.0× |
 |---|---|
 | ![Android station at 1.3x system font, the owner's own setting: larger type throughout, the status lamps still one row with single-word names, every control on screen](docs/screenshots/phone-font-1.3x.png) | ![Android station at 2.0x system font: BOW THRUSTER wraps to two lines, the status lamp names are still single words on one row, and every control is on screen](docs/screenshots/phone-font-2x.png) |
 
 **Buttons do not move when the state changes.** Arming, disarming, a unit
 going quiet, a command path failing, an override, a thruster notice or a mode
-change changes what the screen *says*, never where its controls *are*. Every
-message has its line reserved whether or not it is showing, and the status bar
-is five lamps with fixed names, so it is the same height in every state. The
-full readings are behind a tap on the bar. `ControlPositionStabilityTest`
-asserts this.
+change changes what the screen *says*, never where its controls *are*.
+Notices that come and go are drawn **over** the control they concern, as a
+band: a thruster refusal, "controlled by …" or "reversing …" over the thruster
+body, and a drive's "controlled by …" over that drive's REV contact. They take
+no space of their own, so none is left empty while they are not showing; that
+height belongs to the buttons. The kill switch keeps two lines for its second
+line in every state, and the status bar is five lamps with fixed names, so it
+is the same height in every state. The full readings are behind a tap on the
+bar. `ControlPositionStabilityTest` asserts that nothing moves, and
+`NoticeOverlayTest` asserts that nothing is left empty.
 
 **Text fits itself to the window.** The operator's system font scale is used in
 full wherever the screen holds it. Where it would push a control or the status
@@ -996,7 +1005,7 @@ That is a real milestone and still a long way short of "it works".
 | | |
 |---|---|
 | `core/` | **Verified.** 256 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 148 cases (plus the 8 README screenshot renders, skipped unless asked), most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 156 cases (plus the 9 README screenshot renders, skipped unless asked), most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |
@@ -1025,9 +1034,10 @@ commands anything in earnest.
   switches one composition between states -- disarmed and armed, a unit going
   quiet, commands failing, the link lost, another station arming, an override,
   a thruster notice, the MANUAL refusal band, MANUAL and HOLD -- and asserts
-  every live control keeps identical bounds, at 1.0x and 1.3x font. Every
-  message that used to add a line only while showing now has its line reserved
-  in every state, and the status bar is five lamps of fixed short names (LINK,
+  every live control keeps identical bounds, at 1.0x, 1.3x and 2.0x font.
+  Notices are drawn over the control they concern rather than in a line of
+  their own (a reserved line was empty space nearly all the time, ~110 dp of
+  it at 1.3x; `NoticeOverlayTest` asserts it is gone), and the status bar is five lamps of fixed short names (LINK,
   CMD, CTRL, DRV, THR: a dot with ✓ – ! ✕ over the name) whose readings are in
   the detail view and in each lamp's accessibility description. That suite and
   `StatusBarTest` run with Robolectric's **native** graphics: the default gives
