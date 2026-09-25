@@ -452,8 +452,9 @@ class FailSafeControlsTest {
       .onNodeWithContentDescription("DISARMED. commands not reaching boat — plugin stopped · tap to arm")
       .assertExists()
     compose.onNodeWithContentDescription("DISARMED. tap to arm").assertDoesNotExist()
-    // And the COMMANDS lamp says it in the browser's words.
-    compose.onNodeWithText("BLOCKED — plugin not running", useUnmergedTree = true).assertExists()
+    // And the COMMANDS lamp says it in the browser's words -- as its reading,
+    // which the collapsed bar carries as the lamp's description.
+    compose.onNodeWithContentDescription("COMMANDS: BLOCKED — plugin not running").assertExists()
 
     compose.onNodeWithContentDescription(KillSwitchAny, substring = true).performClick()
     assertEquals("the arm was withdrawn over a failing path", 1, armTaps)
@@ -495,7 +496,7 @@ class FailSafeControlsTest {
   fun `commands landing, or not yet answered, leave the kill switch line alone`() {
     compose.showKillSwitch(readyToArm.copy(intentStatus = IntentStatus.OK), onArm = {}, onDisarm = {})
     compose.onNodeWithContentDescription("DISARMED. tap to arm").assertExists()
-    compose.onNodeWithText("reaching boat", useUnmergedTree = true).assertExists()
+    compose.onNodeWithContentDescription("COMMANDS: reaching boat").assertExists()
   }
 }
 

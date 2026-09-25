@@ -7442,3 +7442,119 @@ replace a healthy-looking DISARMED while every POST fails.
 
 Suites: native 302, plugin 377, core 256, app 118; all firmwares build.
 SAFETY.md's Android checklist carries the hand-on-glass lines for each.
+
+## 2026-09-25 — Android: controls hold still across arm and faults
+
+Owner report from the S25 (system font ~1.3x): arming and disarming moved the
+control buttons, the two thruster mode notes should go, and the bottom status
+bar reads badly on the S25 where the Nokia 7.2 fits.
+
+**The notes are gone.** "MANUAL selected — arm to thrust" and "HOLD selected —
+starts holding when you arm" were removed at the owner's request; the lit mode
+chip is the statement. The browser UI still carries its copy.
+
+**Why the buttons moved.** That note existed only while disarmed, so every ARM
+took a line out of the thruster panel and every DISARM put it back -- and the
+drives sit directly below it. The same shape recurred elsewhere: the kill
+switch's second line was one line or two depending on its words, and the
+thruster's refusal band, "controlled by ...", "reversing ..." and each drive's
+override note took a line only while showing.
+
+**The rule now: what the screen says may change with state, where its controls
+are may not.** `ReservedLines` holds room for a message in every state (sized by
+an empty paragraph of the same type, so it tracks font scale exactly): two lines
+under the kill switch label, one notice line at the bottom of the thruster panel
+(one notice at a time: refusal > controlled by > reversing), one override line
+under each drive. The thruster body is the same height in MANUAL and HOLD, by
+carrying an invisible, inert, semantics-cleared copy of the HOLD body for size.
+Reserved text uses a 1.3 em line height rather than Material's 24 sp, which is
+what pays for most of it: reference-phone drive contacts went 185 -> 167 dp.
+
+`ControlPositionStabilityTest` flips one composition between states and asserts
+identical bounds for the kill switch and every contact.
+
+**Status bar: the owner chose option A of four sketches.** Five lamps, each a
+dot carrying ✓ – ! ✕ over a fixed short name (LINK, CMD, CTRL, DRV, THR), one
+height in every state. The old bar printed each reading ("connected", "reaching
+boat", "nobody armed"), which at 1.3x wrapped mid-word and wrapped differently
+per state, and added a "not responding" line on a fault; the drive bank takes
+what the bar leaves, so both resized the drives. A fault still reads without a
+tap -- red dot, ✕, name in red, plus the kill switch's line -- and the readings,
+the auth message and the app version moved to the detail view. Each lamp's
+reading is its TalkBack description.
+
+**Robolectric was never wrapping text.** Its default graphics measure "LINK" at
+4.5 px, so no suite had ever seen a line wrap. `ControlPositionStabilityTest` and
+the new `StatusBarTest` run in native graphics mode; there, against the old bar,
+6 of 14 stability cases fail -- including plain "arming moves nothing", the
+owner's report -- and all pass with the lamp row. `StatusBarTest` also checks no
+lamp name is clipped at 2.0x on a 360 dp phone (and goes red on a long name).
+The other layout suites still run in legacy mode; moving them is open.
+
+**Trade taken.** Reserved room is paid in every state. At 2.0x font on the
+640 dp budget phone the bottom ~24 dp of the drive bank now goes off screen and
+the clipped warning shows; floors still hold everywhere. The two no-overflow
+checks there run at 1.75x, the largest scale that fits.
+
+Not on glass. Suites: app 136 (was 118); debug APK builds.
+
+## 2026-09-25 — Android: dynamic font fitting, README screenshots
+
+**Text fits the window.** The last entry's trade (at 2.0x on a 640 dp phone the
+reserved lines pushed the bank ~24 dp off screen) is gone. `HelmScale` carries a
+`textFit` in (0, 1] that multiplies every `helm.text(...)`. When the overflow
+watch measures a live control off the bottom, `fitTextStep` takes 5% off and the
+screen measures again next frame, stopping at `1 / systemFontScale`, so text is
+never smaller than the system setting at 1.0x would draw it. The fit is keyed on
+the window and the system scale and only moves down. That cannot hunt, because
+the screen's height no longer depends on its state. The *Window too short*
+notice now appears only once the fit is at its floor, not while it settles.
+
+Two things surfaced while building it. The theme's 24 sp line height was never
+scaled, so at 2.0x every line stayed 48 dp tall however small its letters got,
+and fitting moved nothing. It is now provided through `helm.text` in
+`ControlScreen`: identical on the reference phone, and a tablet's lines now grow
+with its text. And the status bar is now probed like a control, since it carries
+the fault lamps. That showed the 640 dp phone at plain 1.0x had the bar 1.3 dp
+off the bottom, which nothing had checked; the bar's vertical padding went from
+8 to 6 dp.
+
+The two small-phone no-overflow checks are back at 2.0x. New cases: text
+untouched where the screen fits (S25 at 1.3x), shrunk but not below 1.0x on the
+640 dp phone at 2.0x, stopped at the floor with the notice in split screen,
+arming still moves nothing once fitted, and the step arithmetic.
+
+**README screenshots are rendered now.** `ReadmeScreenshots` draws eight states
+of the real control screen at the S25's 360x780 dp / 480 dpi under native
+graphics, with presses as injected pointers: disarmed, drive held, thruster
+MANUAL held, HOLD with trim, drive unit silent, detail open, 1.3x and 2.0x
+system font. It is skipped unless `WRITE_SCREENSHOTS` is set. `captureToImage`
+never completes under Robolectric (its PixelCopy does not return), so it
+software-draws the decor view. The old on-device shots, including the record of
+the 4.7 dp squeeze, are replaced; that defect's history is in the entries above.
+A 640 dp render in this activity reserves a navigation bar and does not fit
+even at 1.0x, so the README shows 2.0x on the S25 instead.
+
+Not on glass. Suites: app 143 (+8 skipped renders).
+
+## 2026-09-25 — Reservations sized by their messages, not a line count (PR #13 review)
+
+CodeRabbit flagged that the thruster notice line reserved one line while
+"reversing — waiting for the thruster interlock" wraps at 1.3x on a 360 dp
+phone. Verified with new native-graphics cases at 1.3x before changing anything:
+the reversing notice and both refusal bands (MANUAL and HOLD) wrapped and moved
+the drives ~22 dp; the kill switch's longest lines happened to fit its two.
+
+The suggested fix (two lines) would be wrong again at 2.0x. `ReservedLines` now
+takes `alsoFits`: every message the slot can ever hold, drawn invisibly in the
+same style, so the reservation is the tallest of them at the real width and font
+scale. The thruster line reserves for all six refusal bands, each overriding
+source and the reversing notice; each drive's override line for every overriding
+source ("controlled by local switch" wraps too); the kill switch for every line
+`killSwitchFace` can produce, enumerated from that function, which the kill
+switch's wording now comes from. Placeholders are out of the merged (TalkBack)
+tree; the unmerged tree still lists them, so two band lookups moved to the merged
+tree.
+
+Cost: at 1.3x and above the thruster panel carries an empty second notice line.
+Suites: app 148 (+8 skipped renders); the 1.3x and 2.0x screenshots re-rendered.

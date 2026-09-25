@@ -295,20 +295,23 @@ class ThrusterModeSelectionTest {
     compose.onNodeWithText("+1°").assertIsNotEnabled()
   }
 
-  @Test
-  fun `disarmed in MANUAL, the panel says arming is what makes it live`() {
-    compose.showControlScreen(mode = ThrusterMode.MANUAL)
-    compose.onNodeWithText("MANUAL selected — arm to thrust").assertExists()
-  }
-
   /**
-   * HOLD needs no press after the arm, so the arm itself is the action that
-   * starts the thruster working. That has to be stated, not discovered.
+   * The lit chip is the whole statement of which mode the next arm opens. The
+   * line that used to spell it out while disarmed ("MANUAL selected — arm to
+   * thrust", "HOLD selected — starts holding when you arm") was removed at the
+   * owner's request -- and it was also the line that moved every drive contact
+   * on each ARM and DISARM, since it appeared only while disarmed.
    */
   @Test
-  fun `disarmed in HOLD, the panel says the hold starts on arm`() {
+  fun `disarmed in MANUAL, no note spells out the selection`() {
+    compose.showControlScreen(mode = ThrusterMode.MANUAL)
+    compose.assertNoModeNote()
+  }
+
+  @Test
+  fun `disarmed in HOLD, no note spells out the selection`() {
     compose.showControlScreen(mode = ThrusterMode.HOLD)
-    compose.onNodeWithText("HOLD selected — starts holding when you arm").assertExists()
+    compose.assertNoModeNote()
   }
 
   /**
@@ -364,25 +367,6 @@ class ThrusterModeSelectionTest {
   }
 
   /**
-   * Armed, but HH is not answering: the same controls are inert for a
-   * completely different reason, so "arm to thrust" would point the operator at
-   * the one control already doing its job. The kill switch names the real
-   * reason ("thruster unit not responding") and this panel stays quiet.
-   */
-  @Test
-  fun `an armed operator is not told to arm when HH is the thing missing`() {
-    compose.showControlScreen(mode = ThrusterMode.MANUAL, view = armedWithoutThruster)
-    compose.onNodeWithText("MANUAL selected — arm to thrust").assertDoesNotExist()
-  }
-
-  /**
-   * The disarmed note is an extra line in the thruster panel, and every dp
-   * there comes off the bank below it. The contacts' floor is un-negotiable so
-   * this cannot shrink them -- but it is measured rather than assumed, on the
-   * smallest screen the layout claims to support, because "it cannot shrink
-   * them" is exactly the assumption the 4.7 dp defect was made on.
-   */
-  /**
    * The alarm band is another line in the same panel, and it appears at the
    * worst possible moment -- armed, in HOLD, with the operator about to reach
    * for a drive contact. Geometry is a safety property on this screen, so the
@@ -410,9 +394,13 @@ class ThrusterModeSelectionTest {
     }
   }
 
+  /**
+   * Disarmed on the smallest supported window: the greyed contacts still hold
+   * their floor, measured rather than assumed.
+   */
   @Test
   @Config(sdk = [35], qualifiers = ModeMinimumScreen)
-  fun `the disarmed note does not cost the drive contacts their floor`() {
+  fun `disarmed, the drive contacts keep their floor`() {
     compose.showControlScreen(mode = ThrusterMode.HOLD)
 
     for (label in listOf("FWD, unavailable", "REV, unavailable")) {
@@ -480,6 +468,12 @@ private fun ComposeContentTestRule.showControlScreen(
         )
       }
     }
+  }
+}
+
+private fun ComposeContentTestRule.assertNoModeNote() {
+  onAllNodesWithText("selected —", substring = true).fetchSemanticsNodes().let {
+    assertEquals("a mode note is back under the thruster panel", 0, it.size)
   }
 }
 
@@ -582,13 +576,4 @@ private val manualRefused =
     hhFsmState = SkContract.HH_FSM_DISARMED,
     holdPhase = HoldPhase.IDLE,
     manualRefusal = HoldStall.REFUSED,
-  )
-
-/** Holding the token, but the thruster unit has stopped answering. */
-private val armedWithoutThruster =
-  disarmed.copy(
-    controlState = ControlState.YOU,
-    hhLiveness = UnitLiveness.STALE,
-    driveCommandable = true,
-    thrusterCommandable = false,
   )

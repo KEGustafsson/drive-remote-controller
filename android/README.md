@@ -12,33 +12,62 @@ and HH use through SensESP's `SKWSClient`.
 
 ## Screenshots
 
-Captured on the reference device — a Galaxy S25 (SM-S931B, 1080×2340, density
-480) — driving the **real boat server**, with RX and HH both answering. Not
-mockups and not an emulator.
+Rendered from the app's own Compose code by
+[`ReadmeScreenshots`](app/src/test/kotlin/io/github/kegustafsson/driveremote/ui/ReadmeScreenshots.kt)
+at the reference device's 360×780 dp and 480 dpi (1080×2340), under
+Robolectric's native graphics. They show the exact tree the phone draws, with
+the presses injected as real pointers. They do not show a phone's status bar or
+navigation bar, and the telemetry is example data, not a live boat. Earlier
+screenshots were captured on the S25 against the real server, before the layout
+changes described below. To refresh these after a UI change:
 
-| Disarmed, as the app opens | Armed, port FWD held |
+```bash
+WRITE_SCREENSHOTS=1 ./gradlew :app:testDebugUnitTest --tests '*ReadmeScreenshots*' --rerun-tasks
+```
+
+| Disarmed | Armed, port FWD held |
 |---|---|
-| ![Android station, disarmed: the kill switch reads DISARMED / tap to arm, the bow thruster block has MANUAL selected with PORT and STBD greyed out, both drives read NEUTRAL, and two summary lamps read LINK connected and CONTROL nobody armed above a collapsed detail chevron](docs/screenshots/phone-disarmed.png) | ![Android station, armed: red ARMED kill switch, the port FWD button lit blue and its readout reading FORWARD while starboard stays NEUTRAL, and the CONTROL lamp reading this app](docs/screenshots/phone-drive-held.png) |
+| ![Android station, disarmed: grey DISARMED / tap to arm kill switch; the bow thruster block with MANUAL selected and PORT and STBD greyed out; both drives greyed and reading NEUTRAL; along the bottom five status lamps, LINK, CMD, DRV and THR green with a tick and CTRL grey with a dash, and a collapsed detail chevron](docs/screenshots/phone-disarmed.png) | ![Android station, armed: red ARMED / tap to disarm kill switch, the port FWD button lit blue with FORWARD beneath it while starboard reads NEUTRAL, and all five status lamps green](docs/screenshots/phone-drive-held.png) |
 
-| Bow thruster — MANUAL, PORT held | Bow thruster — HOLD with trim |
+| Bow thruster: MANUAL, PORT held | Bow thruster: HOLD with trim |
 |---|---|
-| ![Android station, armed with MANUAL selected: the PORT thruster button is lit blue while held, and both drives stay NEUTRAL](docs/screenshots/phone-thruster-manual.png) | ![Android station, armed with HOLD selected: the held heading reads 096 degrees with HOLDING · TRIM +10° beside it, and the minus-10, minus-1, plus-1 and plus-10 trim buttons sit below](docs/screenshots/phone-heading-hold.png) |
+| ![Android station, armed with MANUAL selected: the PORT thruster button lit blue while held, both drives NEUTRAL](docs/screenshots/phone-thruster-manual.png) | ![Android station, armed with HOLD selected: the heading reads 096 with HOLDING · TRIM +10° beside it and the minus-10, minus-1, plus-1 and plus-10 trim buttons below; the drive buttons sit exactly where they do in MANUAL](docs/screenshots/phone-heading-hold.png) |
 
-![Android station with the telemetry detail expanded: LINK connected, CONTROL nobody armed, DRIVE UNIT responding, THRUSTER UNIT responding, PORT and STBD neutral · nobody, THRUSTER OFF · nobody, and a Disconnect / change server button at the bottom. The port and starboard drive buttons above have been squeezed to thin slivers.](docs/screenshots/phone-detail-open.png)
+| Drive unit not responding | Detail open |
+|---|---|
+| ![Android station, armed, with the drive unit silent: the kill switch reads tap to disarm · drive unit not responding, the drive buttons are greyed, and the DRV status lamp is red with a cross and its name in red; every control is in the same place as in the healthy screenshots](docs/screenshots/phone-drive-unit-silent.png) | ![Android station with the status detail open: under the lamp row, LINK connected, COMMANDS reaching boat, CONTROL this app, DRIVE UNIT responding, and more below in a scrolling panel; the drive buttons have given up their extra height and hold their minimum](docs/screenshots/phone-detail-open.png) |
 
-That last screenshot records the pre-fix layout defect. The kill switch, the
-thruster contacts and the drive bank are now all fixed, and **only the
-telemetry panel scrolls** — so expanding telemetry cannot collapse live
-buttons. Nothing that can command a machine sits inside a scrolling gesture
-region: a momentary contact commands from touch down and does not consume the
-pointer, so a scrolling ancestor would claim the same gesture as a drag and hand
-the operator a scroll *and* a live command for the length of it.
+| System font 1.3× | System font 2.0× |
+|---|---|
+| ![Android station at 1.3x system font, the owner's own setting: larger type throughout, the status lamps still one row with single-word names, every control on screen](docs/screenshots/phone-font-1.3x.png) | ![Android station at 2.0x system font: BOW THRUSTER wraps to two lines, the status lamp names are still single words on one row, and every control is on screen](docs/screenshots/phone-font-2x.png) |
+
+**Buttons do not move when the state changes.** Arming, disarming, a unit
+going quiet, a command path failing, an override, a thruster notice or a mode
+change changes what the screen *says*, never where its controls *are*. Every
+message has its line reserved whether or not it is showing, and the status bar
+is five lamps with fixed names, so it is the same height in every state. The
+full readings are behind a tap on the bar. `ControlPositionStabilityTest`
+asserts this.
+
+**Text fits itself to the window.** The operator's system font scale is used in
+full wherever the screen holds it. Where it would push a control or the status
+bar off the bottom, the text shrinks in 5% steps until everything fits, but
+never below the size the system setting at 1.0× would draw. The fit starts
+again whenever the window size or the font setting changes. Nothing the
+operator does can change the screen's height, so the fit settles once and does
+not hunt. Only when even the 1.0× size does not fit does the screen say *Window
+too short*.
+
+Only the telemetry panel scrolls. Nothing that can command a machine sits
+inside a scrolling gesture region: a momentary contact commands from touch down
+and does not consume the pointer, so a scrolling ancestor would claim the same
+gesture as a drag and hand the operator a scroll *and* a live command for the
+length of it.
 
 The two-handed manoeuvre — port FWD and starboard REV held by two fingers at
 once, which is the whole reason `ui/Momentary.kt` exists — is **not pictured**.
-`adb`'s `input motionevent` injects a single pointer, so it cannot demonstrate
-multi-touch; that shot has to be taken by a human with two fingers on the glass,
-and it is a checklist item in
+A single injected pointer cannot demonstrate multi-touch; that shot has to be
+taken by a human with two fingers on the glass, and it is a checklist item in
 [SAFETY.md](../docs/SAFETY.md#before-trusting-the-android-station) rather than
 something a script can claim.
 
@@ -967,7 +996,7 @@ That is a real milestone and still a long way short of "it works".
 | | |
 |---|---|
 | `core/` | **Verified.** 256 tests, `./gradlew :core:test`, no warnings. |
-| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 118 cases, most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
+| `app/` | **Builds, and its layout floors are measured.** `./gradlew :app:assembleDebug` produces a debug APK (~11.2 MB); `:app:testDebugUnitTest` runs 148 cases (plus the 8 README screenshot renders, skipped unless asked), most of them Robolectric layout measurements. Two `NsdManager` deprecation warnings. Everything in `app/` *except* that geometry, the token store and the poster's auth probe — lifecycle, intent ordering, teardown — is still untested. |
 | On a device | **Installed and run** on the owner's phone (2026-07-25). |
 | Against a real server | **Connection path proven.** signalk-server 2.30.0: mDNS/manual address, access request approved, token issued, stream subscribed, intent POST accepted at **readwrite**. |
 | Commanding a machine | **Yes, once (2026-07-26).** Armed with RX and HH both answering; port FORWARD commanded and released to NEUTRAL, thruster driven PORT in MANUAL, HOLD engaged and trimmed +10° off a real 096° heading, then disarmed. Hardware confirmed safe beforehand. |
@@ -991,6 +1020,25 @@ Work through the checklist in
 commands anything in earnest.
 
 ### Known gaps
+
+- **Controls no longer move with state.** `ControlPositionStabilityTest`
+  switches one composition between states -- disarmed and armed, a unit going
+  quiet, commands failing, the link lost, another station arming, an override,
+  a thruster notice, the MANUAL refusal band, MANUAL and HOLD -- and asserts
+  every live control keeps identical bounds, at 1.0x and 1.3x font. Every
+  message that used to add a line only while showing now has its line reserved
+  in every state, and the status bar is five lamps of fixed short names (LINK,
+  CMD, CTRL, DRV, THR: a dot with ✓ – ! ✕ over the name) whose readings are in
+  the detail view and in each lamp's accessibility description. That suite and
+  `StatusBarTest` run with Robolectric's **native** graphics: the default gives
+  text almost no width, so nothing wraps -- and wrapping in one state but not
+  another is what moved the controls. The other layout suites still use the
+  default. The reservations cost height in every state; where large system text
+  would then push a control or the status bar off screen, dynamic font fitting
+  gives back just enough of the scale (`fitTextStep`), so a 640 dp phone at 2.0x
+  fits again. The theme's 24 sp line height is scaled with the text for the
+  same reason: unscaled, every line stayed 48 dp tall at 2.0x however small its
+  letters got.
 
 - **The layout floors are measured on the JVM, but never yet on the reference
   phone.** `app/src/test/.../LayoutFloorsTest.kt` renders the real Compose tree

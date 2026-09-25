@@ -10,16 +10,19 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.requiredHeight
-import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -29,22 +32,31 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.input.pointer.isOutOfBounds
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
+import io.github.kegustafsson.driveremote.core.CommandSource
 import io.github.kegustafsson.driveremote.core.ControlState
 import io.github.kegustafsson.driveremote.core.DrivePosition
 import io.github.kegustafsson.driveremote.core.HoldPhase
 import io.github.kegustafsson.driveremote.core.HoldStall
+import io.github.kegustafsson.driveremote.core.IntentStatus
 import io.github.kegustafsson.driveremote.core.KillSwitchTap
 import io.github.kegustafsson.driveremote.core.KillSwitchTapPolicy
 import io.github.kegustafsson.driveremote.core.LinkPhase
@@ -54,6 +66,7 @@ import io.github.kegustafsson.driveremote.core.ThrusterDirection
 import io.github.kegustafsson.driveremote.core.ThrusterMode
 import io.github.kegustafsson.driveremote.core.formatHeading
 import io.github.kegustafsson.driveremote.core.formatTrim
+import io.github.kegustafsson.driveremote.core.commandsNotReachingLine
 import io.github.kegustafsson.driveremote.core.fromSwitch
 
 /**
@@ -84,6 +97,9 @@ private fun Modifier.contactHeight(helm: HelmScale): Modifier =
     .heightIn(max = helm.size(ContactButtonMaxHeight))
     .fillMaxHeight()
 
+/** Identifies the kill switch whatever it currently says. */
+const val KillSwitchTag = "killSwitch"
+
 /**
  * The kill switch: arm/disarm, and the reasons arming is unavailable.
  *
@@ -113,85 +129,20 @@ private fun Modifier.contactHeight(helm: HelmScale): Modifier =
 @Composable
 fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modifier: Modifier = Modifier) {
   val helm = LocalHelmScale.current
-  val foreign = view.controlState == ControlState.OTHER
-  val label: String
-  var sub: String
-  val colour: Color
-
-  when {
-    // Before OFFLINE, and only ever true before this session's stream is first live.
-    // Deliberately the DISARMED grey: the transition into DISARMED a moment
-    // later is then a change of words rather than a change of colour, which is
-    // what stops the launch reading as an alarm going off and clearing.
-    view.linkPhase == LinkPhase.CONNECTING -> {
-      label = "CONNECTING"
-      sub = "reaching the boat — disarm always works"
-      colour = DriveColors.disarmed
-    }
-    !view.connected -> {
-      label = "OFFLINE"
-      sub = "tap to STOP — disarm always works"
-      colour = DriveColors.warn
-    }
-    view.armed -> {
-      label = "ARMED"
-      sub =
-        if (view.missingUnits.isEmpty()) "tap to disarm"
-        else "tap to disarm · ${view.missingUnits.joinToString(" + ")} not responding"
-      colour = DriveColors.armed
-    }
-    foreign -> {
-      label = "IN USE"
-      sub = "another station is armed — tap to STOP it, then tap again to take over"
-      colour = DriveColors.warn
-    }
-    !view.canArm -> {
-      label = "CANNOT ARM"
-      sub = "${view.missingUnits.joinToString(" + ")} not responding"
-      colour = DriveColors.disarmed
-    }
-    else -> {
-      label = "DISARMED"
-      sub = "tap to arm"
-      colour = DriveColors.disarmed
-    }
-  }
-
-  // Arming is the narrow case; STOP is everything else.
-  //
-  // Stated this way round on purpose. The obvious phrasing -- disarm if
-  // `armed || foreign`, else arm -- reads its condition from `activeClient`,
-  // which is last-known telemetry from a store that deliberately keeps its
-  // values across a disconnect. Offline, or before the first delta has landed,
-  // that is a guess, and the tap it produced was a silent no-op: a browser could
-  // hold the arm while this phone's stream was down, and the button promising
-  // "tap to STOP -- disarm always works" did nothing at all.
-  //
-  // So an ARM is offered only from a state that positively supports one --
-  // connected, nobody holding the token, a unit answering -- and every other
-  // state taps through to disarm. A disarm nobody needed costs nothing: it is a
-  // universal stop, the arbiter takes it as an edge, and it travels over HTTP
-  // independently of the read socket. SAFETY.md: disarm is never gated on
-  // anything.
-  val canOfferArm = view.connected && !view.armed && !foreign && view.canArm
-
-  // Commands not reaching the boat is said HERE, on the button, and not only on
-  // the COMMANDS lamp: this is what the operator reads before trusting a tap to
-  // do anything, and "DISARMED -- tap to arm" over a path that reaches nothing
-  // is a healthy face on a broken one (a stopped plugin answering 503, a refused
-  // token, no network). It replaces the line rather than adding one, so the
-  // button grows by at most the line's wrap. What a tap DOES is unchanged and
-  // still said: an ARM stays on offer -- a retry is harmless, and if it lands
-  // the path is back -- and a STOP stays a STOP.
-  view.commandsNotReaching?.let { failing ->
-    sub =
-      "$failing · " +
-        when {
-          canOfferArm -> "tap to arm"
-          view.armed && view.connected -> "tap to disarm"
-          else -> "tap to STOP"
-        }
-  }
+  val face =
+    killSwitchFace(
+      linkPhase = view.linkPhase,
+      connected = view.connected,
+      armed = view.armed,
+      foreign = view.controlState == ControlState.OTHER,
+      canArm = view.canArm,
+      missingUnits = view.missingUnits,
+      commandsNotReaching = view.commandsNotReaching,
+    )
+  val label = face.label
+  val sub = face.sub
+  val colour = face.colour
+  val canOfferArm = face.canOfferArm
 
   // ...and a tap aimed at STOP stays a STOP. Deciding from what is on screen
   // when the click fires is not enough: double-tap STOP, the arbiter's release
@@ -256,7 +207,7 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
           }
         }
       }
-      .padding(vertical = helm.size(18.dp))
+      .padding(vertical = helm.size(12.dp))
       // The same button for TalkBack's double-tap and switch access, which
       // arrive as a semantics click rather than as pointers. A whole tap at
       // once, through the same policy -- so the STOP holdover holds there too.
@@ -267,19 +218,217 @@ fun KillSwitch(view: StationView, onArm: () -> Unit, onDisarm: () -> Unit, modif
           act(tapPolicy.onTap(currentMeansStop, SystemClock.elapsedRealtime()))
           true
         }
-      },
+      }
+      .testTag(KillSwitchTag),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Text(label, fontSize = helm.text(30.sp), fontWeight = FontWeight.Bold, color = DriveColors.ink)
-    Text(
-      sub,
+    // Two lines, whatever the state says. "tap to arm" is one line and "tap to
+    // disarm · drive unit not responding" can be two, so a sub line that took
+    // only what it needed made this button change height on the ARM itself --
+    // and moved every control below it, under a thumb, at the moment the
+    // operator was reaching for one. The reservation is what keeps the screen
+    // still; see ControlPositionStabilityTest.
+    val subLine: @Composable (String) -> Unit = { text ->
+      Text(
+        text,
+        fontSize = helm.text(13.sp),
+        color = DriveColors.ink.copy(alpha = 0.85f),
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(horizontal = helm.size(12.dp)),
+      )
+    }
+    ReservedLines(
+      lines = 2,
       fontSize = helm.text(13.sp),
-      color = DriveColors.ink.copy(alpha = 0.85f),
-      textAlign = TextAlign.Center,
-      modifier = Modifier.padding(horizontal = helm.size(12.dp)),
-    )
+      alsoFits = { killSwitchLines.forEach { subLine(it) } },
+    ) {
+      subLine(sub)
+    }
   }
 }
+
+/** What the kill switch says and what a tap on it offers, for one state. */
+private class KillSwitchFace(
+  val label: String,
+  val sub: String,
+  val colour: Color,
+  val canOfferArm: Boolean,
+)
+
+/**
+ * The kill switch's words for a state -- pure, so [killSwitchLines] can ask it
+ * for every line it can ever show and the button can reserve room for the
+ * longest. A line that took only the room it needed made the button change
+ * height between states, and everything below it moved.
+ */
+private fun killSwitchFace(
+  linkPhase: LinkPhase,
+  connected: Boolean,
+  armed: Boolean,
+  foreign: Boolean,
+  canArm: Boolean,
+  missingUnits: List<String>,
+  commandsNotReaching: String?,
+): KillSwitchFace {
+  val label: String
+  var sub: String
+  val colour: Color
+
+  when {
+    // Before OFFLINE, and only ever true before this session's stream is first live.
+    // Deliberately the DISARMED grey: the transition into DISARMED a moment
+    // later is then a change of words rather than a change of colour, which is
+    // what stops the launch reading as an alarm going off and clearing.
+    linkPhase == LinkPhase.CONNECTING -> {
+      label = "CONNECTING"
+      sub = "reaching the boat — disarm always works"
+      colour = DriveColors.disarmed
+    }
+    !connected -> {
+      label = "OFFLINE"
+      sub = "tap to STOP — disarm always works"
+      colour = DriveColors.warn
+    }
+    armed -> {
+      label = "ARMED"
+      sub =
+        if (missingUnits.isEmpty()) "tap to disarm"
+        else "tap to disarm · ${missingUnits.joinToString(" + ")} not responding"
+      colour = DriveColors.armed
+    }
+    foreign -> {
+      label = "IN USE"
+      sub = "another station is armed — tap to STOP it, then tap again to take over"
+      colour = DriveColors.warn
+    }
+    !canArm -> {
+      label = "CANNOT ARM"
+      sub = "${missingUnits.joinToString(" + ")} not responding"
+      colour = DriveColors.disarmed
+    }
+    else -> {
+      label = "DISARMED"
+      sub = "tap to arm"
+      colour = DriveColors.disarmed
+    }
+  }
+
+  // Arming is the narrow case; STOP is everything else.
+  //
+  // Stated this way round on purpose. The obvious phrasing -- disarm if
+  // `armed || foreign`, else arm -- reads its condition from `activeClient`,
+  // which is last-known telemetry from a store that deliberately keeps its
+  // values across a disconnect. Offline, or before the first delta has landed,
+  // that is a guess, and the tap it produced was a silent no-op: a browser could
+  // hold the arm while this phone's stream was down, and the button promising
+  // "tap to STOP -- disarm always works" did nothing at all.
+  //
+  // So an ARM is offered only from a state that positively supports one --
+  // connected, nobody holding the token, a unit answering -- and every other
+  // state taps through to disarm. A disarm nobody needed costs nothing: it is a
+  // universal stop, the arbiter takes it as an edge, and it travels over HTTP
+  // independently of the read socket. SAFETY.md: disarm is never gated on
+  // anything.
+  val canOfferArm = connected && !armed && !foreign && canArm
+
+  // Commands not reaching the boat is said HERE, on the button, and not only on
+  // the COMMANDS lamp: this is what the operator reads before trusting a tap to
+  // do anything, and "DISARMED -- tap to arm" over a path that reaches nothing
+  // is a healthy face on a broken one (a stopped plugin answering 503, a refused
+  // token, no network). It replaces the line rather than adding one, so the
+  // button grows by at most the line's wrap. What a tap DOES is unchanged and
+  // still said: an ARM stays on offer -- a retry is harmless, and if it lands
+  // the path is back -- and a STOP stays a STOP.
+  commandsNotReaching?.let { failing ->
+    sub =
+      "$failing · " +
+        when {
+          canOfferArm -> "tap to arm"
+          armed && connected -> "tap to disarm"
+          else -> "tap to STOP"
+        }
+  }
+
+  return KillSwitchFace(label, sub, colour, canOfferArm)
+}
+
+/**
+ * Every line [killSwitchFace] can produce: each state, with both units named
+ * missing (the longest unit list), and with each way commands can fail to reach
+ * the boat. Enumerated from the function itself rather than written out, so a
+ * reworded or added line is reserved for without anyone remembering to.
+ */
+private val killSwitchLines: List<String> by lazy {
+  val bools = listOf(false, true)
+  buildList {
+    for (phase in LinkPhase.entries) for (connected in bools) for (armed in bools)
+      for (foreign in bools) for (canArm in bools)
+        for (missing in listOf(emptyList(), listOf("drive unit", "thruster unit")))
+          for (failing in listOf(null) + IntentStatus.entries.mapNotNull(::commandsNotReachingLine))
+            add(killSwitchFace(phase, connected, armed, foreign, canArm, missing, failing).sub)
+  }.distinct()
+}
+
+/**
+ * Space for [lines] lines of text at [fontSize], whether or not [content] needs
+ * them, with the content centred in it.
+ *
+ * How every state-dependent message on the control screen keeps the controls
+ * still: the room is reserved by an empty paragraph of the same type, so it
+ * tracks the system font scale exactly rather than being a dp guess that is
+ * right at 1.0x and wrong at 1.3x. Content that needs MORE than the reservation
+ * still gets it -- a wrapped warning is not truncated to keep a layout tidy --
+ * so this holds the geometry steady in every ordinary state and only gives way
+ * at extreme font scales, where showing the whole message matters more.
+ */
+@Composable
+private fun ReservedLines(
+  lines: Int,
+  fontSize: TextUnit,
+  modifier: Modifier = Modifier,
+  contentAlignment: Alignment = Alignment.Center,
+  /** Extra room above and below the reserved lines, for content drawn in a band. */
+  reservePadding: Dp = 0.dp,
+  /**
+   * Every message this space can ever hold, drawn exactly as [content] would
+   * draw it, so the reservation is the tallest of them at this width and font
+   * scale. A line count alone is right at one font scale and wrong at another:
+   * at 1.3x on a 360 dp phone "reversing — waiting for the thruster interlock"
+   * takes two lines, and a one-line reservation moved the drives when it
+   * appeared. Drawn invisible, inert and out of the semantics tree.
+   */
+  alsoFits: @Composable () -> Unit = {},
+  content: @Composable () -> Unit,
+) {
+  // One line height for the reservation and everything drawn in it, or the
+  // reservation measures one thing and the message another. Tighter than the
+  // theme's, too: Material's body style sets 24 sp lines, which on 12-13 sp
+  // text is double spacing -- and every reserved line is paid for on every
+  // screen, in every state, out of the drive contacts.
+  CompositionLocalProvider(
+    LocalTextStyle provides LocalTextStyle.current.merge(TextStyle(lineHeight = TightLineHeight))
+  ) {
+    Box(modifier, contentAlignment = contentAlignment) {
+      Text(
+        "\n".repeat(lines - 1),
+        fontSize = fontSize,
+        minLines = lines,
+        modifier = Modifier.padding(vertical = reservePadding).clearAndSetSemantics {},
+      )
+      Box(Modifier.alpha(0f).clearAndSetSemantics {}, contentAlignment = contentAlignment) {
+        alsoFits()
+      }
+      content()
+    }
+  }
+}
+
+/**
+ * Line height for small text on the control screen: the text's own size plus a
+ * little, rather than the theme's fixed 24 sp.
+ */
+private val TightLineHeight = 1.3.em
 
 /**
  * One drive: momentary FORWARD / REVERSE, spring-return.
@@ -335,7 +484,12 @@ fun DriveControl(
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center,
   ) {
-    Text(label.uppercase(), fontSize = helm.text(13.sp), color = DriveColors.inkMuted)
+    Text(
+      label.uppercase(),
+      fontSize = helm.text(13.sp),
+      lineHeight = TightLineHeight,
+      color = DriveColors.inkMuted,
+    )
 
     ContactButton(
       text = "FWD",
@@ -353,6 +507,7 @@ fun DriveControl(
         DrivePosition.NEUTRAL -> "NEUTRAL"
       },
       fontSize = helm.text(15.sp),
+      lineHeight = TightLineHeight,
       fontWeight = FontWeight.Bold,
       color = if (enabled) DriveColors.ink else DriveColors.inkMuted,
       modifier = Modifier.padding(vertical = helm.size(6.dp)),
@@ -368,18 +523,39 @@ fun DriveControl(
     )
 
     // Only shown when we ARE the armed controller and something outranks us --
-    // exactly the case where a press here visibly does nothing.
-    if (overriddenBy != null) {
-      Text(
-        "controlled by $overriddenBy",
-        fontSize = helm.text(12.sp),
-        color = DriveColors.warn,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.padding(top = helm.size(4.dp)),
-      )
+    // exactly the case where a press here visibly does nothing. Its line is
+    // held open when there is nothing to say: this column centres its contents,
+    // so a note that came and went moved both contacts under the thumb at the
+    // moment TX or the local switch took over. DriveBankMinHeight already
+    // budgets for this line, so reserving it costs the floor nothing.
+    ReservedLines(
+      lines = 1,
+      fontSize = helm.text(12.sp),
+      modifier = Modifier.padding(top = helm.size(4.dp)),
+      // "controlled by local switch" wraps in a drive column at 1.3x.
+      alsoFits = { OverridingSources.forEach { DriveOverrideNote(it) } },
+    ) {
+      if (overriddenBy != null) DriveOverrideNote(overriddenBy)
     }
   }
 }
+
+@Composable
+private fun DriveOverrideNote(source: String) {
+  Text(
+    "controlled by $source",
+    fontSize = LocalHelmScale.current.text(12.sp),
+    color = DriveColors.warn,
+    textAlign = TextAlign.Center,
+  )
+}
+
+/**
+ * Every source name a "controlled by ..." note can carry: exactly those that
+ * outrank this app (StationView's override note is `source.label` for these).
+ */
+private val OverridingSources: List<String> =
+  CommandSource.entries.filter { it.overridesThisApp }.map { it.label }
 
 @Composable
 private fun ContactButton(
@@ -431,9 +607,18 @@ private fun ContactButton(
  * chooser is deliberately outside that gate: it commands nothing, it only says
  * which gate the next arm will open, and choosing that is something the
  * operator does BEFORE arming rather than arming into whichever mode happens to
- * be showing. Disarmed, the panel says which mode is selected and that arming
- * is what makes it live -- and in HOLD it says the hold starts on arm, because
- * HOLD needs no further press to begin working the thruster.
+ * be showing. The chip that is lit is the whole statement of which mode the arm
+ * will open. There used to be a line under the panel spelling it out while
+ * disarmed ("HOLD selected — starts holding when you arm"); the owner removed
+ * it, and it was also what moved every drive contact down a line on each
+ * DISARM and back up on each ARM.
+ *
+ * **Nothing in this panel changes its height with state.** The body is the same
+ * height in both modes, and every notice -- a refusal, another source holding
+ * the thruster, a reversal waiting on the interlock -- shares one reserved line
+ * at the bottom. The drives sit directly below this panel, so a line appearing
+ * here was a drive contact moving under a thumb; see
+ * ControlPositionStabilityTest.
  */
 @Composable
 fun ThrusterControl(
@@ -467,245 +652,317 @@ fun ThrusterControl(
       ModeChip("HOLD", mode == ThrusterMode.HOLD) { onModeChange(ThrusterMode.HOLD) }
     }
 
-    if (mode == ThrusterMode.MANUAL) {
-      val contacts = rememberThrusterContacts()
-
-      // Release on the way out, whatever took these buttons off the screen.
-      //
-      // The mode chips stay live while a contact is held, so selecting HOLD
-      // mid-press disposes this whole block: the button's own release fires, but
-      // the effect below -- the thing that would REPORT it -- is being disposed
-      // in the same pass and never runs. Without this the report is simply lost.
-      //
-      // The rule itself lives in ThrusterCommand.withMode, which releases the
-      // direction on any mode change without needing an event to arrive at all.
-      // This is the belt-and-braces, and it also covers the exits that are not
-      // mode changes: the session ending, the screen being torn down.
-      val currentOnDirectionChange by rememberUpdatedState(onDirectionChange)
-      DisposableEffect(Unit) {
-        onDispose { currentOnDirectionChange(ThrusterDirection.OFF) }
-      }
-
-      LaunchedEffect(contacts.portPressed, contacts.stbdPressed, enabled) {
-        onDirectionChange(
-          when {
-            !enabled -> ThrusterDirection.OFF
-            // Both pressed is ambiguous and must not pick a side. OFF, not
-            // NEUTRAL: a thruster coasts rather than sitting in a gear.
-            contacts.portPressed && contacts.stbdPressed -> ThrusterDirection.OFF
-            contacts.portPressed -> ThrusterDirection.PORT
-            contacts.stbdPressed -> ThrusterDirection.STBD
-            else -> ThrusterDirection.OFF
-          }
-        )
-      }
-      // Padding BEFORE height, and this order is load-bearing. Chained the
-      // other way round, `.height(88.dp).padding(top = 8.dp)` fixes the row at
-      // 88 dp and then eats 8 of them for the gap, leaving 80 dp contacts --
-      // which is what these buttons silently were until LayoutFloorsTest
-      // measured them. Padding first means the 88 dp is the button.
-      //
-      // An exact height, not a floor with room to grow: this block sits in the
-      // screen's natural-height chrome, so there is no leftover here to grow
-      // INTO -- the leftover goes to the drives, which are the pair held
-      // through a manoeuvre. It still scales, so on a tablet these are 128 dp
-      // rather than a phone-sized button marooned in a bigger panel.
-      Row(
-        Modifier.fillMaxWidth()
-          .padding(top = helm.size(8.dp))
-          .requiredHeight(helm.size(ContactButtonMinHeight))
-      ) {
-        ContactButton(
-          "PORT",
-          contacts.portPressed,
-          DriveColors.forward,
-          enabled,
-          { contacts.portPressed = it },
-          Modifier.weight(1f).fillMaxSize(),
-        )
-        Box(Modifier.padding(helm.size(4.dp)))
-        ContactButton(
-          "STBD",
-          contacts.stbdPressed,
-          DriveColors.forward,
-          enabled,
-          { contacts.stbdPressed = it },
-          Modifier.weight(1f).fillMaxSize(),
-        )
-      }
-    } else {
-      Row(
-        Modifier.padding(top = helm.size(8.dp)),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Text(
-          // Two different quantities, and which one is meaningful depends on
-          // whether THIS station is the one holding.
-          //
-          // Armed: heldDeg is our setpoint -- the heading being held.
-          //
-          // Not armed: heldDeg is HH's setpoint, which mirrors the fused heading
-          // ONLY while nothing is holding. If another station is holding, it is
-          // that station's target, and labelling it "CURRENT HEADING" put a
-          // number under a caption that did not describe it. So an idle station
-          // reads the fused heading directly, which is the current heading
-          // whoever is holding and whether anyone is.
-          formatHeading(if (enabled) view.heldDeg else view.currentHeadingDeg),
-          fontSize = helm.text(30.sp),
-          fontWeight = FontWeight.Bold,
-          color = if (enabled) DriveColors.ink else DriveColors.inkMuted,
-        )
-        Text(
-          // "HOLDING" is HH's word, never this station's guess. `enabled` says
-          // only that WE could command the thruster -- token held, socket up, HH
-          // answering -- and none of that means the unit engaged. It may have
-          // refused the heading, faulted, had the thruster taken by its own
-          // ENGAGE input, or be refusing a station whose disarm it has not seen
-          // yet; in every one of those the number above is the same live
-          // plausible heading, because HH mirrors its setpoint to the fused
-          // heading whenever it is NOT holding (ARCHITECTURE.md §9). So the word
-          // comes from view.holdEngaged -- hh.armed + hh.mode plus HH's own FSM
-          // state, since ENABLE is asserted in ARMED_IDLE too -- and until the
-          // unit agrees this says what is actually known: the hold has been
-          // REQUESTED, and after long enough, that it is not being taken.
-          when (view.holdPhase) {
-            HoldPhase.ENGAGED -> "°  HOLDING · TRIM ${formatTrim(trimDeg)}°"
-            // Asked for and not yet confirmed. A statement of what was asked,
-            // not a warning: this is where every arm passes through.
-            HoldPhase.REQUESTED -> "°  HOLD REQUESTED"
-            // Asked for, and HH has had its window and not taken it. The line
-            // below says what to do about it -- except when the thruster simply
-            // belongs to a higher-precedence source, which is not a fault and is
-            // already named by the "controlled by ..." note. That case reads
-            // exactly like a request in flight: our hold is not running, we have
-            // asked for it, and nothing is broken.
-            HoldPhase.NOT_ENGAGING ->
-              if (view.holdStall == HoldStall.OTHER_SOURCE) "°  HOLD REQUESTED"
-              else "°  HOLD NOT ENGAGED"
-            // Not asking: either nothing is commandable here, or the request is
-            // one tick old and the window has not been stamped yet. Both read
-            // the number as the fused heading, so the caption follows `enabled`
-            // exactly as the number above does -- the two must not disagree.
-            HoldPhase.IDLE -> if (enabled) "°  HOLD REQUESTED" else "°  CURRENT HEADING"
-          },
-          fontSize = helm.text(13.sp),
-          color =
-            if (view.holdPhase == HoldPhase.NOT_ENGAGING &&
-              view.holdStall != HoldStall.OTHER_SOURCE
-            ) {
-              DriveColors.bad
-            } else {
-              DriveColors.inkMuted
-            },
-          modifier = Modifier.padding(start = helm.size(6.dp)),
-        )
-      }
-      // Discrete steps rather than press-and-hold repeat: a thumb on glass
-      // wants a target it can tap, not a button it must hold for exactly the
-      // right length of time.
-      Row(
-        Modifier.fillMaxWidth().padding(top = helm.size(8.dp)),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-      ) {
-        // From the contract rather than written out here: these mirror
-        // config::kHeadingNudge*StepDeg, which is hand-synced three ways, and a
-        // literal ladder is exactly the kind of fourth copy that goes quiet when
-        // the firmware retunes a step.
-        val steps =
-          listOf(
-            -SkContract.HEADING_TRIM_COARSE_DEG,
-            -SkContract.HEADING_TRIM_FINE_DEG,
-            SkContract.HEADING_TRIM_FINE_DEG,
-            SkContract.HEADING_TRIM_COARSE_DEG,
-          )
-        for (step in steps) {
-          TrimButton(step, enabled) { onTrim(step) }
-        }
-      }
-    }
-
-    // Nothing armed here: says which gate the next arm opens, so a selection
-    // made with nothing armed is never mistaken for a live command -- and so
-    // the HOLD case is stated outright, since arming alone starts it.
-    //
-    // Gated on `armed`, NOT on `enabled`: armed-but-not-commandable (socket
-    // down, HH switched off) leaves the same controls inert for a completely
-    // different reason, and telling the operator to "arm" there would send them
-    // at the one control that is already doing its job. The kill switch names
-    // that reason instead.
-    if (!view.armed) {
-      Text(
-        if (mode == ThrusterMode.MANUAL) "MANUAL selected — arm to thrust"
-        else "HOLD selected — starts holding when you arm",
-        fontSize = helm.text(12.sp),
-        color = DriveColors.inkMuted,
-        modifier = Modifier.padding(top = helm.size(6.dp)),
-      )
-    }
-
-    // Armed, in HOLD, and HH has had every chance to take the hold and has not.
-    //
-    // Deliberately NOT shown while the request is in flight. An unconfirmed hold
-    // is the normal state of the first moment after every arm, and drawing a
-    // warning there put one on the panel every single time -- which is how an
-    // operator learns to read the one that matters as the usual flicker. The
-    // caption above still refuses to say "HOLDING" throughout, so nothing is
-    // being hidden: what is withheld is the ALARM, until there is one.
-    //
-    // Loud when it does appear, and specific: the remedies differ, and a hold
-    // the unit is refusing (SAFETY.md thruster invariant 9 -- a station whose
-    // link went stale mid-hold must disarm before it can engage again) is fixed
-    // from this screen, while a faulted unit is not. OTHER_SOURCE is the one
-    // case drawn as nothing: the "controlled by ..." note below already says it,
-    // and it is not a fault.
-    if (mode == ThrusterMode.HOLD &&
-      view.holdPhase == HoldPhase.NOT_ENGAGING &&
-      view.holdStall != HoldStall.OTHER_SOURCE
+    // One box, sized by BOTH modes' bodies whichever is showing, so switching
+    // mode -- which the chips allow at any time, armed or not -- moves nothing
+    // below this panel. MANUAL's contribution is its contacts' floor; HOLD's is
+    // the readout and the trim row, which are `sp` and so cannot be written down
+    // as a dp number that stays right at every font scale. It is measured
+    // instead: MANUAL carries an invisible, inert copy of the HOLD body purely
+    // for its size.
+    Box(
+      Modifier.fillMaxWidth().padding(top = helm.size(8.dp)),
+      contentAlignment = Alignment.Center,
     ) {
-      RefusalBand(
-        when (view.holdStall) {
-          HoldStall.UNIT_FAULT -> "NOT HOLDING — UNIT FAULT"
-          HoldStall.NO_REFERENCE -> "NOT HOLDING — NO HEADING FIX"
-          HoldStall.REFUSED -> "NOT HOLDING — RE-ARM TO ENGAGE"
-          // Including HH saying nothing at all: state the fact, and the one
-          // remedy that is safe to suggest whatever the cause.
-          else -> "NOT HOLDING — CHECK THE UNIT"
-        }
-      )
+      if (mode == ThrusterMode.MANUAL) {
+        HoldBody(
+          view = view,
+          trimDeg = trimDeg,
+          enabled = enabled,
+          onTrim = {},
+          interactive = false,
+          modifier = Modifier.alpha(0f).clearAndSetSemantics {},
+        )
+        Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
+        ManualBody(
+          enabled = enabled,
+          onDirectionChange = onDirectionChange,
+          modifier = Modifier.matchParentSize(),
+        )
+      } else {
+        Spacer(Modifier.requiredHeight(helm.size(ContactButtonMinHeight)))
+        HoldBody(
+          view = view,
+          trimDeg = trimDeg,
+          enabled = enabled,
+          onTrim = onTrim,
+          interactive = true,
+        )
+      }
     }
 
-    // The same refusal in MANUAL, where nothing used to say it. A local ENGAGE
-    // release latches every armed remote out of HH until it STOPs and ARMs again,
-    // and the arbiter -- which cannot see that latch -- still hands this station
-    // the token: it read armed, its PORT/STBD contacts lit under a thumb, and the
-    // thruster did nothing. StationView.manualRefusal is the same machinery and
-    // the same grace window as the hold phase above, so it never flashes on an
-    // ordinary arm; it names only a refusal (HH DISARMED) or a fault.
-    if (mode == ThrusterMode.MANUAL && view.manualRefusal != HoldStall.NONE) {
-      RefusalBand(
-        if (view.manualRefusal == HoldStall.UNIT_FAULT) "THRUSTER REFUSED — UNIT FAULT"
-        else "THRUSTER REFUSED — RE-ARM TO COMMAND"
-      )
-    }
-
-    if (view.reversalPending) {
-      Text(
-        "reversing — waiting for the thruster interlock",
-        fontSize = helm.text(12.sp),
-        color = DriveColors.warn,
-        modifier = Modifier.padding(top = helm.size(6.dp)),
-      )
-    }
-    if (view.thrusterOverriddenBy != null) {
-      Text(
-        "controlled by ${view.thrusterOverriddenBy}",
-        fontSize = helm.text(12.sp),
-        color = DriveColors.warn,
-        modifier = Modifier.padding(top = helm.size(4.dp)),
-      )
+    // The panel's one notice line, held open when there is nothing to say.
+    // At most one notice is shown, most important first:
+    //
+    // 1. HH refusing what this station asked (the red band), in either mode.
+    // 2. Another source holding the thruster -- why a press here does nothing.
+    // 3. A reversal waiting on the thruster box's interlock -- why a press here
+    //    has not happened YET.
+    //
+    // 2 outranks 3 because it is the explanation that changes what the operator
+    // should do: waiting out an interlock on a thruster this station does not
+    // command would be waiting for nothing.
+    ReservedLines(
+      lines = 1,
+      fontSize = helm.text(13.sp),
+      modifier = Modifier.fillMaxWidth().padding(top = helm.size(4.dp)),
+      contentAlignment = Alignment.CenterStart,
+      // The band's own inside padding, so reserving "one line" reserves room
+      // for the band -- the tallest thing this line holds.
+      reservePadding = helm.size(RefusalBandPadding),
+      alsoFits = {
+        ThrusterRefusals.forEach { RefusalBand(it) }
+        OverridingSources.forEach { NoticeText("controlled by $it") }
+        NoticeText(ReversingNotice)
+      },
+    ) {
+      val refusal = thrusterRefusal(view, mode)
+      when {
+        refusal != null -> RefusalBand(refusal)
+        view.thrusterOverriddenBy != null ->
+          NoticeText("controlled by ${view.thrusterOverriddenBy}")
+        view.reversalPending -> NoticeText(ReversingNotice)
+      }
     }
   }
 }
+
+/**
+ * The red band's text, or null when HH is doing what this station asked.
+ *
+ * HOLD: armed, and HH has had every chance to take the hold and has not.
+ * Deliberately NOT shown while the request is in flight. An unconfirmed hold is
+ * the normal state of the first moment after every arm, and drawing a warning
+ * there put one on the panel every single time -- which is how an operator
+ * learns to read the one that matters as the usual flicker. The caption beside
+ * the heading still refuses to say "HOLDING" throughout, so nothing is being
+ * hidden: what is withheld is the ALARM, until there is one.
+ *
+ * Loud when it does appear, and specific: the remedies differ, and a hold the
+ * unit is refusing (SAFETY.md thruster invariant 9 -- a station whose link went
+ * stale mid-hold must disarm before it can engage again) is fixed from this
+ * screen, while a faulted unit is not. OTHER_SOURCE is the one case drawn as
+ * nothing here: the "controlled by ..." notice says it, and it is not a fault.
+ *
+ * MANUAL: the same refusal, where nothing used to say it. A local ENGAGE release
+ * latches every armed remote out of HH until it STOPs and ARMs again, and the
+ * arbiter -- which cannot see that latch -- still hands this station the token:
+ * it read armed, its PORT/STBD contacts lit under a thumb, and the thruster did
+ * nothing. StationView.manualRefusal is the same machinery and the same grace
+ * window as the hold phase, so it never flashes on an ordinary arm; it names
+ * only a refusal (HH DISARMED) or a fault.
+ */
+private fun thrusterRefusal(view: StationView, mode: ThrusterMode): String? =
+  when {
+    mode == ThrusterMode.HOLD &&
+      view.holdPhase == HoldPhase.NOT_ENGAGING &&
+      view.holdStall != HoldStall.OTHER_SOURCE ->
+      when (view.holdStall) {
+        HoldStall.UNIT_FAULT -> HoldUnitFault
+        HoldStall.NO_REFERENCE -> HoldNoReference
+        HoldStall.REFUSED -> HoldRefused
+        // Including HH saying nothing at all: state the fact, and the one
+        // remedy that is safe to suggest whatever the cause.
+        else -> HoldCheckUnit
+      }
+    mode == ThrusterMode.MANUAL && view.manualRefusal != HoldStall.NONE ->
+      if (view.manualRefusal == HoldStall.UNIT_FAULT) ManualUnitFault else ManualRefused
+    else -> null
+  }
+
+private const val HoldUnitFault = "NOT HOLDING — UNIT FAULT"
+private const val HoldNoReference = "NOT HOLDING — NO HEADING FIX"
+private const val HoldRefused = "NOT HOLDING — RE-ARM TO ENGAGE"
+private const val HoldCheckUnit = "NOT HOLDING — CHECK THE UNIT"
+private const val ManualUnitFault = "THRUSTER REFUSED — UNIT FAULT"
+private const val ManualRefused = "THRUSTER REFUSED — RE-ARM TO COMMAND"
+
+/** Every band [thrusterRefusal] can return, for the notice line's reservation. */
+private val ThrusterRefusals =
+  listOf(HoldUnitFault, HoldNoReference, HoldRefused, HoldCheckUnit, ManualUnitFault, ManualRefused)
+
+private const val ReversingNotice = "reversing — waiting for the thruster interlock"
+
+/** MANUAL's body: the PORT and STBD contacts, filling whatever height it is given. */
+@Composable
+private fun ManualBody(
+  enabled: Boolean,
+  onDirectionChange: (ThrusterDirection) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val helm = LocalHelmScale.current
+  val contacts = rememberThrusterContacts()
+
+  // Release on the way out, whatever took these buttons off the screen.
+  //
+  // The mode chips stay live while a contact is held, so selecting HOLD
+  // mid-press disposes this whole block: the button's own release fires, but
+  // the effect below -- the thing that would REPORT it -- is being disposed
+  // in the same pass and never runs. Without this the report is simply lost.
+  //
+  // The rule itself lives in ThrusterCommand.withMode, which releases the
+  // direction on any mode change without needing an event to arrive at all.
+  // This is the belt-and-braces, and it also covers the exits that are not
+  // mode changes: the session ending, the screen being torn down.
+  val currentOnDirectionChange by rememberUpdatedState(onDirectionChange)
+  DisposableEffect(Unit) {
+    onDispose { currentOnDirectionChange(ThrusterDirection.OFF) }
+  }
+
+  LaunchedEffect(contacts.portPressed, contacts.stbdPressed, enabled) {
+    onDirectionChange(
+      when {
+        !enabled -> ThrusterDirection.OFF
+        // Both pressed is ambiguous and must not pick a side. OFF, not
+        // NEUTRAL: a thruster coasts rather than sitting in a gear.
+        contacts.portPressed && contacts.stbdPressed -> ThrusterDirection.OFF
+        contacts.portPressed -> ThrusterDirection.PORT
+        contacts.stbdPressed -> ThrusterDirection.STBD
+        else -> ThrusterDirection.OFF
+      }
+    )
+  }
+
+  // No height of its own: the caller's box is at least ContactButtonMinHeight
+  // tall (its Spacer) and this fills it, so the contacts are exactly that box.
+  // The gap above belongs to the box's padding rather than to this row, which
+  // is the lesson of `.height(88.dp).padding(top = 8.dp)` -- chained that way
+  // round the gap came out of the button, and these contacts were silently
+  // 80 dp until LayoutFloorsTest measured them.
+  //
+  // It still does not grow into leftover space: this block sits in the
+  // screen's natural-height chrome, so there is no leftover here to grow INTO
+  // -- the leftover goes to the drives, which are the pair held through a
+  // manoeuvre. It scales, so on a tablet these are 128 dp rather than a
+  // phone-sized button marooned in a bigger panel.
+  Row(modifier) {
+    ContactButton(
+      "PORT",
+      contacts.portPressed,
+      DriveColors.forward,
+      enabled,
+      { contacts.portPressed = it },
+      Modifier.weight(1f).fillMaxSize(),
+    )
+    Box(Modifier.padding(helm.size(4.dp)))
+    ContactButton(
+      "STBD",
+      contacts.stbdPressed,
+      DriveColors.forward,
+      enabled,
+      { contacts.stbdPressed = it },
+      Modifier.weight(1f).fillMaxSize(),
+    )
+  }
+}
+
+/**
+ * HOLD's body: the heading readout and the trim steps.
+ *
+ * [interactive] false is the sizing copy MANUAL carries (see [ThrusterControl]):
+ * the same composable with the same inputs, so it measures exactly as the real
+ * one would, and its trim steps cannot be clicked whatever [enabled] says.
+ */
+@Composable
+private fun HoldBody(
+  view: StationView,
+  trimDeg: Double,
+  enabled: Boolean,
+  onTrim: (Double) -> Unit,
+  interactive: Boolean,
+  modifier: Modifier = Modifier,
+) {
+  val helm = LocalHelmScale.current
+  Column(modifier.fillMaxWidth()) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Text(
+        // Two different quantities, and which one is meaningful depends on
+        // whether THIS station is the one holding.
+        //
+        // Armed: heldDeg is our setpoint -- the heading being held.
+        //
+        // Not armed: heldDeg is HH's setpoint, which mirrors the fused heading
+        // ONLY while nothing is holding. If another station is holding, it is
+        // that station's target, and labelling it "CURRENT HEADING" put a
+        // number under a caption that did not describe it. So an idle station
+        // reads the fused heading directly, which is the current heading
+        // whoever is holding and whether anyone is.
+        formatHeading(if (enabled) view.heldDeg else view.currentHeadingDeg),
+        fontSize = helm.text(30.sp),
+        fontWeight = FontWeight.Bold,
+        color = if (enabled) DriveColors.ink else DriveColors.inkMuted,
+      )
+      Text(
+        // "HOLDING" is HH's word, never this station's guess. `enabled` says
+        // only that WE could command the thruster -- token held, socket up, HH
+        // answering -- and none of that means the unit engaged. It may have
+        // refused the heading, faulted, had the thruster taken by its own
+        // ENGAGE input, or be refusing a station whose disarm it has not seen
+        // yet; in every one of those the number above is the same live
+        // plausible heading, because HH mirrors its setpoint to the fused
+        // heading whenever it is NOT holding (ARCHITECTURE.md §9). So the word
+        // comes from view.holdEngaged -- hh.armed + hh.mode plus HH's own FSM
+        // state, since ENABLE is asserted in ARMED_IDLE too -- and until the
+        // unit agrees this says what is actually known: the hold has been
+        // REQUESTED, and after long enough, that it is not being taken.
+        when (view.holdPhase) {
+          HoldPhase.ENGAGED -> "°  HOLDING · TRIM ${formatTrim(trimDeg)}°"
+          // Asked for and not yet confirmed. A statement of what was asked,
+          // not a warning: this is where every arm passes through.
+          HoldPhase.REQUESTED -> "°  HOLD REQUESTED"
+          // Asked for, and HH has had its window and not taken it. The notice
+          // line says what to do about it -- except when the thruster simply
+          // belongs to a higher-precedence source, which is not a fault and is
+          // already named by the "controlled by ..." notice. That case reads
+          // exactly like a request in flight: our hold is not running, we have
+          // asked for it, and nothing is broken.
+          HoldPhase.NOT_ENGAGING ->
+            if (view.holdStall == HoldStall.OTHER_SOURCE) "°  HOLD REQUESTED"
+            else "°  HOLD NOT ENGAGED"
+          // Not asking: either nothing is commandable here, or the request is
+          // one tick old and the window has not been stamped yet. Both read
+          // the number as the fused heading, so the caption follows `enabled`
+          // exactly as the number above does -- the two must not disagree.
+          HoldPhase.IDLE -> if (enabled) "°  HOLD REQUESTED" else "°  CURRENT HEADING"
+        },
+        fontSize = helm.text(13.sp),
+        color =
+          if (view.holdPhase == HoldPhase.NOT_ENGAGING &&
+            view.holdStall != HoldStall.OTHER_SOURCE
+          ) {
+            DriveColors.bad
+          } else {
+            DriveColors.inkMuted
+          },
+        modifier = Modifier.padding(start = helm.size(6.dp)),
+      )
+    }
+    // Discrete steps rather than press-and-hold repeat: a thumb on glass
+    // wants a target it can tap, not a button it must hold for exactly the
+    // right length of time.
+    Row(
+      Modifier.fillMaxWidth().padding(top = helm.size(8.dp)),
+      horizontalArrangement = Arrangement.SpaceEvenly,
+    ) {
+      // From the contract rather than written out here: these mirror
+      // config::kHeadingNudge*StepDeg, which is hand-synced three ways, and a
+      // literal ladder is exactly the kind of fourth copy that goes quiet when
+      // the firmware retunes a step.
+      val steps =
+        listOf(
+          -SkContract.HEADING_TRIM_COARSE_DEG,
+          -SkContract.HEADING_TRIM_FINE_DEG,
+          SkContract.HEADING_TRIM_FINE_DEG,
+          SkContract.HEADING_TRIM_COARSE_DEG,
+        )
+      for (step in steps) {
+        TrimButton(step, enabled, clickable = interactive) { onTrim(step) }
+      }
+    }
+  }
+}
+
+/** The inside padding of [RefusalBand], above and below its text. */
+private val RefusalBandPadding = 4.dp
 
 /**
  * The thruster panel's red band: HH is not doing what this station asked, and
@@ -719,17 +976,25 @@ private fun RefusalBand(text: String) {
     fontSize = helm.text(13.sp),
     fontWeight = FontWeight.Bold,
     color = DriveColors.ink,
-    // Padding, then the band, then padding: the first is the gap above the
-    // band, the second is the space inside it. Chained the other way round
-    // the band would be drawn over the gap. One line, on purpose -- this
-    // panel sits in the screen's natural-height chrome, so anything that
-    // wraps here comes out of the drive bank's reservation.
+    // The band, then padding: the space inside it. The gap above belongs to the
+    // notice line holding this. One line, on purpose -- this panel sits in the
+    // screen's natural-height chrome, and the line is reserved at one line's
+    // height, so anything that wraps here comes out of the drive bank.
     modifier =
-      Modifier.padding(top = helm.size(6.dp))
-        .fillMaxWidth()
+      Modifier.fillMaxWidth()
         .clip(RoundedCornerShape(6.dp))
         .background(DriveColors.bad)
-        .padding(horizontal = helm.size(8.dp), vertical = helm.size(4.dp)),
+        .padding(horizontal = helm.size(8.dp), vertical = helm.size(RefusalBandPadding)),
+  )
+}
+
+/** A quieter notice on the thruster panel's notice line: amber text, no band. */
+@Composable
+private fun NoticeText(text: String) {
+  Text(
+    text,
+    fontSize = LocalHelmScale.current.text(12.sp),
+    color = DriveColors.warn,
   )
 }
 
@@ -753,13 +1018,18 @@ private fun ModeChip(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TrimButton(step: Double, enabled: Boolean, onClick: () -> Unit) {
+private fun TrimButton(
+  step: Double,
+  enabled: Boolean,
+  clickable: Boolean = true,
+  onClick: () -> Unit,
+) {
   val helm = LocalHelmScale.current
   Box(
     Modifier.clip(RoundedCornerShape(8.dp))
       .background(if (enabled) DriveColors.surface else DriveColors.disarmed.copy(alpha = 0.4f))
       .border(1.dp, DriveColors.border, RoundedCornerShape(8.dp))
-      .clickable(enabled = enabled, onClick = onClick)
+      .clickable(enabled = enabled && clickable, onClick = onClick)
       .padding(horizontal = helm.size(18.dp), vertical = helm.size(12.dp))
   ) {
     Text(

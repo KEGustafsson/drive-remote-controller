@@ -98,7 +98,7 @@ cd esp32 && pio run -e <env> -t upload && pio device monitor
 cd sk-plugin && npm test                    # 377 cases
 cd sk-plugin && npm run build               # -> public/
 cd android && ./gradlew :core:test          # pure Kotlin core, 256 cases
-cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 118 cases (needs SDK)
+cd android && ./gradlew :app:testDebugUnitTest  # layout + fail-safe UI, 148 cases (needs SDK)
 cd android && ./gradlew :app:assembleDebug  # needs an Android SDK
 ```
 
@@ -269,6 +269,25 @@ ancestor, goes red on both reconstructed pre-fix layouts, and found on its
 first run that the thruster contacts were 80 dp rather than 88
 (`.height().padding()` chained the wrong way round). **Geometry is a safety
 property on that screen — if you change the control layout, run that suite.**
+
+**Controls must not move when the state changes** -- only the window and the
+font scale may place them. Arming used to move both drives a line, because a
+note under the thruster existed only while disarmed. Every state-dependent
+message now has its room reserved in every state (`ReservedLines` in
+`Controls.kt`, sized by drawing every message the slot can hold invisibly --
+a line count is right at one font scale and wrong at the next), the status bar is a row of fixed-name lamps, and
+`ControlPositionStabilityTest` asserts identical bounds across arm, faults,
+notices and mode. Do not add a line that appears only in some states anywhere
+in the portrait stack -- the drive bank takes what the bar below it leaves, so
+even telemetry counts. That test runs with Robolectric's native graphics,
+because the default measures text at almost zero width and never wraps.
+**Text fits the window dynamically**: where the operator's system font scale
+would push a control or the status bar off screen, `HelmScale.textFit` gives
+back just enough of it, never below the 1.0x size. So every text size on the
+control screen must go through `helm.text(...)` -- a bare `.sp` does not shrink
+with the rest -- and the theme line height is scaled in `ControlScreen` for the
+same reason. README screenshots are rendered by `ReadmeScreenshots`
+(`WRITE_SCREENSHOTS=1`); refresh them when the screen changes.
 
 Two things it cannot prove. The reference phone is modelled, not used:
 Robolectric knows the S25's density, not its system bars or cutout. And it

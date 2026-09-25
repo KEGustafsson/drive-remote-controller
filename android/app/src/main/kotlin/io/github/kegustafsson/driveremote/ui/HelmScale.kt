@@ -39,7 +39,15 @@ import androidx.compose.ui.unit.dp
  * the number that was measured and tuned on the boat.
  */
 @Immutable
-class HelmScale(val u: Float) {
+class HelmScale(
+  val u: Float,
+  /**
+   * How much of the operator's system font scale this window can afford, in
+   * (0, 1]. 1 everywhere the screen fits; below 1 only where large system text
+   * would otherwise push a live control off the bottom. See [fitTextStep].
+   */
+  val textFit: Float = 1f,
+) {
   /** A dimension written at its reference-phone value, scaled. */
   fun size(reference: Dp): Dp = reference * u
 
@@ -48,10 +56,40 @@ class HelmScale(val u: Float) {
    *
    * This multiplies the `sp` value, so the operator's system font-scale setting
    * still applies on top of it — the two compound, which is why the layout
-   * tests run the tablet cases at `fontScale = 2.0f` as well.
+   * tests run the tablet cases at `fontScale = 2.0f` as well. [textFit] then
+   * gives back only as much of that as the window cannot hold.
    */
-  fun text(reference: TextUnit): TextUnit = reference * u
+  fun text(reference: TextUnit): TextUnit = reference * (u * textFit)
 }
+
+/**
+ * The smallest [HelmScale.textFit] for a system font scale: text never shrinks
+ * below what it would be with the system setting at 1.0x. Past that, a window
+ * that still cannot hold the controls reports it (`ClippedNotice`) rather than
+ * making the type smaller than the reference it was tuned at.
+ */
+fun minTextFit(systemFontScale: Float): Float = (1f / systemFontScale).coerceAtMost(1f)
+
+/**
+ * One step of dynamic font fitting: the next [HelmScale.textFit] after a frame
+ * in which a live control was measured off the bottom of the window, or null
+ * when it cannot shrink further.
+ *
+ * Steps rather than a solved value because what has to fit is the whole screen
+ * as laid out, with wrapping, reserved lines and Android's non-linear font
+ * curve all in play; measuring is the only honest oracle. 5% a frame settles a
+ * 2.0x phone in a handful of frames at launch or on a rotation, and it only
+ * ever moves one way until the window or the system setting changes -- the
+ * screen's height no longer depends on its state (ControlPositionStabilityTest),
+ * so nothing an operator does can start it hunting.
+ */
+fun fitTextStep(current: Float, systemFontScale: Float): Float? {
+  val floor = minTextFit(systemFontScale)
+  if (current <= floor + 0.001f) return null
+  return (current - TextFitStep).coerceAtLeast(floor)
+}
+
+private const val TextFitStep = 0.05f
 
 /**
  * The reference device: Galaxy S25, 360 x 780 dp. Every dimension in the UI is
@@ -163,8 +201,8 @@ val LocalHelmScale = staticCompositionLocalOf { HelmScale(1f) }
  * and tight in the other -- a landscape phone, a split-screen pane -- is sized
  * by the axis that is actually short rather than being inflated by the other.
  */
-fun helmScaleFor(width: Dp, height: Dp): HelmScale {
+fun helmScaleFor(width: Dp, height: Dp, textFit: Float = 1f): HelmScale {
   val byWidth = width / ReferenceWindowWidth
   val byHeight = height / ReferenceWindowHeight
-  return HelmScale(minOf(byWidth, byHeight).coerceIn(1f, MaxHelmScale))
+  return HelmScale(minOf(byWidth, byHeight).coerceIn(1f, MaxHelmScale), textFit)
 }
