@@ -66,14 +66,12 @@ export const SK_PLUGIN_THRUSTER_TRIM_PATH =
 
 // ---- Heading-hold unit telemetry (read-only) ----
 // hh.linkUp is this UI's heartbeat for the thruster board, judged on ARRIVAL
-// exactly like rx.linkUp. hh.setpointDeg is the one whose VALUE matters: it is
-// the actual held heading, shown for reference while trimming.
+// exactly like rx.linkUp.
 export const SK_HH_LINK_UP_PATH = 'control.remoteController.hh.linkUp';
 export const SK_HH_THRUSTER_STATE_PATH =
   'control.remoteController.hh.thruster.state';
 export const SK_HH_MODE_PATH = 'control.remoteController.hh.mode';
 export const SK_HH_SOURCE_PATH = 'control.remoteController.hh.source';
-export const SK_HH_SETPOINT_PATH = 'control.remoteController.hh.setpointDeg';
 export const SK_HH_ARMED_PATH = 'control.remoteController.hh.armed';
 export const SK_HH_REVERSAL_PENDING_PATH =
   'control.remoteController.hh.reversalPending';
@@ -92,6 +90,12 @@ export const SK_HH_REVERSAL_PENDING_PATH =
 // is also what lets this UI say WHY a hold is not running rather than only that
 // it is not.
 export const SK_HH_FSM_STATE_PATH = 'sensors.headingHold.fsmState';
+
+// HH's live setpoint, in RADIANS, 0..2pi like navigation.headingTrue: the
+// heading being held, or (when not holding) the heading a hold would take now.
+// The one HH path whose VALUE this UI displays -- shown for reference while
+// trimming. Telemetry, like fsmState, rather than part of the command contract.
+export const SK_HH_SETPOINT_RAD_PATH = 'sensors.headingHold.setpoint';
 
 // The sensors.headingHold.fsmState values, as ControlTask::StateName spells
 // them (hh/control_task.cpp).
@@ -152,10 +156,10 @@ export const SUBSCRIBE_PATHS = [
   SK_HH_THRUSTER_STATE_PATH,
   SK_HH_MODE_PATH,
   SK_HH_SOURCE_PATH,
-  SK_HH_SETPOINT_PATH,
   SK_HH_ARMED_PATH,
   SK_HH_REVERSAL_PENDING_PATH,
   SK_HH_FSM_STATE_PATH,
+  SK_HH_SETPOINT_RAD_PATH,
 ] as const;
 
 // config::kSkPeriodicRefreshMs. TX and RX publish on change plus this

@@ -491,7 +491,7 @@ describe('App when a unit is switched off', () => {
 // The heading label is HH's statement, not this app's. Being armed with HOLD
 // selected says only that the hold was REQUESTED: HH may be faulted, its
 // heading may not be good yet, or its own ENGAGE input may have taken the
-// thruster -- and hh.setpointDeg reads as a live number in all of those,
+// thruster -- and HH's setpoint reads as a live number in all of those,
 // because HH mirrors it to the fused heading whenever it is not holding
 // (ARCHITECTURE.md §9). So "holding" may only come from hh.armed + hh.mode.
 describe('App: "holding" comes from the HH unit, never from being armed', () => {
@@ -506,7 +506,7 @@ describe('App: "holding" comes from the HH unit, never from being armed', () => 
     harness.sendDelta([
       { path: 'control.remoteController.hh.armed', value: false },
       { path: 'control.remoteController.hh.mode', value: 'hold' },
-      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+      { path: 'sensors.headingHold.setpoint', value: (40 * Math.PI) / 180 },
     ]);
 
     await waitFor(() =>
@@ -535,7 +535,7 @@ describe('App: "holding" comes from the HH unit, never from being armed', () => 
       { path: 'control.remoteController.hh.armed', value: true },
       { path: 'control.remoteController.hh.mode', value: 'hold' },
       { path: 'sensors.headingHold.fsmState', value: 'ARMED_IDLE' },
-      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+      { path: 'sensors.headingHold.setpoint', value: (40 * Math.PI) / 180 },
     ]);
 
     await waitFor(() =>
@@ -549,7 +549,7 @@ describe('App: "holding" comes from the HH unit, never from being armed', () => 
     harness.sendDelta([
       { path: 'control.remoteController.hh.armed', value: true },
       { path: 'control.remoteController.hh.mode', value: 'hold' },
-      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+      { path: 'sensors.headingHold.setpoint', value: (40 * Math.PI) / 180 },
     ]);
 
     await waitFor(() => expect(screen.getByText('holding')).toBeInTheDocument());
@@ -564,7 +564,7 @@ describe('App: "holding" comes from the HH unit, never from being armed', () => 
       { path: 'control.remoteController.hh.armed', value: true },
       { path: 'control.remoteController.hh.mode', value: 'hold' },
       { path: 'sensors.headingHold.fsmState', value: 'HOLDING' },
-      { path: 'control.remoteController.hh.setpointDeg', value: 40 },
+      { path: 'sensors.headingHold.setpoint', value: (40 * Math.PI) / 180 },
     ]);
 
     await waitFor(() => expect(screen.getByText('holding')).toBeInTheDocument());
@@ -793,7 +793,7 @@ describe('App: HH readings follow HH liveness', () => {
   it('stops showing the held heading once HH stops answering', async () => {
     await renderApp();
     fireEvent.click(screen.getByText('HOLD'));
-    harness.sendDelta([{ path: 'control.remoteController.hh.setpointDeg', value: 40 }]);
+    harness.sendDelta([{ path: 'sensors.headingHold.setpoint', value: (40 * Math.PI) / 180 }]);
     await waitFor(() => expect(screen.getByText('040°')).toBeInTheDocument());
 
     harness.stopHh();

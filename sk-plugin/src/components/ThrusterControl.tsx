@@ -57,7 +57,7 @@ interface ThrusterControlProps {
    * Separate from [armed] because [armed] is only this app's own half of the
    * question -- token held, socket up, HH answering -- and none of that says
    * the unit engaged. HH may be faulted, its heading may not be trustworthy
-   * yet, or its own ENGAGE input may have taken the thruster; hh.setpointDeg
+   * yet, or its own ENGAGE input may have taken the thruster; its setpoint
    * reads as a live number in every one of those cases, because HH mirrors that
    * path to the fused heading whenever it is NOT holding (ARCHITECTURE.md
    * §9). So the heading here is labelled "holding" only on 'engaged', which is

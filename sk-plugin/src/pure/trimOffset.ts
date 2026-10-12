@@ -41,6 +41,21 @@ export function isPlausibleHeading(deg: unknown): deg is number {
 }
 
 /**
+ * A heading HH published in RADIANS (sensors.headingHold.setpoint), as compass
+ * degrees [0, 360) -- or null if it is not a plausible heading. Screened before
+ * it is wrapped: an implausible number is rejected, never folded into a
+ * plausible-looking one. HH publishes 0..2pi; older firmware published
+ * -pi..pi, and both read the same here.
+ */
+export function headingDegFromRad(rad: unknown): number | null {
+  if (typeof rad !== 'number') return null;
+  const deg = (rad * 180) / Math.PI;
+  if (!isPlausibleHeading(deg)) return null;
+  const positive = ((deg % 360) + 360) % 360;
+  return positive >= 360 ? 0 : positive;
+}
+
+/**
  * Coerce a trim offset to a safe, bounded value: non-finite reads as 0 (no
  * trim), anything else is clamped to +/-MAX_TRIM_DEG. Mirrors
  * control_core::ClampTrimDeg. There is no "invalid" outcome -- 0 is the safe,

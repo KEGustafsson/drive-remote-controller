@@ -376,8 +376,6 @@ constexpr const char* kSkHhThrusterStatePath =
     "control.remoteController.hh.thruster.state";
 constexpr const char* kSkHhModePath = "control.remoteController.hh.mode";
 constexpr const char* kSkHhSourcePath = "control.remoteController.hh.source";
-constexpr const char* kSkHhSetpointPath =
-    "control.remoteController.hh.setpointDeg";
 constexpr const char* kSkHhArmedPath = "control.remoteController.hh.armed";
 constexpr const char* kSkHhLinkUpPath = "control.remoteController.hh.linkUp";
 constexpr const char* kSkHhReversalPendingPath =

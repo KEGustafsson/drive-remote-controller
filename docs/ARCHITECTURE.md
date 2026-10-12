@@ -695,12 +695,14 @@ read-only WebSocket subscription. Its copy of the path names and timings is
 | `hh.thruster.state` | string | Direction currently being driven: `port`, `off` or `stbd`, lower-case like every other contract string |
 | `hh.mode` | string | `manual` or `hold` |
 | `hh.source` | string | `local`/`tx`/`plugin`/`none` |
-| `hh.setpointDeg` | number (deg) | Live setpoint — the heading being held, or (when not holding) the heading hold would take if it engaged now |
 | `hh.armed` | bool | FSM is in `ARMED_IDLE` or `HOLDING` |
 | `hh.linkUp` | bool | At least one remote source live |
 | `hh.reversalPending` | bool | A direction is being withheld for the reversal interlock |
 
-`hh.setpointDeg` and the `sensors.headingHold.setpoint`/`.error` pair are driven
+The live setpoint is published only as `sensors.headingHold.setpoint` (below):
+the heading being held, or (when not holding) the heading hold would take if
+it engaged now. The browser UI and the phone show it from that path. It and
+`sensors.headingHold.error` are driven
 by the switcher only while HOLDING in HOLD mode. In **every other state** —
 disarmed, armed-idle, faulted, or hand-steering in MANUAL — the setpoint
 **mirrors the fused heading**, so the reported error is a truthful zero instead
@@ -721,7 +723,11 @@ which is the one reading nobody questions.
 HH also publishes standard telemetry outside this tree: `navigation.attitude`
 (compound, radians), `navigation.rateOfTurn` (rad/s), and `sensors.headingHold.*`
 tuning signals. Those follow Signal K's SI convention; the `control.*` tree is
-operator-facing and uses degrees, with the unit named in the path.
+operator-facing and uses degrees, with the unit named in the path. The two
+absolute headings, `sensors.headingHold.fusedHeading` and `.setpoint`, are
+published in the compass range 0..2π, the same as `navigation.headingTrue`, so
+they can be read against it directly; `.error` is signed (−π..π, positive =
+turn to starboard), and the control maths inside HH stays in ±180°.
 
 **Both output units republish their whole telemetry set every cycle** whether or
 not anything changed. That steady stream is what every liveness check in §8

@@ -96,8 +96,9 @@ boat is two things:
 
 - **read** — one WebSocket to `/signalk/v1/stream`, one subscribe message,
   19 paths: the browser UI's 18, plus `sensors.headingHold.fusedHeading`, which
-  a station that is not the one holding needs because `hh.setpointDeg` shows the
-  held target rather than the boat's current heading. (Both stations subscribe
+  a station that is not the one holding needs because
+  `sensors.headingHold.setpoint` shows the held target rather than the boat's
+  current heading. Both are radians, 0..2pi like `navigation.headingTrue`. (Both stations subscribe
   to `sensors.headingHold.fsmState`, which is the only thing that separates a
   running hold from an armed-and-idle one.)
 - **write** — `POST /plugins/signalk-drive-remote-controller/intent`, a flat
@@ -660,7 +661,7 @@ for want of a trustworthy heading, and one given up after coasting past
 `coast_max`, both publish the armed + hold pair and neither is holding anything.
 Where HH has not published a state at all, the pair stands on its own as before.
 
-The number cannot be used to tell any of this apart: HH mirrors `hh.setpointDeg`
+The number cannot be used to tell any of this apart: HH mirrors its setpoint
 to its fused heading in every state *except* holding
 ([ARCHITECTURE.md §9](../docs/ARCHITECTURE.md#9-signal-k-contract)), so
 it is the same live plausible heading whether the unit engaged, refused because

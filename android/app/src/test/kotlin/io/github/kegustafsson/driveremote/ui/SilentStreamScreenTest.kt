@@ -67,7 +67,7 @@ class SilentStreamScreenTest {
         SkContract.HH_MODE to "hold",
         SkContract.HH_FSM_STATE to SkContract.HH_FSM_HOLDING,
         SkContract.HH_SOURCE to "plugin",
-        SkContract.HH_SETPOINT to 96.0,
+        SkContract.HH_SETPOINT_RAD to Math.toRadians(96.0),
         SkContract.PLUGIN_RX_LIVE to true,
         SkContract.PLUGIN_HH_LIVE to true,
         SkContract.PLUGIN_ACTIVE_CLIENT to me,

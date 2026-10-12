@@ -62,6 +62,22 @@ fun plausibleHeadingOrNull(raw: Any?): Double? =
   if (isPlausibleHeading(raw)) (raw as Number).toDouble() else null
 
 /**
+ * A heading HH published in RADIANS (`sensors.headingHold.setpoint`,
+ * `.fusedHeading`), as compass degrees in [0, 360) -- or null if it is not a
+ * plausible heading. Screened BEFORE it is wrapped: an implausible number is
+ * rejected, never folded into a plausible-looking one. HH publishes 0..2pi;
+ * older firmware published -pi..pi, and both read the same here. Mirrors
+ * `headingDegFromRad` in the plugin's `trimOffset.ts`.
+ */
+fun headingDegFromRadOrNull(raw: Any?): Double? {
+  if (raw !is Number) return null
+  val deg = Math.toDegrees(raw.toDouble())
+  if (!isPlausibleHeading(deg)) return null
+  val positive = ((deg % 360.0) + 360.0) % 360.0
+  return if (positive >= 360.0) 0.0 else positive
+}
+
+/**
  * Coerce a trim offset to a safe, bounded value: non-finite reads as 0 (no
  * trim), anything else is clamped to +/-[SkContract.MAX_TRIM_DEG]. Mirrors
  * `control_core::ClampTrimDeg`. There is deliberately no "invalid" outcome --

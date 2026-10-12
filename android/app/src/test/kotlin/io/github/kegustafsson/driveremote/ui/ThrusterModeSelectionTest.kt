@@ -86,7 +86,7 @@ class ThrusterModeSelectionTest {
    * Reported from the boat: one station holds and trims a heading, and a second,
    * idle station in HOLD mode shows that number under "CURRENT HEADING".
    *
-   * HH publishes `hh.setpointDeg` as the held target only while it is actually
+   * HH publishes its setpoint as the held target only while it is actually
    * holding, and as a mirror of its fused heading otherwise (control_step.cpp).
    * A station that is not the one holding therefore cannot read a current
    * heading out of it -- it is somebody else's target. The firmware is right;
@@ -117,7 +117,7 @@ class ThrusterModeSelectionTest {
   /**
    * The caption is HH's report, not this station's request.
    *
-   * HH mirrors `hh.setpointDeg` to the fused heading in every state except
+   * HH mirrors its setpoint to the fused heading in every state except
    * holding, so 96 is on screen either way -- the word beside it is the only
    * thing that can tell the operator whether anything is holding it. Before
    * this, "HOLDING" appeared as soon as this station could command the thruster,

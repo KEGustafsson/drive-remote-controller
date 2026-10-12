@@ -220,6 +220,28 @@ void test_wrap_deg180_is_safe_for_any_magnitude() {
   TEST_ASSERT_FLOAT_WITHIN(0.001, 0.0f, WrapDeg180(-720.0f));
 }
 
+// WrapDeg360 is the published (compass-range) form of a heading. Same
+// termination contract as WrapDeg180, and the result is always in [0, 360) --
+// in particular a hair below zero must read 0, never a float-rounded 360.
+void test_wrap_deg360_lands_in_compass_range() {
+  using control_core::WrapDeg360;
+  TEST_ASSERT_FLOAT_WITHIN(0.001, 298.7f, WrapDeg360(-61.3f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001, 180.0f, WrapDeg360(180.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001, 180.0f, WrapDeg360(-180.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001, 0.0f, WrapDeg360(360.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001, 10.0f, WrapDeg360(-710.0f));
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, WrapDeg360(-1.0e-6f));
+  float w = WrapDeg360(-1.0e30f);
+  TEST_ASSERT_TRUE(w >= 0.0f && w < 360.0f);
+  TEST_ASSERT_FALSE(std::isfinite(WrapDeg360(std::numeric_limits<float>::infinity())));
+  TEST_ASSERT_FALSE(std::isfinite(WrapDeg360(std::numeric_limits<float>::quiet_NaN())));
+  // Every value WrapDeg180 can produce maps into range.
+  for (float d = -179.9f; d <= 180.0f; d += 0.1f) {
+    w = WrapDeg360(d);
+    TEST_ASSERT_TRUE(w >= 0.0f && w < 360.0f);
+  }
+}
+
 // An out-of-order (or replayed) fix has t_ms EARLIER than the previously
 // accepted one. The old unsigned subtraction wrapped that into a huge dt,
 // making max_jump_deg astronomically large -- the plausibility gate became
@@ -451,6 +473,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_nan_heading_rejected_on_the_bootstrap_fix_too);
   RUN_TEST(test_infinite_heading_rejected);
   RUN_TEST(test_wrap_deg180_is_safe_for_any_magnitude);
+  RUN_TEST(test_wrap_deg360_lands_in_compass_range);
   RUN_TEST(test_out_of_order_fix_rejected_not_wrapped_into_a_huge_window);
   RUN_TEST(test_fix_after_a_multi_week_outage_reseeds_instead_of_being_rejected);
   RUN_TEST(test_expired_reference_reads_never_and_cannot_wrap_back_to_fresh);

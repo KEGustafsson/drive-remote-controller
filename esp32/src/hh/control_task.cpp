@@ -8,6 +8,7 @@
 
 #include "common/cached_snapshot.h"
 #include "common/elapsed_ms.h"
+#include "heading/angle_math.h"
 #include "config.h"
 #include "sensesp/ui/config_item.h"
 
@@ -436,6 +437,11 @@ void ControlTask::PublishTelemetrySnapshot(
   snap.pitch_rad =
       (last_pitch_deg_ - imu_pitch_tare_deg_->get()) * DEG_TO_RAD;
   snap.yaw_rad = step.fused_deg * DEG_TO_RAD;
+  // The published headings read 0..2pi like navigation.headingTrue, so the two
+  // can be compared by eye -- at 299 deg, -61 deg is the same heading but looks
+  // like a fault. Presentation only: the control maths stays in WrapDeg180.
+  snap.fused_heading_rad =
+      control_core::WrapDeg360(step.fused_deg) * DEG_TO_RAD;
   snap.rate_of_turn_rad_s = step.r_dps * DEG_TO_RAD;
   snap.state = step.state;
   snap.bno_ok = bno_ok;
@@ -452,7 +458,7 @@ void ControlTask::PublishTelemetrySnapshot(
   // while HOLDING in HOLD mode; everywhere else the setpoint mirrors the
   // fused heading (control_step.cpp), so error reads a truthful zero rather
   // than a stale one. switch_cmd reads kOff outside HOLDING.
-  snap.setpoint_rad = step.setpoint_deg * DEG_TO_RAD;
+  snap.setpoint_rad = control_core::WrapDeg360(step.setpoint_deg) * DEG_TO_RAD;
   snap.error_rad = step.error_deg * DEG_TO_RAD;
   snap.switch_cmd = step.dir;
   snap.duty = step.duty;
@@ -462,7 +468,6 @@ void ControlTask::PublishTelemetrySnapshot(
   snap.mode = step.mode;
   snap.reversal_pending = step.reversal_pending;
   snap.armed = step.armed;
-  snap.setpoint_deg = step.setpoint_deg;
   snap.link_up = link_up;
 
   // Non-blocking write, mirroring SkHeadingIn's contract: the control
