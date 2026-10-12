@@ -68,6 +68,10 @@ class ControlTask {
     float roll_rad = 0.0f;
     float pitch_rad = 0.0f;
     float yaw_rad = 0.0f;  // fused heading (gyro+GNSS), NOT raw BNO yaw
+    // The same fused heading in the compass range [0, 2pi), the way Signal K's
+    // navigation.headingTrue reads, for sensors.headingHold.fusedHeading.
+    // yaw_rad stays (-pi, pi] for navigation.attitude.
+    float fused_heading_rad = 0.0f;
     float rate_of_turn_rad_s = 0.0f;
     control_core::FsmState state = control_core::FsmState::kDisarmed;
     bool bno_ok = false;
@@ -81,8 +85,10 @@ class ControlTask {
     // sliding-window fraction (ARCHITECTURE.md §7), not reset on exit from HOLDING
     // (S2 thermal memory persists across a release/re-engage, same as
     // Switcher::Reset's own contract).
+    // Compass range [0, 2pi), like headingTrue. The only published setpoint:
+    // the plugin and phone UI convert it for display (hh.setpointDeg is gone).
     float setpoint_rad = 0.0f;
-    float error_rad = 0.0f;
+    float error_rad = 0.0f;     // signed (-pi, pi]: + means turn to starboard
     control_core::Cmd switch_cmd = control_core::Cmd::kOff;
     float duty = 0.0f;
 
@@ -99,12 +105,6 @@ class ControlTask {
     // rx.linkUp (ARCHITECTURE.md §9), so the two units' link rows read alike.
     // Published on hh.linkUp; consumers time its ARRIVAL, not its value.
     bool link_up = false;
-    // The live setpoint in DEGREES as well as radians. Nothing seeds off it --
-    // the heading trim has been a seedless relative offset since 2026-07-24
-    // (heading_nudge.h) -- but the operator-facing consumers (plugin, phone UI)
-    // display it, and they work in degrees. Publishing it in the unit its
-    // consumer needs avoids a rad->deg->rad round trip through three codebases.
-    float setpoint_deg = 0.0f;
   };
 
   // Drives ENABLE/PORT/STBD to their inactive levels and nothing else, so

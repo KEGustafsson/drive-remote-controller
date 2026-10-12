@@ -7627,3 +7627,46 @@ paragraph above it; the short windows (512 dp, split-screen) show the thruster
 at its 88 dp floor with the drives bigger, because the bank's 280 dp floor wins
 there, and the landscape arrangements keep the thruster natural. The stale
 "screenshots are of the pre-scale layout" known gap went too.
+
+## 2026-10-12 — Published headings in the compass range; `hh.setpointDeg` removed
+
+Owner asked why `navigation.headingTrue` and `sensors.headingHold.fusedHeading`
+were "so off". They were not: sampled live while HOLDING, headingTrue read
+298.4° (5.208 rad) and fusedHeading −61.3° (−1.070 rad), the same heading, and
+across 15 samples the wrapped difference stayed within ±0.25°. HH published its
+internal (−180, 180] representation, which only diverges visibly from the
+server's 0..360 once the boat points past 180° -- hence "now".
+
+Owner's call: publish `sensors.headingHold.fusedHeading` and `.setpoint` in
+0..2π like headingTrue. New `control_core::WrapDeg360` (fmod-based, same
+termination contract as `WrapDeg180`, and a hair below zero reads 0 rather than
+a float-rounded 360), applied when the telemetry snapshot is filled. The snapshot
+gains `fused_heading_rad` so `navigation.attitude` yaw keeps its existing
+(−π, π]; `.error` stays signed. Control maths is untouched.
+
+Then: remove `control.remoteController.hh.setpointDeg` entirely. It was the
+setpoint in degrees, published only for display. Both stations now read
+`sensors.headingHold.setpoint` instead, through a rad → compass-degree helper
+that screens before it wraps (an implausible value is rejected, not folded into
+range) and reads the old −π..π form the same:
+`headingDegFromRad` in the plugin's `trimOffset.ts`, `headingDegFromRadOrNull`
+in Android's `TrimOffset.kt`, which the fused-heading reading now uses too. Each
+station still subscribes to the same number of paths. HH's telemetry loop drops
+to 17 deltas per cycle, three short of SensESP's 20-deep queue.
+
+**Deploy order matters: stations first, then HH.** A new station reads the new
+path off old firmware fine. The reverse is the trap: Signal K retains the last
+`hh.setpointDeg` forever, so an OLD station facing new firmware keeps drawing
+that frozen number as the held heading while HH's liveness says the unit is
+answering -- unconfirmable data presented as live. The retained value is
+harmless once nothing reads it, and goes with the next server restart.
+
+Seen on the way, not changed: `navigation.headingTrue` currently comes from
+`SatHead` as plain NMEA0183 `HDT` (talkers GN/GP/GA), not from
+`signalk-um982-plugin`. config.h's heading-in comment relies on that plugin
+publishing null on a rejected fix; `HDT` carries no fix quality, so that gate is
+likely not in effect with this source. Reported to the owner.
+
+Suites: native 303 (+1), plugin 379 (+2), all three firmware builds green.
+Android `:core:test` (+2, expected 258) and `:app:testDebugUnitTest` were NOT
+run -- no JDK on this machine; CI is the first run. Not flashed.

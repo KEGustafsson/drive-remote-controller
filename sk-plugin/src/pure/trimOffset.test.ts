@@ -3,6 +3,7 @@ import {
   clampTrim,
   formatHeading,
   formatTrim,
+  headingDegFromRad,
   isPlausibleHeading,
   trimBy,
   wrapDeg180,
@@ -110,5 +111,28 @@ describe('formatHeading', () => {
   });
   it('renders null as dashes', () => {
     expect(formatHeading(null)).toBe('---');
+  });
+});
+
+describe('headingDegFromRad', () => {
+  it('converts radians to compass degrees in [0, 360)', () => {
+    expect(headingDegFromRad(0)).toBe(0);
+    expect(headingDegFromRad(Math.PI / 2)).toBeCloseTo(90, 9);
+    expect(headingDegFromRad(5.2083)).toBeCloseTo(298.41, 2);
+    // The -pi..pi form older HH firmware published reads the same heading.
+    expect(headingDegFromRad(-1.0704)).toBeCloseTo(298.67, 2);
+    expect(headingDegFromRad(2 * Math.PI)).toBe(0);
+    // A hair below zero must read 0, never a float-rounded 360.
+    expect(headingDegFromRad(-1e-18)).toBe(0);
+  });
+  it('rejects implausible, non-finite and non-number values', () => {
+    expect(headingDegFromRad(7)).toBeNull(); // ~401 deg: rejected, not wrapped
+    expect(headingDegFromRad(-7)).toBeNull();
+    expect(headingDegFromRad(NaN)).toBeNull();
+    expect(headingDegFromRad(Infinity)).toBeNull();
+    expect(headingDegFromRad('1.0')).toBeNull();
+    expect(headingDegFromRad(true)).toBeNull();
+    expect(headingDegFromRad(null)).toBeNull();
+    expect(headingDegFromRad(undefined)).toBeNull();
   });
 });

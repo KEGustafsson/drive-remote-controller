@@ -176,17 +176,18 @@ class StationViewTest {
   @Test
   fun `an implausible held heading reads as no reading, not a number`() {
     val store = healthyStore(nowMs = 10_000)
-    store.apply(listOf(SkContract.HH_SETPOINT to "not-a-heading"), 10_000)
+    store.apply(listOf(SkContract.HH_SETPOINT_RAD to "not-a-heading"), 10_000)
     assertNull(view(store, 10_000).heldDeg)
 
-    store.apply(listOf(SkContract.HH_SETPOINT to 41), 10_000)
-    assertEquals(41.0, view(store, 10_000).heldDeg)
+    // Published in radians, read in compass degrees.
+    store.apply(listOf(SkContract.HH_SETPOINT_RAD to Math.toRadians(41.0)), 10_000)
+    assertEquals(41.0, view(store, 10_000).heldDeg!!, 1e-9)
   }
 
   /**
    * "Holding" is HH's word, not this station's.
    *
-   * The number cannot be used to tell: HH mirrors `hh.setpointDeg` to the fused
+   * The number cannot be used to tell: HH mirrors its setpoint to the fused
    * heading in every state except holding (ARCHITECTURE.md §9), so it is a live
    * plausible heading whether the unit engaged, refused on an untrustworthy
    * heading, faulted, was taken by its own ENGAGE input, or is refusing a

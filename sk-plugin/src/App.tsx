@@ -9,7 +9,7 @@ import {
   SK_HH_FSM_STATE_PATH,
   SK_HH_MODE_PATH,
   SK_HH_REVERSAL_PENDING_PATH,
-  SK_HH_SETPOINT_PATH,
+  SK_HH_SETPOINT_RAD_PATH,
   SK_HH_SOURCE_PATH,
   SK_PLUGIN_ACTIVE_CLIENT_PATH,
   SK_RX_PORT_SOURCE_PATH,
@@ -25,7 +25,7 @@ import {
 } from './clientIntent';
 import { classifyIntentFailure, type IntentStatus } from './pure/intentStatus';
 import { holdEngagedFrom } from './pure/holdPhase';
-import { isPlausibleHeading, trimBy } from './pure/trimOffset';
+import { headingDegFromRad, trimBy } from './pure/trimOffset';
 import { useHoldPhase, useManualRefusal } from './hooks/useHoldPhase';
 import {
   useHhLiveness,
@@ -208,11 +208,10 @@ export function App({
   // heading" whenever the thruster is not commandable -- a frozen heading
   // presented as live (SAFETY.md invariant 6). The same for reversalPending.
   const hhAnswering = connected && rxReadyToArm(hhLiveness);
-  const heldRaw = values[SK_HH_SETPOINT_PATH];
-  const heldDeg = hhAnswering && isPlausibleHeading(heldRaw) ? heldRaw : null;
+  const heldDeg = hhAnswering ? headingDegFromRad(values[SK_HH_SETPOINT_RAD_PATH]) : null;
 
   // Is HH ACTUALLY holding, by its own report? Never a local guess: HH mirrors
-  // hh.setpointDeg to the fused heading whenever it is not holding
+  // its setpoint to the fused heading whenever it is not holding
   // (ARCHITECTURE.md §9), so the number alone reads the same either way and
   // may not be labelled "holding" unconditionally. hh.armed + hh.mode narrows
   // it, HH's own FSM state settles it (ENABLE is asserted in ARMED_IDLE too),

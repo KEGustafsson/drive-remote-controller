@@ -536,7 +536,7 @@ data class StationView(
    * Is HH ACTUALLY holding, by its own report?
    *
    * Never a local guess, and this is the one place in the view where that
-   * distinction changes a word on the screen. HH mirrors `hh.setpointDeg` to the
+   * distinction changes a word on the screen. HH mirrors its setpoint to the
    * fused heading in every state EXCEPT holding (ARCHITECTURE.md §9), so the
    * number is a live, plausible heading whether the unit engaged, refused
    * because the heading was not trustworthy, faulted, had the thruster taken by
@@ -694,7 +694,7 @@ fun deriveStationView(
       portOverriddenBy = overrideNote(driveCommandable, portSource),
       stbdOverriddenBy = overrideNote(driveCommandable, stbdSource),
       thrusterOverriddenBy = overrideNote(thrusterCommandable, thrusterSource),
-      heldDeg = plausibleHeadingOrNull(store[SkContract.HH_SETPOINT]),
+      heldDeg = headingDegFromRadOrNull(store[SkContract.HH_SETPOINT_RAD]),
       // Both of these are HH's VALUES, and Signal K retains values forever: with
       // HH switched off or the socket down, the last heading is still in the
       // store, and was drawn frozen under a caption promising the CURRENT
@@ -704,11 +704,7 @@ fun deriveStationView(
       currentHeadingDeg =
         (store[SkContract.HH_FUSED_HEADING_RAD] as? Number)?.toDouble()?.takeIf {
           readyToArm(hhLiveness)
-        }?.let { rad ->
-          // Published in radians; every other angle here is degrees. Normalised to
-          // 0..360 because the fused value is free to run negative.
-          plausibleHeadingOrNull(((Math.toDegrees(rad) % 360.0) + 360.0) % 360.0)
-        },
+        }?.let(::headingDegFromRadOrNull),
       reversalPending =
         readyToArm(hhLiveness) && store.boolOrNull(SkContract.HH_REVERSAL_PENDING) == true,
       rxLinkUp = store.boolOrNull(SkContract.RX_LINK_UP),

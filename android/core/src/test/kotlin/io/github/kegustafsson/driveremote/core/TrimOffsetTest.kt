@@ -65,6 +65,29 @@ class TrimOffsetTest {
       assertEquals(null, plausibleHeadingOrNull("41"))
       assertEquals(null, plausibleHeadingOrNull(Double.NaN))
     }
+
+    @Test
+    fun `radians convert to compass degrees in 0 to 360`() {
+      assertEquals(0.0, headingDegFromRadOrNull(0))
+      assertEquals(90.0, headingDegFromRadOrNull(Math.PI / 2)!!, 1e-9)
+      assertEquals(298.41, headingDegFromRadOrNull(5.2083)!!, 0.005)
+      // The -pi..pi form older HH firmware published reads the same heading.
+      assertEquals(298.67, headingDegFromRadOrNull(-1.0704)!!, 0.005)
+      assertEquals(0.0, headingDegFromRadOrNull(2 * Math.PI))
+      // A hair below zero must read 0, never a float-rounded 360.
+      assertEquals(0.0, headingDegFromRadOrNull(-1e-18))
+    }
+
+    @Test
+    fun `an implausible radian heading is rejected, not wrapped`() {
+      assertEquals(null, headingDegFromRadOrNull(7.0)) // ~401 deg
+      assertEquals(null, headingDegFromRadOrNull(-7.0))
+      assertEquals(null, headingDegFromRadOrNull(Double.NaN))
+      assertEquals(null, headingDegFromRadOrNull(Double.POSITIVE_INFINITY))
+      assertEquals(null, headingDegFromRadOrNull("1.0"))
+      assertEquals(null, headingDegFromRadOrNull(true))
+      assertEquals(null, headingDegFromRadOrNull(null))
+    }
   }
 
   @Nested

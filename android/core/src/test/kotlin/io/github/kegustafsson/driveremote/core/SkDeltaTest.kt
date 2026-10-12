@@ -42,18 +42,18 @@ class SkDeltaTest {
   }
 
   @Test
-  fun `keeps an integral number integral so a heading reads 041 not 041 point 0`() {
+  fun `keeps an integral number integral`() {
     assertEquals(
-      listOf(SkContract.HH_SETPOINT to 41L),
-      SkDelta.parseUpdates(delta(SkContract.HH_SETPOINT, "41"), accept),
+      listOf(SkContract.HH_SETPOINT_RAD to 41L),
+      SkDelta.parseUpdates(delta(SkContract.HH_SETPOINT_RAD, "41"), accept),
     )
   }
 
   @Test
   fun `keeps a fractional number fractional`() {
     assertEquals(
-      listOf(SkContract.HH_SETPOINT to 41.5),
-      SkDelta.parseUpdates(delta(SkContract.HH_SETPOINT, "41.5"), accept),
+      listOf(SkContract.HH_SETPOINT_RAD to 41.5),
+      SkDelta.parseUpdates(delta(SkContract.HH_SETPOINT_RAD, "41.5"), accept),
     )
   }
 

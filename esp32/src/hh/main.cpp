@@ -244,8 +244,6 @@ void setup() {
       std::make_shared<SKOutputString>(config::kSkHhModePath, "");
   auto hh_source_output =
       std::make_shared<SKOutputString>(config::kSkHhSourcePath, "");
-  auto hh_setpoint_deg_output = std::make_shared<SKOutputFloat>(
-      config::kSkHhSetpointPath, "", "deg");
   auto hh_armed_output =
       std::make_shared<SKOutputBool>(config::kSkHhArmedPath, "");
   auto hh_link_up_output =
@@ -255,7 +253,7 @@ void setup() {
 
   // BUDGET, before adding anything to this loop: SensESP's outbound delta
   // queue is 20 deep and drops the OLDEST entry on overflow. This loop appends
-  // 18 deltas per cycle, so it already sits two short of that ceiling -- add a
+  // 17 deltas per cycle, so it already sits three short of that ceiling -- add a
   // few paths and every cycle starts silently discarding whatever was queued
   // first. hh.linkUp is therefore set LAST, deliberately: it is the survivor,
   // and it is the one path whose ARRIVAL other units time to decide whether HH
@@ -267,7 +265,7 @@ void setup() {
     attitude_sk_output->set(
         sensesp::AttitudeVector(snap.roll_rad, snap.pitch_rad, snap.yaw_rad));
     rate_of_turn_sk_output->set(snap.rate_of_turn_rad_s);
-    fused_heading_sk_output->set(snap.yaw_rad);  // SK angle: radians
+    fused_heading_sk_output->set(snap.fused_heading_rad);  // rad, 0..2pi
     fsm_state_sk_output->set(ControlTask::StateName(snap.state));
     bno_ok_sk_output->set(snap.bno_ok);
     gnss_valid_sk_output->set(snap.gnss_valid);
@@ -287,7 +285,6 @@ void setup() {
         control_core::ThrusterCmdToSkString(snap.switch_cmd));
     hh_mode_output->set(ControlTask::ModeName(snap.mode));
     hh_source_output->set(ControlTask::SourceName(snap.source));
-    hh_setpoint_deg_output->set(snap.setpoint_deg);
     hh_armed_output->set(snap.armed);
     hh_reversal_pending_output->set(snap.reversal_pending);
     // "This unit is present and a remote station is talking to it." Published
@@ -312,7 +309,7 @@ void setup() {
                       error_sk_output,  switch_cmd_sk_output,
                       duty_sk_output,   hh_thruster_state_output,
                       hh_mode_output,   hh_source_output,
-                      hh_setpoint_deg_output, hh_armed_output,
+                      hh_armed_output,
                       hh_link_up_output, hh_reversal_pending_output};
 }
 

@@ -66,7 +66,6 @@ object SkContract {
   const val HH_THRUSTER_STATE = "control.remoteController.hh.thruster.state"
   const val HH_MODE = "control.remoteController.hh.mode"
   const val HH_SOURCE = "control.remoteController.hh.source"
-  const val HH_SETPOINT = "control.remoteController.hh.setpointDeg"
   const val HH_ARMED = "control.remoteController.hh.armed"
   const val HH_REVERSAL_PENDING = "control.remoteController.hh.reversalPending"
 
@@ -75,12 +74,19 @@ object SkContract {
    * believes it.
    *
    * Not part of the `control.remoteController.*` command contract: it is
-   * telemetry HH publishes about itself. It is here because HH_SETPOINT is only
-   * the held target while HH is actually holding, and mirrors this value the
-   * rest of the time -- so a station that is not the one holding cannot use
-   * HH_SETPOINT to show a current heading.
+   * telemetry HH publishes about itself. It is here because [HH_SETPOINT_RAD]
+   * is only the held target while HH is actually holding, and mirrors this
+   * value the rest of the time -- so a station that is not the one holding
+   * cannot use [HH_SETPOINT_RAD] to show a current heading.
    */
   const val HH_FUSED_HEADING_RAD = "sensors.headingHold.fusedHeading"
+
+  /**
+   * HH's live setpoint, in RADIANS, 0..2pi like `navigation.headingTrue`: the
+   * heading being held, or (when not holding) a mirror of
+   * [HH_FUSED_HEADING_RAD]. Telemetry, like it, rather than command contract.
+   */
+  const val HH_SETPOINT_RAD = "sensors.headingHold.setpoint"
 
   /**
    * HH's own safety-FSM state: `DISARMED`, `ARMED_IDLE`, `HOLDING` or `FAULT`.
@@ -122,10 +128,10 @@ object SkContract {
       HH_THRUSTER_STATE,
       HH_MODE,
       HH_SOURCE,
-      HH_SETPOINT,
       HH_ARMED,
       HH_REVERSAL_PENDING,
       HH_FUSED_HEADING_RAD,
+      HH_SETPOINT_RAD,
       HH_FSM_STATE,
     )
 

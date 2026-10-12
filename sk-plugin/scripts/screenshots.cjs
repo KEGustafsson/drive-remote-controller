@@ -167,7 +167,7 @@ function stateValues() {
           { path: 'control.remoteController.hh.mode', value: plugin.thrusterMode },
           { path: 'control.remoteController.hh.thruster.state', value: thrusterState(plugin) },
           { path: 'control.remoteController.hh.source', value: plugin.enabled ? 'plugin' : 'none' },
-          { path: 'control.remoteController.hh.setpointDeg', value: hhSetpointDeg },
+          { path: 'sensors.headingHold.setpoint', value: (hhSetpointDeg * Math.PI) / 180 },
           { path: 'control.remoteController.hh.armed', value: plugin.enabled },
           { path: 'control.remoteController.hh.reversalPending', value: false },
         ]
