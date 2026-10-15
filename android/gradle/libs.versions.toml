@@ -19,7 +19,7 @@ androidxDatastore = "1.1.1"
 # with an API 35 sandbox, which is what :app compiles against and what the three
 # @Config(sdk = [35]) suites ask for. Do not drop below 4.14, and when compileSdk
 # moves, move this and those @Config values together.
-robolectric = "4.16.1"
+robolectric = "4.17"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
