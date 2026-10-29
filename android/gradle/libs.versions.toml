@@ -5,21 +5,21 @@
 # Measured here: 2.3.21 -> 0 warnings, 2.4.0 -> 8. Moves with AGP.
 kotlin = "2.3.21"
 junit = "5.14.4"
-kotlinxSerialization = "1.11.0"
+kotlinxSerialization = "1.12.0"
 
 # Android. Only resolved when :app is configured (i.e. an SDK is present) --
 # see settings.gradle.kts -- so a :core-only build never fetches any of this.
 agp = "8.13.2"
 composeBom = "2024.12.01"
-okhttp = "4.12.0"
+okhttp = "4.12.1"
 androidxActivity = "1.9.3"
 androidxLifecycle = "2.8.7"
-androidxDatastore = "1.1.1"
+androidxDatastore = "1.3.0"
 # Robolectric's sandbox level is tied to compileSdk: 4.14 was the first release
 # with an API 35 sandbox, which is what :app compiles against and what the three
 # @Config(sdk = [35]) suites ask for. Do not drop below 4.14, and when compileSdk
 # moves, move this and those @Config values together.
-robolectric = "4.16.1"
+robolectric = "4.17"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
